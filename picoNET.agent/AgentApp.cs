@@ -186,9 +186,19 @@ internal class AgentApp
             history.Add(new ChatMessage("system", opts.SystemPrompt));
         else if (tools?.Length > 0)
         {
-            // Default system prompt for tool-enabled mode that encourages thinking
+            // Default system prompt for tool-enabled mode
+            var descriptions = new Dictionary<string, string>
+            {
+                { "bash", "Run a shell command (ls, cat, grep, find, etc.)" },
+                { "read", "Read file contents" },
+                { "edit", "Replace exact text in a file" },
+                { "write", "Create or overwrite a file" }
+            };
+            var toolList = tools.Select(t => descriptions.TryGetValue(t, out var d) ? d : t)
+                .Aggregate((a, b) => $"{a}, {b}");
             history.Add(new ChatMessage("system",
-                "You are a helpful assistant with access to tools."));
+                $"You are a helpful assistant with access to these tools: {toolList}. " +
+                "Use them when the user's request requires it. Think before acting — explain your plan first."));
         }
 
         bool running = true;
