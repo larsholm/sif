@@ -74,6 +74,13 @@ internal class AgentClient
 
             totalTokens += result.Value.Usage?.TotalTokenCount ?? 0;
 
+            // Show any text the model generated (its thinking/reasoning)
+            var thinking = ExtractText(result.Value.Content);
+            if (!string.IsNullOrEmpty(thinking) && result.Value.ToolCalls.Count > 0)
+            {
+                AnsiConsole.MarkupLine("\n[dim]Thinking: " + thinking.EscapeMarkup() + "[/]");
+            }
+
             // Check if the model wants to call tools
             if (result.Value.ToolCalls.Count > 0)
             {
