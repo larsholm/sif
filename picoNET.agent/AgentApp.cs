@@ -211,7 +211,7 @@ internal class AgentApp
         bool running = true;
         while (running)
         {
-            AnsiConsole.Write("[blue]user>[/] ");
+            AnsiConsole.Write(new Markup("[blue]user>[/] "));
             string? input = await Console.In.ReadLineAsync();
 
             if (input is null) break;
@@ -258,7 +258,7 @@ internal class AgentApp
             {
                 if (tools?.Length > 0)
                 {
-                    AnsiConsole.Write("[green]agent>[/] ");
+                    AnsiConsole.Write(new Markup("[green]agent>[/] "));
                     var (response, tokenCount) = await client.ChatWithToolsAsync(history);
                     AnsiConsole.MarkupLine($"[dim]\n({tokenCount} tokens)[/]\n");
                 }
@@ -269,7 +269,7 @@ internal class AgentApp
                     var useNonStream = !opts.NoStream && (config.ThinkingEnabled ?? false);
                     if (useNonStream)
                         AnsiConsole.MarkupLine("[dim](thinking enabled, using non-streaming mode)[/]");
-                    AnsiConsole.Write("[green]agent>[/] ");
+                    AnsiConsole.Write(new Markup("[green]agent>[/] "));
                     var (response, reasoning) = await client.ChatAsync(history);
                     if (!string.IsNullOrEmpty(reasoning))
                     {
@@ -284,7 +284,7 @@ internal class AgentApp
                 }
                 else
                 {
-                    AnsiConsole.Write("[green]agent>[/] ");
+                    AnsiConsole.Write(new Markup("[green]agent>[/] "));
                     var (response, tokenCount) = await client.ChatStreamingAsync(history);
                     history.Add(new ChatMessage("assistant", response));
                     AnsiConsole.MarkupLine($"[dim]\n({tokenCount} tokens)[/]\n");
@@ -368,7 +368,7 @@ internal class AgentApp
         if (tools?.Length > 0)
             AnsiConsole.MarkupLine($"[dim]Tools: {string.Join(", ", tools)}[/]");
         AnsiConsole.MarkupLine($"[dim]Endpoint: {config.BaseUrl}[/]");
-        AnsiConsole.Write("[dim]Prompt:[/] ");
+        AnsiConsole.Write(new Markup("[dim]Prompt:[/] "));
         AnsiConsole.WriteLine(prompt.Trim());
         AnsiConsole.WriteLine();
 
