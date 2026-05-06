@@ -1,0 +1,29 @@
+## .NET / C#
+bin/
+obj/
+
+## NuGet package
+nupkg/
+*.nupkg
+
+## IDE
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+## Compiled
+*.dll
+*.exe
+*.pdb
+*.deps.json
+*.runtimeconfig.json
+*.dllmdb
+
+## macOS
+.DS_Store
+
+## Temporary
+*.tmp
+*.log
