@@ -5,6 +5,7 @@ A lightweight AI agent console tool supporting local models via OpenAI-compatibl
 ## Features
 
 - **Chat by default** — `pico` launches into interactive chat immediately
+- **Tool calling** — Enable tools for bash, file read/edit/write via `--tools`
 - **One-off completion** — Quick prompts from CLI or stdin with `pico complete`
 - **Local model support** — Works with any OpenAI-compatible endpoint (vLLM, Ollama, LM Studio, LiteLLM, etc.)
 - **Streaming output** — See responses as they're generated
@@ -24,6 +25,28 @@ cd picoNET.agent
 ```
 
 This builds the project and installs it as a global .NET tool. The `pico` command will be available in your PATH.
+
+## Tools
+
+Enable tool calling with `--tools` (comma-separated):
+
+| Tool    | Description                                            |
+|---------|--------------------------------------------------------|
+| `bash`  | Execute safe shell commands (ls, cat, grep, find, etc.) |
+| `read`  | Read file contents                                      |
+| `edit`  | Edit files by replacing exact text                      |
+| `write` | Create or overwrite files                               |
+
+```bash
+# Use all tools
+pico --tools bash,read,edit,write
+
+# Or set persistently
+pico config --set TOOLS=bash,read,edit,write
+pico
+```
+
+**Note:** Tool calling is non-streaming (the model decides whether to use tools, then returns the final response).
 
 ## Usage
 
@@ -79,6 +102,7 @@ pico config --set BASE_URL=http://100.118.58.55:8020/v1
 | `-k, --api-key`      | API key                        |
 | `-s, --system`       | System prompt                  |
 | `-n, --no-stream`    | Disable streaming output       |
+| `--tools`            | Enable tools: bash,edit,read,write |
 
 ## Environment Variables
 
@@ -87,6 +111,7 @@ pico config --set BASE_URL=http://100.118.58.55:8020/v1
 | `AGENT_BASE_URL`   | OpenAI-compatible API base URL           | `https://api.openai.com` |
 | `AGENT_API_KEY`    | API key (optional for local models)      | -                    |
 | `AGENT_MODEL`      | Model name to use                        | `gpt-4o`             |
+| `AGENT_TOOLS`      | Comma-separated list of tools            | -                    |
 | `AGENT_MAX_TOKENS` | Maximum output tokens                    | model default        |
 | `AGENT_TEMPERATURE`| Sampling temperature (0-1)               | model default        |
 
@@ -105,9 +130,10 @@ During a chat session, type these commands:
 ### Your Local Model
 
 ```bash
-# Set persistent config once
+# Set persistent config
 pico config --set BASE_URL=http://100.118.58.55:8020/v1
 pico config --set MODEL=qwen3.6-27b-autoround
+pico config --set TOOLS=bash,read,edit
 
 # Then just type:
 pico
