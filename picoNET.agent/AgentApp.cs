@@ -198,7 +198,14 @@ internal class AgentApp
                 .Aggregate((a, b) => $"{a}, {b}");
             history.Add(new ChatMessage("system",
                 $"You are a helpful assistant with access to these tools: {toolList}. " +
-                "Use them when the user's request requires it. Think before acting — explain your plan first."));
+                $"Current working directory: {Environment.CurrentDirectory}. " +
+                "Always use absolute paths when referring to files." +
+                "\n\nUse tools proactively: " +
+                "- Use 'bash' with 'ls' to list files, 'grep' to search" +
+                "- Use 'read' to view file contents" +
+                "- Use 'edit' to modify files" +
+                "- Use 'write' to create new files" +
+                "\nThink before acting — explain your plan first."));
         }
 
         bool running = true;
@@ -307,15 +314,21 @@ internal class AgentApp
 
     private static string[]? ResolveTools(string[]? cliTools, AgentConfig config)
     {
+        // CLI flag takes highest priority
         if (cliTools?.Length > 0)
             return cliTools;
 
+        // Environment variable
         var envTools = Environment.GetEnvironmentVariable("AGENT_TOOLS");
         if (!string.IsNullOrEmpty(envTools))
             return envTools.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-        var fileTools = config.Tools;
-        return fileTools;
+        // Config file
+        if (config.Tools?.Length > 0)
+            return config.Tools;
+
+        // Default: always enable tools
+        return new[] { "bash", "read", "edit", "write" };
     }
 
     private async Task<int> RunComplete(string[] args)
@@ -348,9 +361,12 @@ internal class AgentApp
         var config = AgentConfig.Build(opts.BaseUrl, opts.ApiKey, opts.Model);
         if (opts.Thinking.HasValue)
             config.ThinkingEnabled = opts.Thinking;
-        var client = new AgentClient(config);
+        var tools = ResolveTools(opts.Tools, config);
+        var client = new AgentClient(config, tools);
 
         AnsiConsole.MarkupLine($"[dim]Model: {config.Model}[/]");
+        if (tools?.Length > 0)
+            AnsiConsole.MarkupLine($"[dim]Tools: {string.Join(", ", tools)}[/]");
         AnsiConsole.MarkupLine($"[dim]Endpoint: {config.BaseUrl}[/]");
         AnsiConsole.Write("[dim]Prompt:[/] ");
         AnsiConsole.WriteLine(prompt.Trim());
@@ -358,16 +374,28 @@ internal class AgentApp
 
         try
         {
-            var (response, reasoning) = await client.CompleteAsync(prompt, opts.SystemPrompt);
-            if (!string.IsNullOrEmpty(reasoning))
+            if (tools?.Length > 0)
             {
-                AnsiConsole.MarkupLine("[dim]Thinking:[/]");
-                foreach (var line in reasoning.Trim().Split('\n'))
-                    AnsiConsole.MarkupLine("[dim]  " + line.EscapeMarkup() + "[/]");
-                AnsiConsole.MarkupLine("");
+                var history = new List<ChatMessage>();
+                if (!string.IsNullOrEmpty(opts.SystemPrompt))
+                    history.Add(new ChatMessage("system", opts.SystemPrompt));
+                history.Add(new ChatMessage("user", prompt));
+                var (response, tokenCount) = await client.ChatWithToolsAsync(history);
+                AnsiConsole.MarkupLine($"\n[dim]({tokenCount} tokens)[/]");
             }
-            AnsiConsole.MarkupLine("[green]Response:[/]");
-            AnsiConsole.MarkupLine(response);
+            else
+            {
+                var (response, reasoning) = await client.CompleteAsync(prompt, opts.SystemPrompt);
+                if (!string.IsNullOrEmpty(reasoning))
+                {
+                    AnsiConsole.MarkupLine("[dim]Thinking:[/]");
+                    foreach (var line in reasoning.Trim().Split('\n'))
+                        AnsiConsole.MarkupLine("[dim]  " + line.EscapeMarkup() + "[/]");
+                    AnsiConsole.MarkupLine("");
+                }
+                AnsiConsole.MarkupLine("[green]Response:[/]");
+                AnsiConsole.MarkupLine(response);
+            }
         }
         catch (Exception ex)
         {

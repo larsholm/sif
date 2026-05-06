@@ -137,37 +137,53 @@ internal static class ToolRegistry
 
         try
         {
+            // Write command to a temp script to avoid shell escaping issues
+            var scriptPath = Path.Combine(Path.GetTempPath(), $"pico_bash_{Guid.NewGuid():N}.sh");
+            File.WriteAllText(scriptPath, "#!/bin/bash\n" + command);
+            // Make executable
+            _ = Process.Start(new ProcessStartInfo("chmod", $"+x \"{scriptPath}\"") { UseShellExecute = false });
+
             var psi = new ProcessStartInfo
             {
-                FileName = "/bin/bash",
-                Arguments = $"-c '{command.Replace("'", "'\"'\"'")}'",
+                FileName = scriptPath,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 WorkingDirectory = Environment.CurrentDirectory
             };
 
-            using var process = Process.Start(psi);
-            if (process is null)
-                return "Error: Failed to start command.";
-            var task = process.WaitForExitAsync();
-            var readTask = process.StandardOutput.ReadToEndAsync();
-            var errTask = process.StandardError.ReadToEndAsync();
+            try
+            {
+                using var process = Process.Start(psi);
+                if (process is null)
+                    return "Error: Failed to start command.";
+                var task = process.WaitForExitAsync();
+                var readTask = process.StandardOutput.ReadToEndAsync();
+                var errTask = process.StandardError.ReadToEndAsync();
 
-            if (!task.Wait(TimeSpan.FromSeconds(30)))
-                return "Error: Command timed out after 30s.";
+                if (!task.Wait(TimeSpan.FromSeconds(30)))
+                    return "Error: Command timed out after 30s.";
 
-            var output = readTask.Result;
-            var errors = errTask.Result;
+                var output = readTask.Result;
+                var errors = errTask.Result;
 
-            var result = output.Trim();
-            if (!string.IsNullOrEmpty(errors))
-                result += (result.Length > 0 ? "\n" : "") + errors.Trim();
+                var result = output.Trim();
+                if (!string.IsNullOrEmpty(errors))
+                    result += (result.Length > 0 ? "\n" : "") + errors.Trim();
 
-            if (result.Length > limit)
-                result = result.Substring(0, limit) + $"\n... (truncated, {result.Length - limit} more chars)";
+                if (result.Length > limit)
+                    result = result.Substring(0, limit) + $"\n... (truncated, {result.Length - limit} more chars)";
 
-            return string.IsNullOrEmpty(result) ? "(no output)" : result;
+                return string.IsNullOrEmpty(result) ? "(no output)" : result;
+            }
+            catch (Exception ex)
+            {
+                return $"Error executing command: {ex.Message}";
+            }
+            finally
+            {
+                try { File.Delete(scriptPath); } catch { }
+            }
         }
         catch (Exception ex)
         {
