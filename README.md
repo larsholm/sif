@@ -4,12 +4,12 @@ A lightweight AI agent console tool supporting local models via OpenAI-compatibl
 
 ## Features
 
-- **Interactive chat** - Multi-turn conversations with full message history
-- **One-off completion** - Quick prompts from CLI or stdin
-- **Local model support** - Works with any OpenAI-compatible endpoint (Ollama, LM Studio, LiteLLM, etc.)
-- **Streaming output** - See responses as they're generated
-- **System prompts** - Set custom system instructions for your agent
-- **Config management** - Persist settings in `~/.piconet/piconet-agent.json`
+- **Chat by default** — `pico` launches into interactive chat immediately
+- **One-off completion** — Quick prompts from CLI or stdin with `pico complete`
+- **Local model support** — Works with any OpenAI-compatible endpoint (vLLM, Ollama, LM Studio, LiteLLM, etc.)
+- **Streaming output** — See responses as they're generated
+- **System prompts** — Set custom system instructions for your agent
+- **Config management** — Persist settings in `~/.piconet/piconet-agent.json`
 
 ## Prerequisites
 
@@ -18,73 +18,67 @@ A lightweight AI agent console tool supporting local models via OpenAI-compatibl
 
 ## Installation
 
-### From Source (Global Tool)
-
 ```bash
 cd picoNET.agent
 ./build.sh install
 ```
 
-This builds the project and installs it as a global .NET tool. The `piconet-agent` command will be available in your PATH.
-
-### Local Development
-
-```bash
-cd picoNET.agent
-dotnet run -- <command> [options]
-```
-
-### Rebuild & Update
-
-```bash
-cd picoNET.agent
-./build.sh install
-```
+This builds the project and installs it as a global .NET tool. The `pico` command will be available in your PATH.
 
 ## Usage
 
-### Interactive Chat
+### Interactive Chat (Default)
 
 ```bash
-# Start chat with defaults
-piconet-agent chat
+# Start chat (default behavior)
+pico
 
-# With a custom endpoint (e.g., Ollama)
-piconet-agent chat -u http://localhost:11434 -m llama3.2
+# With custom endpoint and model
+pico -u http://100.118.58.55:8020/v1 -m qwen3.6-27b-autoround
 
 # With a system prompt
-piconet-agent chat -s "You are a helpful C# coding assistant."
+pico -s "You are a helpful C# coding assistant."
 
 # Without streaming (shows full response at once)
-piconet-agent chat --no-stream
+pico --no-stream
 ```
 
 ### One-off Completion
 
 ```bash
 # From command line
-piconet-agent complete "Explain async/await in C#"
+pico complete "Explain async/await in C#"
 
 # With custom endpoint and model
-piconet-agent complete "Write a Fibonacci function" -u http://localhost:11434 -m qwen3:8b
+pico complete "Write a Fibonacci function" -u http://100.118.58.55:8020/v1 -m qwen3.6-27b-autoround
 
 # With system prompt
-piconet-agent complete "Explain closures" -s "Respond concisely in 2 sentences."
+pico complete "Explain closures" -s "Respond concisely in 2 sentences."
 
 # From stdin
-cat prompt.txt | piconet-agent complete -
+cat prompt.txt | pico complete -
 ```
 
 ### Configuration
 
 ```bash
 # Show current configuration
-piconet-agent config
+pico config
 
 # Set persistent config values
-piconet-agent config --set MODEL=qwen3:8b
-piconet-agent config --set BASE_URL=http://localhost:11434
+pico config --set MODEL=qwen3.6-27b-autoround
+pico config --set BASE_URL=http://100.118.58.55:8020/v1
 ```
+
+### Options
+
+| Flag                 | Description                    |
+|----------------------|--------------------------------|
+| `-m, --model`        | Model name                     |
+| `-u, --base-url`     | API base URL                   |
+| `-k, --api-key`      | API key                        |
+| `-s, --system`       | System prompt                  |
+| `-n, --no-stream`    | Disable streaming output       |
 
 ## Environment Variables
 
@@ -108,16 +102,27 @@ During a chat session, type these commands:
 
 ## Examples
 
+### Your Local Model
+
+```bash
+# Set persistent config once
+pico config --set BASE_URL=http://100.118.58.55:8020/v1
+pico config --set MODEL=qwen3.6-27b-autoround
+
+# Then just type:
+pico
+```
+
 ### Ollama
 
 ```bash
 # One-time with arguments
-piconet-agent complete "Hello!" -u http://localhost:11434 -m llama3.2
+pico -u http://localhost:11434 -m llama3.2
 
 # Or set via environment
 export AGENT_BASE_URL=http://localhost:11434
 export AGENT_MODEL=llama3.2
-piconet-agent chat
+pico
 ```
 
 ### LM Studio
@@ -125,7 +130,7 @@ piconet-agent chat
 ```bash
 export AGENT_BASE_URL=http://localhost:1234/v1
 export AGENT_MODEL=local-model
-piconet-agent chat
+pico
 ```
 
 ### LiteLLM Proxy
@@ -134,7 +139,7 @@ piconet-agent chat
 export AGENT_BASE_URL=http://localhost:4000
 export AGENT_API_KEY=your-key
 export AGENT_MODEL=gpt-4o
-piconet-agent chat
+pico
 ```
 
 ## License

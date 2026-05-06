@@ -24,7 +24,7 @@ cat > /tmp/piconet-pack/tools/net10.0/any/DotnetToolSettings.xml << 'SETTINGS'
 <?xml version="1.0" encoding="utf-8"?>
 <DotNetCliTool Version="1">
   <Commands>
-    <Command Name="piconet-agent" EntryPoint="piconet-agent.dll" Runner="dotnet" />
+    <Command Name="pico" EntryPoint="piconet-agent.dll" Runner="dotnet" />
   </Commands>
 </DotNetCliTool>
 SETTINGS
@@ -93,7 +93,7 @@ if [ "$1" = "install" ]; then
     dotnet tool uninstall --global piconet.agent 2>/dev/null || true
     dotnet tool install --add-source /home/lars/source/picoNET/picoNET.agent/nupkg --global piconet.agent
     echo ""
-    echo "Installed! Run 'piconet-agent' to get started."
+    echo "Installed! Run 'pico' to start chatting."
 fi
 
 # Cleanup

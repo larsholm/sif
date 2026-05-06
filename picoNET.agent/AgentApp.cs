@@ -12,8 +12,7 @@ internal class AgentApp
     {
         if (args.Length == 0)
         {
-            ShowHelp();
-            return 0;
+            return await RunChat(Array.Empty<string>());
         }
 
         var cmd = args[0].ToLowerInvariant();
@@ -40,18 +39,25 @@ internal class AgentApp
 
     private static void ShowHelp()
     {
-        AnsiConsole.MarkupLine("[green]picoNET agent[/] - AI agent for local OpenAI-compatible models");
+        AnsiConsole.MarkupLine("[green]pico[/] - AI agent for local OpenAI-compatible models");
         AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine("Usage: [bold]piconet-agent <command>[/]");
+        AnsiConsole.MarkupLine("Usage: [bold]pico [options...][/]");
         AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine("  [bold]chat[/]     Start an interactive chat session");
+        AnsiConsole.MarkupLine("  (no args)     Start an interactive chat session");
         AnsiConsole.MarkupLine("  [bold]complete[/]  Run a one-off prompt and exit");
         AnsiConsole.MarkupLine("  [bold]config[/]  Show or set configuration");
         AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine("Options (all commands):");
+        AnsiConsole.WriteLine("  -m, --model <name>     Model to use");
+        AnsiConsole.WriteLine("  -u, --base-url <url>   API base URL");
+        AnsiConsole.WriteLine("  -k, --api-key <key>    API key");
+        AnsiConsole.WriteLine("  -s, --system <text>    System prompt");
+        AnsiConsole.WriteLine("  -n, --no-stream        Disable streaming output");
+        AnsiConsole.WriteLine();
         AnsiConsole.WriteLine("Environment variables:");
-        AnsiConsole.WriteLine("  AGENT_BASE_URL  - OpenAI-compatible API base URL (default: https://api.openai.com)");
+        AnsiConsole.WriteLine("  AGENT_BASE_URL  - OpenAI-compatible API base URL");
         AnsiConsole.WriteLine("  AGENT_API_KEY   - API key (optional for local models)");
-        AnsiConsole.WriteLine("  AGENT_MODEL     - Model name (default: gpt-4o)");
+        AnsiConsole.WriteLine("  AGENT_MODEL     - Model name");
     }
 
     private static CliArgs ParseArgs(string[] args)
@@ -121,7 +127,7 @@ internal class AgentApp
         var config = AgentConfig.Build(opts.BaseUrl, opts.ApiKey, opts.Model);
         var client = new AgentClient(config);
 
-        AnsiConsole.MarkupLine($"[green]picoNET agent[/] - [dim]{config.Model} @ {config.BaseUrl}[/]");
+        AnsiConsole.MarkupLine($"[green]pico[/] - [dim]{config.Model} @ {config.BaseUrl}[/]");
         AnsiConsole.MarkupLine("Type [bold]/quit[/] or [bold]/exit[/] to quit, [bold]/clear[/] to reset conversation, [bold]/sys <prompt>[/] to change system prompt.");
         AnsiConsole.MarkupLine("[dim]Press Ctrl+C to exit.[/]\n");
 
