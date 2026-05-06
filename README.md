@@ -46,7 +46,7 @@ pico config --set TOOLS=bash,read,edit,write
 pico
 ```
 
-**Note:** Tool calling is non-streaming (the model decides whether to use tools, then returns the final response).
+**Note:** Tool calling is non-streaming (the model decides whether to use tools, then returns the final response). Thinking display requires model support for `<thinking>` tags.
 
 ## Usage
 
