@@ -42,6 +42,7 @@ internal static class ToolRegistry
                         "type": "object",
                         "properties": {
                             "path": { "type": "string", "description": "Path to the file to read" },
+                            "skiplines": { "type": "integer", "description": "Number of lines to skip from the start (default 0)" },
                             "limit": { "type": "integer", "description": "Max lines to read (default 200)" }
                         },
                         "required": ["path"]
@@ -198,6 +199,7 @@ internal static class ToolRegistry
         using var doc = JsonDocument.Parse(argsJson);
         var root = doc.RootElement;
         var path = ResolvePath(root.GetProperty("path").GetString() ?? "");
+        var skiplines = root.TryGetProperty("skiplines", out var s) ? s.GetInt32() : 0;
         var limit = root.TryGetProperty("limit", out var l) ? l.GetInt32() : 200;
 
         if (!File.Exists(path))
@@ -219,6 +221,8 @@ internal static class ToolRegistry
             || path.Contains("Makefile") || path.Contains("Dockerfile") || path.Contains("Vagrantfile"))
         {
             var lines = File.ReadAllLines(path);
+            if (lines.Length > skiplines)
+                lines = lines.Skip(skiplines).ToArray();
             if (lines.Length > limit)
                 return string.Join('\n', lines.Take(limit)) + $"\n... ({lines.Length - limit} more lines)";
             return string.Join('\n', lines);
