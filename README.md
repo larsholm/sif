@@ -46,7 +46,7 @@ pico config --set TOOLS=bash,read,edit,write
 pico
 ```
 
-**Note:** Tool calling is non-streaming (the model decides whether to use tools, then returns the final response). Thinking display requires model support for `<thinking>` tags.
+**Note:** Tool calling is non-streaming (the model decides whether to use tools, then returns the final response). Thinking/reasoning display works for OpenAI o-series models and Qwen3.x models via vLLM.
 
 ## Usage
 
@@ -103,6 +103,7 @@ pico config --set BASE_URL=http://100.118.58.55:8020/v1
 | `-s, --system`       | System prompt                  |
 | `-n, --no-stream`    | Disable streaming output       |
 | `--tools`            | Enable tools: bash,edit,read,write |
+| `--thinking`         | Enable model thinking/reasoning (true/false) |
 
 ## Environment Variables
 
@@ -114,6 +115,7 @@ pico config --set BASE_URL=http://100.118.58.55:8020/v1
 | `AGENT_TOOLS`      | Comma-separated list of tools            | -                    |
 | `AGENT_MAX_TOKENS` | Maximum output tokens                    | model default        |
 | `AGENT_TEMPERATURE`| Sampling temperature (0-1)               | model default        |
+| `AGENT_THINKING_ENABLED` | Enable model thinking/reasoning      | `false`              |
 
 ## Chat Commands
 
@@ -124,6 +126,7 @@ During a chat session, type these commands:
 | `/quit` or `/exit` | Exit the chat session                   |
 | `/clear`             | Clear conversation history (keeps system prompt) |
 | `/sys <prompt>`     | Change the system prompt                 |
+| `/help`              | Show help and options                    |
 
 ## Examples
 
@@ -168,6 +171,20 @@ export AGENT_MODEL=gpt-4o
 pico
 ```
 
+### Thinking / Reasoning
+
+```bash
+# Enable thinking for Qwen3.x via vLLM (enabled by default)
+pico --thinking true -u http://100.118.58.55:8020/v1 -m qwen3.6-27b-autoround
+
+# Enable thinking for OpenAI o-series
+pico --thinking true -m o3-mini
+
+# Persistent setting
+pico config --set THINKING_ENABLED=true
+```
+
+**Note:** For Qwen3.x models, thinking is enabled by default on the server. The `--thinking` flag enables display of the reasoning output. When thinking is enabled on non-OpenAI models, non-streaming mode is used automatically (reasoning is a separate response field the SDK can't stream).
 ## License
 
 MIT

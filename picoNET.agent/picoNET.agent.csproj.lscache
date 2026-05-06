@@ -14,14 +14,24 @@ lastDtbSucceeded
 
 [properties]
 AssemblyName=piconet-agent
+CommandLineArgsForDesignTimeEvaluation=-langversion:14.0 -define:TRACE
+CompilerGeneratedFilesOutputPath=
+MaxSupportedLangVersion=14.0
+ProjectAssetsFile=<PATH>obj/project.assets.json
+RootNamespace=picoNET.agent
+RunAnalyzers=
+RunAnalyzersDuringLiveAnalysis=
+SolutionPath=*Undefined*
+TargetFrameworkIdentifier=.NETCoreApp
 TargetPath=<PATH>bin/Debug/net10.0/piconet-agent.dll
 TargetRefPath=<PATH>obj/Debug/net10.0/ref/piconet-agent.dll
+TemporaryDependencyNodeTargetIdentifier=net10.0
 
 [commandLineArguments]
 /noconfig
 /unsafe-
 /checked-
-/nowarn:1701,1702,1701,1702
+/nowarn:1701,1702,OPENAI001,1701,1702
 /fullpaths
 /nostdlib+
 /errorreport:prompt
@@ -227,20 +237,25 @@ Services/
  System.Xml.XPath.XDocument.dll
  WindowsBase.dll
 <NUGET>/
- microsoft.extensions.configuration.abstractions/9.0.0/lib/net9.0/Microsoft.Extensions.Configuration.Abstractions.dll
+ microsoft.extensions.configuration.abstractions/10.0.3/lib/net10.0/Microsoft.Extensions.Configuration.Abstractions.dll
  microsoft.extensions.configuration.environmentvariables/9.0.0/lib/net9.0/Microsoft.Extensions.Configuration.EnvironmentVariables.dll
  microsoft.extensions.configuration.fileextensions/9.0.0/lib/net9.0/Microsoft.Extensions.Configuration.FileExtensions.dll
  microsoft.extensions.configuration.json/9.0.0/lib/net9.0/Microsoft.Extensions.Configuration.Json.dll
  microsoft.extensions.configuration/9.0.0/lib/net9.0/Microsoft.Extensions.Configuration.dll
- microsoft.extensions.fileproviders.abstractions/9.0.0/lib/net9.0/Microsoft.Extensions.FileProviders.Abstractions.dll
+ microsoft.extensions.dependencyinjection.abstractions/10.0.3/lib/net10.0/Microsoft.Extensions.DependencyInjection.Abstractions.dll
+ microsoft.extensions.diagnostics.abstractions/10.0.3/lib/net10.0/Microsoft.Extensions.Diagnostics.Abstractions.dll
+ microsoft.extensions.fileproviders.abstractions/10.0.3/lib/net10.0/Microsoft.Extensions.FileProviders.Abstractions.dll
  microsoft.extensions.fileproviders.physical/9.0.0/lib/net9.0/Microsoft.Extensions.FileProviders.Physical.dll
  microsoft.extensions.filesystemglobbing/9.0.0/lib/net9.0/Microsoft.Extensions.FileSystemGlobbing.dll
- microsoft.extensions.primitives/9.0.0/lib/net9.0/Microsoft.Extensions.Primitives.dll
- openai/2.1.0/lib/net6.0/OpenAI.dll
+ microsoft.extensions.hosting.abstractions/10.0.3/lib/net10.0/Microsoft.Extensions.Hosting.Abstractions.dll
+ microsoft.extensions.logging.abstractions/10.0.3/lib/net10.0/Microsoft.Extensions.Logging.Abstractions.dll
+ microsoft.extensions.options/10.0.3/lib/net10.0/Microsoft.Extensions.Options.dll
+ microsoft.extensions.primitives/10.0.3/lib/net10.0/Microsoft.Extensions.Primitives.dll
+ openai/2.10.0/lib/net10.0/OpenAI.dll
  spectre.console.cli/0.49.1/lib/net8.0/Spectre.Console.Cli.dll
  spectre.console/0.49.1/lib/net8.0/Spectre.Console.dll
- system.clientmodel/1.2.1/lib/net6.0/System.ClientModel.dll
- system.memory.data/6.0.0/lib/net6.0/System.Memory.Data.dll
+ system.clientmodel/1.10.0/lib/net10.0/System.ClientModel.dll
+ system.memory.data/10.0.3/lib/net10.0/System.Memory.Data.dll
 
 [analyzerReferences]
 <DOTNET>/packs/Microsoft.NETCore.App.Ref/10.0.4/analyzers/dotnet/cs/
@@ -253,6 +268,10 @@ Services/
 <DOTNET>/sdk/10.0.104/Sdks/Microsoft.NET.Sdk/analyzers/
  Microsoft.CodeAnalysis.CSharp.NetAnalyzers.dll
  Microsoft.CodeAnalysis.NetAnalyzers.dll
+<NUGET>/
+ microsoft.extensions.logging.abstractions/10.0.3/analyzers/dotnet/roslyn4.4/cs/Microsoft.Extensions.Logging.Generators.dll
+ microsoft.extensions.options/10.0.3/analyzers/dotnet/roslyn4.4/cs/Microsoft.Extensions.Options.SourceGeneration.dll
+ system.clientmodel/1.10.0/analyzers/dotnet/cs/System.ClientModel.SourceGeneration.dll
 
 [analyzerConfigFiles]
 <DOTNET>/sdk/10.0.104/Sdks/Microsoft.NET.Sdk/analyzers/build/config/analysislevel_10_default.globalconfig

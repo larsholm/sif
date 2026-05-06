@@ -7,12 +7,13 @@ namespace picoNET.agent;
 /// </summary>
 internal class AgentConfig
 {
-    public string BaseUrl { get; set; } = "https://api.openai.com";
+    public string BaseUrl { get; set; } = "http://100.118.58.55:8020/v1";
     public string? ApiKey { get; set; }
-    public string Model { get; set; } = "gpt-4o";
+    public string Model { get; set; } = "qwen3.6-27b-autoround";
     public int? MaxTokens { get; set; }
     public float? Temperature { get; set; }
     public string[]? Tools { get; set; }
+    public bool? ThinkingEnabled { get; set; } = true;
     public Dictionary<string, string> Values { get; set; } = new();
 
     private const string ConfigFileName = "piconet-agent.json";
@@ -67,6 +68,7 @@ internal class AgentConfig
                     config.MaxTokens = loaded.MaxTokens;
                     config.Temperature = loaded.Temperature;
                     config.Tools = loaded.Tools;
+                    config.ThinkingEnabled = loaded.ThinkingEnabled;
                     config.Values = loaded.Values;
                 }
             }
@@ -89,6 +91,8 @@ internal class AgentConfig
             config.Temperature = envTemp;
         if (Environment.GetEnvironmentVariable("AGENT_TOOLS") is { Length: > 0 } envTools)
             config.Tools = envTools.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (bool.TryParse(Environment.GetEnvironmentVariable("AGENT_THINKING_ENABLED"), out var envThinking))
+            config.ThinkingEnabled = envThinking;
 
         return config;
     }

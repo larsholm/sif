@@ -26,8 +26,15 @@ internal class AgentApp
             if (arg.StartsWith("--api-key=")) continue;
             if (arg == "--system") { skipNext = true; continue; }
             if (arg.StartsWith("--system=")) continue;
+            if (arg == "--thinking") { skipNext = true; continue; }
+            if (arg.StartsWith("--thinking=")) continue;
             if (arg == "-m" || arg == "-u" || arg == "-k" || arg == "-s") { skipNext = true; continue; }
-            if (arg == "-n" || arg == "--no-stream" || arg == "--help" || arg == "-h") continue;
+            if (arg == "-n" || arg == "--no-stream") continue;
+            if (arg == "--help" || arg == "-h")
+            {
+                ShowHelp();
+                return 0;
+            }
             if (arg.StartsWith("-m=")) continue;
             if (arg.StartsWith("-u=")) continue;
             if (arg.StartsWith("-k=")) continue;
@@ -78,12 +85,14 @@ internal class AgentApp
         AnsiConsole.WriteLine("  -s, --system <text>    System prompt");
         AnsiConsole.WriteLine("  -n, --no-stream        Disable streaming output");
         AnsiConsole.WriteLine("  --tools <list>         Enable tools: bash,edit,read,write (comma-separated)");
+        AnsiConsole.WriteLine("  --thinking <true|false> Enable model thinking/reasoning");
         AnsiConsole.WriteLine();
         AnsiConsole.WriteLine("Environment variables:");
         AnsiConsole.WriteLine("  AGENT_BASE_URL  - OpenAI-compatible API base URL");
         AnsiConsole.WriteLine("  AGENT_API_KEY   - API key (optional for local models)");
         AnsiConsole.WriteLine("  AGENT_MODEL     - Model name");
         AnsiConsole.WriteLine("  AGENT_TOOLS     - Comma-separated list of tools to enable");
+        AnsiConsole.WriteLine("  AGENT_THINKING_ENABLED - Enable model thinking/reasoning");
     }
 
     private static CliArgs ParseArgs(string[] args)
@@ -102,11 +111,12 @@ internal class AgentApp
                 else if (pendingFlag == "-u" || pendingFlag == "--base-url") opts.BaseUrl = arg;
                 else if (pendingFlag == "-k" || pendingFlag == "--api-key") opts.ApiKey = arg;
                 else if (pendingFlag == "--tools") opts.Tools = arg.Split(',').Select(s => s.Trim()).ToArray();
+                else if (pendingFlag == "--thinking") opts.Thinking = ParseThinkingArg(arg);
                 pendingFlag = null;
                 continue;
             }
 
-            if (arg is "-s" or "--system" or "-m" or "--model" or "-u" or "--base-url" or "-k" or "--api-key" or "--tools")
+            if (arg is "-s" or "--system" or "-m" or "--model" or "-u" or "--base-url" or "-k" or "--api-key" or "--tools" or "--thinking")
             {
                 nextIsValue = true;
                 pendingFlag = arg;
@@ -121,6 +131,8 @@ internal class AgentApp
                 opts.BaseUrl = arg[(arg.StartsWith("-u ") ? 3 : 11)..].Trim();
             else if (arg.StartsWith("-k ") || arg.StartsWith("--api-key "))
                 opts.ApiKey = arg[(arg.StartsWith("-k ") ? 3 : 11)..].Trim();
+            else if (arg.StartsWith("--thinking "))
+                opts.Thinking = ParseThinkingArg(arg["--thinking ".Length..].Trim());
             else if (arg is "-n" or "--no-stream")
                 opts.NoStream = true;
             else if (arg.StartsWith("-s="))
@@ -141,6 +153,8 @@ internal class AgentApp
                 opts.ApiKey = arg[11..];
             else if (arg.StartsWith("--tools="))
                 opts.Tools = arg[8..].Split(',').Select(s => s.Trim()).ToArray();
+            else if (arg.StartsWith("--thinking="))
+                opts.Thinking = ParseThinkingArg(arg["--thinking=".Length..].Trim());
             else if (!arg.StartsWith("-"))
             {
                 opts.Positional ??= new List<string>();
@@ -154,6 +168,8 @@ internal class AgentApp
     {
         var opts = ParseArgs(args);
         var config = AgentConfig.Build(opts.BaseUrl, opts.ApiKey, opts.Model);
+        if (opts.Thinking.HasValue)
+            config.ThinkingEnabled = opts.Thinking;
         var tools = ResolveTools(opts.Tools, config);
         var client = new AgentClient(config, tools);
 
@@ -161,7 +177,7 @@ internal class AgentApp
         if (tools?.Length > 0)
             header += $" [dim]tools: {string.Join(", ", tools)}[/]";
         AnsiConsole.MarkupLine(header);
-        AnsiConsole.MarkupLine("Type [bold]/quit[/] or [bold]/exit[/] to quit, [bold]/clear[/] to reset conversation, [bold]/sys <prompt>[/] to change system prompt.");
+        AnsiConsole.MarkupLine("Type [bold]/quit[/] or [bold]/exit[/] to quit, [bold]/clear[/] to reset conversation, [bold]/sys <prompt>[/] to change system prompt, [bold]/help[/] for help.");
         AnsiConsole.MarkupLine("[dim]Press Ctrl+C to exit.[/]\n");
 
         var history = new List<ChatMessage>();
@@ -172,10 +188,7 @@ internal class AgentApp
         {
             // Default system prompt for tool-enabled mode that encourages thinking
             history.Add(new ChatMessage("system",
-                "You are a helpful assistant with access to tools. " +
-                "You MUST output your reasoning in <thinking> and </thinking> tags before calling any tools. " +
-                "Explain what you understand about the request, what tools you might need, and your plan of action. " +
-                "Only after your thinking should you call tools or provide a response. Never skip the thinking step."));
+                "You are a helpful assistant with access to tools."));
         }
 
         bool running = true;
@@ -210,6 +223,10 @@ internal class AgentApp
                     else history.Insert(0, new ChatMessage("system", newSys));
                     AnsiConsole.MarkupLine("[dim]System prompt updated.[/]\n");
                 }
+                else if (trimmed == "/help")
+                {
+                    ShowHelp();
+                }
                 else
                 {
                     AnsiConsole.MarkupLine($"[yellow]Unknown command: {trimmed}[/]");
@@ -228,10 +245,23 @@ internal class AgentApp
                     var (response, tokenCount) = await client.ChatWithToolsAsync(history);
                     AnsiConsole.MarkupLine($"[dim]\n({tokenCount} tokens)[/]\n");
                 }
-                else if (opts.NoStream)
+                else if (opts.NoStream || (config.ThinkingEnabled ?? false) && !IsOModel(config.Model))
                 {
+                    // Use non-streaming when thinking is enabled on non-OpenAI models
+                    // because reasoning is in a separate response field the SDK can't stream
+                    var useNonStream = !opts.NoStream && (config.ThinkingEnabled ?? false);
+                    if (useNonStream)
+                        AnsiConsole.MarkupLine("[dim](thinking enabled, using non-streaming mode)[/]");
                     AnsiConsole.Write("[green]agent>[/] ");
-                    var response = await client.ChatAsync(history);
+                    var (response, reasoning) = await client.ChatAsync(history);
+                    if (!string.IsNullOrEmpty(reasoning))
+                    {
+                        AnsiConsole.MarkupLine("");
+                        AnsiConsole.MarkupLine("[dim]Thinking:[/]");
+                        foreach (var line in reasoning.Trim().Split('\n'))
+                            AnsiConsole.MarkupLine("[dim]  " + line.EscapeMarkup() + "[/]");
+                        AnsiConsole.MarkupLine("");
+                    }
                     AnsiConsole.MarkupLine(response);
                     history.Add(new ChatMessage("assistant", response));
                 }
@@ -252,6 +282,17 @@ internal class AgentApp
 
         AnsiConsole.MarkupLine("\n[dim]Goodbye![/]");
         return 0;
+    }
+
+    private static bool ParseThinkingArg(string arg)
+    {
+        return arg.ToLowerInvariant() is "true" or "1" or "yes";
+    }
+
+    private static bool IsOModel(string model)
+    {
+        return model.StartsWith("o1", StringComparison.OrdinalIgnoreCase) ||
+               model.StartsWith("o3", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string[]? ResolveTools(string[]? cliTools, AgentConfig config)
@@ -295,6 +336,8 @@ internal class AgentApp
         }
 
         var config = AgentConfig.Build(opts.BaseUrl, opts.ApiKey, opts.Model);
+        if (opts.Thinking.HasValue)
+            config.ThinkingEnabled = opts.Thinking;
         var client = new AgentClient(config);
 
         AnsiConsole.MarkupLine($"[dim]Model: {config.Model}[/]");
@@ -305,7 +348,14 @@ internal class AgentApp
 
         try
         {
-            var response = await client.CompleteAsync(prompt, opts.SystemPrompt);
+            var (response, reasoning) = await client.CompleteAsync(prompt, opts.SystemPrompt);
+            if (!string.IsNullOrEmpty(reasoning))
+            {
+                AnsiConsole.MarkupLine("[dim]Thinking:[/]");
+                foreach (var line in reasoning.Trim().Split('\n'))
+                    AnsiConsole.MarkupLine("[dim]  " + line.EscapeMarkup() + "[/]");
+                AnsiConsole.MarkupLine("");
+            }
             AnsiConsole.MarkupLine("[green]Response:[/]");
             AnsiConsole.MarkupLine(response);
         }
@@ -349,6 +399,7 @@ internal class AgentApp
             ("AGENT_MODEL", "Model", config.Model),
             ("AGENT_MAX_TOKENS", "Max Tokens", config.MaxTokens?.ToString() ?? "default"),
             ("AGENT_TEMPERATURE", "Temperature", config.Temperature?.ToString() ?? "default"),
+            ("AGENT_THINKING_ENABLED", "Thinking", config.ThinkingEnabled?.ToString() ?? "default"),
         };
 
         foreach (var (key, label, value) in sources)
@@ -373,4 +424,5 @@ internal class CliArgs
     public string? ApiKey { get; set; }
     public bool NoStream { get; set; }
     public string[]? Tools { get; set; }
+    public bool? Thinking { get; set; }
 }
