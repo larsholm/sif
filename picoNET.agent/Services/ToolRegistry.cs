@@ -111,7 +111,7 @@ internal static class ToolRegistry
 
         var allowed = new HashSet<string>
         {
-            "ls", "cat", "grep", "find", "pwd", "head", "tail", "wc", "whoami",
+            "ls", "cat", "grep", "find", "pwd", "cd", "head", "tail", "wc", "whoami",
             "hostname", "date", "env", "echo", "file", "stat", "du", "df",
             "man", "locate", "which", "dirname", "basename", "realpath",
             "diff", "sort", "uniq", "tr", "cut", "sed", "awk", "gzip",
@@ -133,7 +133,7 @@ internal static class ToolRegistry
 
         var firstWord = command.Split(' ').FirstOrDefault()?.Trim() ?? "";
         if (!allowed.Contains(firstWord))
-            return $"Error: Command '{firstWord}' not allowed. Safe commands: ls, cat, grep, find, pwd, head, tail, wc, git, curl, python, node, jq, sed, awk, sort, uniq, tr, cut, mkdir, cp, mv, rm, touch, chmod, chown, tar, gzip, gunzip, zip, unzip, tree, less, more, strings, ping, ip, ifconfig, netstat, ss, ps, kill, top, lsof, mount, fdisk, blkid, test, command, type, alias, export, mktemp, vi, vim, nano, emacs, make, cmake, gcc, g++, clang, javac, java, ruby, swift, cl, rustc, cargo, dotnet, go, npm, yarn, pip, docker, kubectl, terraform, ansible, ssh, scp, rsync, diff, realpath, dirname, basename, xargs, tee, split, join, paste, comm, fold, fmt, pr, md5sum, sha1sum, sha256sum, base64, xxd, od, hexdump, dd, patch, cmp, diff3, sdiff";
+            return $"Error: Command '{firstWord}' not allowed. Safe commands: ls, cat, grep, find, pwd, cd, head, tail, wc, git, curl, python, node, jq, sed, awk, sort, uniq, tr, cut, mkdir, cp, mv, rm, touch, chmod, chown, tar, gzip, gunzip, zip, unzip, tree, less, more, strings, ping, ip, ifconfig, netstat, ss, ps, kill, top, lsof, mount, fdisk, blkid, test, command, type, alias, export, mktemp, vi, vim, nano, emacs, make, cmake, gcc, g++, clang, javac, java, ruby, swift, cl, rustc, cargo, dotnet, go, npm, yarn, pip, docker, kubectl, terraform, ansible, ssh, scp, rsync, diff, realpath, dirname, basename, xargs, tee, split, join, paste, comm, fold, fmt, pr, md5sum, sha1sum, sha256sum, base64, xxd, od, hexdump, dd, patch, cmp, diff3, sdiff";
 
         try
         {
