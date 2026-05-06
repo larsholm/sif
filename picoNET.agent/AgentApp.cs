@@ -221,7 +221,7 @@ internal class AgentApp
 
             if (trimmed.StartsWith("/"))
             {
-                if (trimmed == "/quit" || trimmed == "/exit")
+                if (trimmed == "/q" || trimmed == "/quit" || trimmed == "/exit")
                 {
                     running = false;
                 }
