@@ -74,11 +74,18 @@ internal class AgentClient
 
             totalTokens += result.Value.Usage?.TotalTokenCount ?? 0;
 
-            // Show any text the model generated (its thinking/reasoning)
+            // Show any thinking/reasoning text the model generated before tool calls
             var thinking = ExtractText(result.Value.Content);
-            if (!string.IsNullOrEmpty(thinking) && result.Value.ToolCalls.Count > 0)
+            if (!string.IsNullOrEmpty(thinking))
             {
-                AnsiConsole.MarkupLine("\n[dim]Thinking: " + thinking.EscapeMarkup() + "[/]");
+                thinking = ExtractThinking(thinking);
+                if (!string.IsNullOrWhiteSpace(thinking))
+                {
+                    AnsiConsole.MarkupLine("[dim]Thinking:[/]");
+                    foreach (var line in thinking.Trim().Split('\n'))
+                        AnsiConsole.MarkupLine("[dim]  " + line.EscapeMarkup() + "[/]");
+                    AnsiConsole.MarkupLine("");
+                }
             }
 
             // Check if the model wants to call tools
@@ -114,11 +121,23 @@ internal class AgentClient
             }
 
             // Final text response
-            var response = ExtractText(result.Value.Content);
-            history.Add(new ChatMessage("assistant", response));
+            var rawResponse = ExtractText(result.Value.Content);
+            var thinkingText = ExtractThinking(rawResponse);
+            var cleanResponse = StripThinkingTags(rawResponse);
+            
+            if (!string.IsNullOrEmpty(thinkingText))
+            {
+                AnsiConsole.MarkupLine("[dim]Thinking:[/]");
+                foreach (var line in thinkingText.Trim().Split('\n'))
+                    AnsiConsole.MarkupLine("[dim]  " + line.EscapeMarkup() + "[/]");
+                AnsiConsole.MarkupLine("");
+            }
+            
+            AnsiConsole.MarkupLine(cleanResponse.EscapeMarkup());
+            history.Add(new ChatMessage("assistant", cleanResponse));
             messages.Add(OpenAI.Chat.ChatMessage.CreateAssistantMessage(result.Value));
 
-            return (response, totalTokens);
+            return (cleanResponse, totalTokens);
         }
     }
 
@@ -184,5 +203,24 @@ internal class AgentClient
                 sb.Append(text);
         }
         return sb.ToString();
+    }
+
+    private static string StripThinkingTags(string text)
+    {
+        // Strip <thinking>...</thinking>, <thought>...</thought>, etc.
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"<\/?(?:thinking|thought|reasoning|think)>\s*", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return text;
+    }
+
+    private static string ExtractThinking(string text)
+    {
+        // Extract content from <thinking>...</thinking>, <thought>...</thought>, etc.
+        var match = System.Text.RegularExpressions.Regex.Match(text, @"<thinking>(.*?)</thinking>", System.Text.RegularExpressions.RegexOptions.Singleline | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (match.Success) return match.Groups[1].Value;
+        match = System.Text.RegularExpressions.Regex.Match(text, @"<thought>(.*?)</thought>", System.Text.RegularExpressions.RegexOptions.Singleline | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (match.Success) return match.Groups[1].Value;
+        match = System.Text.RegularExpressions.Regex.Match(text, @"<reasoning>(.*?)</reasoning>", System.Text.RegularExpressions.RegexOptions.Singleline | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (match.Success) return match.Groups[1].Value;
+        return "";
     }
 }

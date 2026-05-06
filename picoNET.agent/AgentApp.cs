@@ -168,6 +168,15 @@ internal class AgentApp
 
         if (!string.IsNullOrEmpty(opts.SystemPrompt))
             history.Add(new ChatMessage("system", opts.SystemPrompt));
+        else if (tools?.Length > 0)
+        {
+            // Default system prompt for tool-enabled mode that encourages thinking
+            history.Add(new ChatMessage("system",
+                "You are a helpful assistant with access to tools. " +
+                "You MUST output your reasoning in <thinking> and </thinking> tags before calling any tools. " +
+                "Explain what you understand about the request, what tools you might need, and your plan of action. " +
+                "Only after your thinking should you call tools or provide a response. Never skip the thinking step."));
+        }
 
         bool running = true;
         while (running)
