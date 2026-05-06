@@ -62,7 +62,7 @@ internal class AgentApp
             case "config":
                 return await RunConfig(rest);
             default:
-                AnsiConsole.MarkupLine($"[yellow]Unknown command: {cmd}[/]");
+                AnsiConsole.MarkupLine($"[yellow]Unknown command: {cmd.EscapeMarkup()}[/]");
                 ShowHelp();
                 return 1;
         }
@@ -246,13 +246,13 @@ internal class AgentApp
                 }
                 else
                 {
-                    AnsiConsole.MarkupLine($"[yellow]Unknown command: {trimmed}[/]");
+                    AnsiConsole.MarkupLine($"[yellow]Unknown command: {trimmed.EscapeMarkup()}[/]");
                 }
                 continue;
             }
 
             history.Add(new ChatMessage("user", trimmed));
-            AnsiConsole.MarkupLine($"[blue]user>[/] {trimmed}");
+            AnsiConsole.MarkupLine($"[blue]user>[/] {trimmed.EscapeMarkup()}");
 
             try
             {
@@ -279,7 +279,7 @@ internal class AgentApp
                             AnsiConsole.MarkupLine("[dim]  " + line.EscapeMarkup() + "[/]");
                         AnsiConsole.MarkupLine("");
                     }
-                    AnsiConsole.MarkupLine(response);
+                    AnsiConsole.MarkupLine(response.EscapeMarkup());
                     history.Add(new ChatMessage("assistant", response));
                 }
                 else
@@ -394,12 +394,12 @@ internal class AgentApp
                     AnsiConsole.MarkupLine("");
                 }
                 AnsiConsole.MarkupLine("[green]Response:[/]");
-                AnsiConsole.MarkupLine(response);
+                AnsiConsole.MarkupLine(response.EscapeMarkup());
             }
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] {ex.Message}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] {ex.Message.EscapeMarkup()}");
             return 1;
         }
 

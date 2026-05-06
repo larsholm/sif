@@ -167,15 +167,15 @@ internal class AgentClient
                     var argsJson = toolCall.FunctionArguments.ToString();
 
                     var preview = argsJson.Length > 80 ? argsJson.Substring(0, 80) + "..." : argsJson;
-                    AnsiConsole.MarkupLine("\n[dim]Tool: " + toolName + " (" + preview + ")[/]");
+                    AnsiConsole.MarkupLine($"\n[dim]Tool: {toolName.EscapeMarkup()} ({preview.EscapeMarkup()})[/]");
 
                     var toolResult = ToolRegistry.Execute(toolName, argsJson);
 
                     // Display tool result
                     if (toolResult.Length > 4000)
-                        AnsiConsole.MarkupLine("[dim]Result: " + toolResult.Substring(0, 4000) + "... (truncated)[/]");
+                        AnsiConsole.MarkupLine($"[dim]Result: {toolResult.Substring(0, 4000).EscapeMarkup()}... (truncated)[/]");
                     else
-                        AnsiConsole.MarkupLine("[dim]Result: " + toolResult + "[/]");
+                        AnsiConsole.MarkupLine($"[dim]Result: {toolResult.EscapeMarkup()}[/]");
 
                     // Truncate long results for the model
                     if (toolResult.Length > 16000)
