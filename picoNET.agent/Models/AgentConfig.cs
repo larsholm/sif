@@ -12,6 +12,7 @@ internal class AgentConfig
     public string Model { get; set; } = "gpt-4o";
     public int? MaxTokens { get; set; }
     public float? Temperature { get; set; }
+    public string[]? Tools { get; set; }
     public Dictionary<string, string> Values { get; set; } = new();
 
     private const string ConfigFileName = "piconet-agent.json";
@@ -65,6 +66,7 @@ internal class AgentConfig
                     config.Model = loaded.Model;
                     config.MaxTokens = loaded.MaxTokens;
                     config.Temperature = loaded.Temperature;
+                    config.Tools = loaded.Tools;
                     config.Values = loaded.Values;
                 }
             }
@@ -85,6 +87,8 @@ internal class AgentConfig
             config.MaxTokens = envMax;
         if (float.TryParse(Environment.GetEnvironmentVariable("AGENT_TEMPERATURE"), out var envTemp))
             config.Temperature = envTemp;
+        if (Environment.GetEnvironmentVariable("AGENT_TOOLS") is { Length: > 0 } envTools)
+            config.Tools = envTools.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
         return config;
     }

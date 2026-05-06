@@ -10,13 +10,41 @@ internal class AgentApp
 {
     public async Task<int> Run(string[] args)
     {
-        if (args.Length == 0)
+        // Find the first non-flag argument that isn't a value for a flag
+        string? firstNonFlag = null;
+        bool skipNext = false;
+        foreach (var arg in args)
         {
-            return await RunChat(Array.Empty<string>());
+            if (skipNext) { skipNext = false; continue; }
+            if (arg == "--tools") { skipNext = true; continue; }
+            if (arg.StartsWith("--tools=")) continue;
+            if (arg == "--model") { skipNext = true; continue; }
+            if (arg.StartsWith("--model=")) continue;
+            if (arg == "--base-url") { skipNext = true; continue; }
+            if (arg.StartsWith("--base-url=")) continue;
+            if (arg == "--api-key") { skipNext = true; continue; }
+            if (arg.StartsWith("--api-key=")) continue;
+            if (arg == "--system") { skipNext = true; continue; }
+            if (arg.StartsWith("--system=")) continue;
+            if (arg == "-m" || arg == "-u" || arg == "-k" || arg == "-s") { skipNext = true; continue; }
+            if (arg == "-n" || arg == "--no-stream" || arg == "--help" || arg == "-h") continue;
+            if (arg.StartsWith("-m=")) continue;
+            if (arg.StartsWith("-u=")) continue;
+            if (arg.StartsWith("-k=")) continue;
+            if (arg.StartsWith("-s=")) continue;
+            if (!arg.StartsWith("-"))
+            {
+                firstNonFlag = arg;
+                break;
+            }
         }
 
-        var cmd = args[0].ToLowerInvariant();
-        var rest = args.Skip(1).ToArray();
+        if (string.IsNullOrEmpty(firstNonFlag))
+            return await RunChat(args);
+
+        var cmdIndex = Array.IndexOf(args, firstNonFlag);
+        var cmd = firstNonFlag.ToLowerInvariant();
+        var rest = args.Skip(cmdIndex + 1).Concat(args.Take(cmdIndex)).ToArray();
 
         switch (cmd)
         {
@@ -26,10 +54,6 @@ internal class AgentApp
                 return await RunComplete(rest);
             case "config":
                 return await RunConfig(rest);
-            case "--help":
-            case "-h":
-                ShowHelp();
-                return 0;
             default:
                 AnsiConsole.MarkupLine($"[yellow]Unknown command: {cmd}[/]");
                 ShowHelp();
@@ -41,7 +65,7 @@ internal class AgentApp
     {
         AnsiConsole.MarkupLine("[green]pico[/] - AI agent for local OpenAI-compatible models");
         AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine("Usage: [bold]pico [options...][/]");
+        AnsiConsole.WriteLine("Usage: pico [--tools bash,edit,read,write] [--model name] [--base-url url]");
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine("  (no args)     Start an interactive chat session");
         AnsiConsole.MarkupLine("  [bold]complete[/]  Run a one-off prompt and exit");
@@ -53,11 +77,13 @@ internal class AgentApp
         AnsiConsole.WriteLine("  -k, --api-key <key>    API key");
         AnsiConsole.WriteLine("  -s, --system <text>    System prompt");
         AnsiConsole.WriteLine("  -n, --no-stream        Disable streaming output");
+        AnsiConsole.WriteLine("  --tools <list>         Enable tools: bash,edit,read,write (comma-separated)");
         AnsiConsole.WriteLine();
         AnsiConsole.WriteLine("Environment variables:");
         AnsiConsole.WriteLine("  AGENT_BASE_URL  - OpenAI-compatible API base URL");
         AnsiConsole.WriteLine("  AGENT_API_KEY   - API key (optional for local models)");
         AnsiConsole.WriteLine("  AGENT_MODEL     - Model name");
+        AnsiConsole.WriteLine("  AGENT_TOOLS     - Comma-separated list of tools to enable");
     }
 
     private static CliArgs ParseArgs(string[] args)
@@ -75,11 +101,12 @@ internal class AgentApp
                 else if (pendingFlag == "-m" || pendingFlag == "--model") opts.Model = arg;
                 else if (pendingFlag == "-u" || pendingFlag == "--base-url") opts.BaseUrl = arg;
                 else if (pendingFlag == "-k" || pendingFlag == "--api-key") opts.ApiKey = arg;
+                else if (pendingFlag == "--tools") opts.Tools = arg.Split(',').Select(s => s.Trim()).ToArray();
                 pendingFlag = null;
                 continue;
             }
 
-            if (arg is "-s" or "--system" or "-m" or "--model" or "-u" or "--base-url" or "-k" or "--api-key")
+            if (arg is "-s" or "--system" or "-m" or "--model" or "-u" or "--base-url" or "-k" or "--api-key" or "--tools")
             {
                 nextIsValue = true;
                 pendingFlag = arg;
@@ -112,6 +139,8 @@ internal class AgentApp
                 opts.ApiKey = arg[3..];
             else if (arg.StartsWith("--api-key="))
                 opts.ApiKey = arg[11..];
+            else if (arg.StartsWith("--tools="))
+                opts.Tools = arg[8..].Split(',').Select(s => s.Trim()).ToArray();
             else if (!arg.StartsWith("-"))
             {
                 opts.Positional ??= new List<string>();
@@ -125,9 +154,13 @@ internal class AgentApp
     {
         var opts = ParseArgs(args);
         var config = AgentConfig.Build(opts.BaseUrl, opts.ApiKey, opts.Model);
-        var client = new AgentClient(config);
+        var tools = ResolveTools(opts.Tools, config);
+        var client = new AgentClient(config, tools);
 
-        AnsiConsole.MarkupLine($"[green]pico[/] - [dim]{config.Model} @ {config.BaseUrl}[/]");
+        var header = $"[green]pico[/] - [dim]{config.Model} @ {config.BaseUrl}[/]";
+        if (tools?.Length > 0)
+            header += $" [dim]tools: {string.Join(", ", tools)}[/]";
+        AnsiConsole.MarkupLine(header);
         AnsiConsole.MarkupLine("Type [bold]/quit[/] or [bold]/exit[/] to quit, [bold]/clear[/] to reset conversation, [bold]/sys <prompt>[/] to change system prompt.");
         AnsiConsole.MarkupLine("[dim]Press Ctrl+C to exit.[/]\n");
 
@@ -177,18 +210,25 @@ internal class AgentApp
 
             history.Add(new ChatMessage("user", trimmed));
             AnsiConsole.MarkupLine($"[blue]user>[/] {trimmed}");
-            AnsiConsole.Write("[green]agent>[/] ");
 
             try
             {
-                if (opts.NoStream)
+                if (tools?.Length > 0)
                 {
+                    AnsiConsole.Write("[green]agent>[/] ");
+                    var (response, tokenCount) = await client.ChatWithToolsAsync(history);
+                    AnsiConsole.MarkupLine($"[dim]\n({tokenCount} tokens)[/]\n");
+                }
+                else if (opts.NoStream)
+                {
+                    AnsiConsole.Write("[green]agent>[/] ");
                     var response = await client.ChatAsync(history);
                     AnsiConsole.MarkupLine(response);
                     history.Add(new ChatMessage("assistant", response));
                 }
                 else
                 {
+                    AnsiConsole.Write("[green]agent>[/] ");
                     var (response, tokenCount) = await client.ChatStreamingAsync(history);
                     history.Add(new ChatMessage("assistant", response));
                     AnsiConsole.MarkupLine($"[dim]\n({tokenCount} tokens)[/]\n");
@@ -203,6 +243,19 @@ internal class AgentApp
 
         AnsiConsole.MarkupLine("\n[dim]Goodbye![/]");
         return 0;
+    }
+
+    private static string[]? ResolveTools(string[]? cliTools, AgentConfig config)
+    {
+        if (cliTools?.Length > 0)
+            return cliTools;
+
+        var envTools = Environment.GetEnvironmentVariable("AGENT_TOOLS");
+        if (!string.IsNullOrEmpty(envTools))
+            return envTools.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        var fileTools = config.Tools;
+        return fileTools;
     }
 
     private async Task<int> RunComplete(string[] args)
@@ -310,4 +363,5 @@ internal class CliArgs
     public string? BaseUrl { get; set; }
     public string? ApiKey { get; set; }
     public bool NoStream { get; set; }
+    public string[]? Tools { get; set; }
 }

@@ -53,7 +53,9 @@ obj/Debug/net10.0/
  picoNET.agent.AssemblyInfo.cs
  picoNET.agent.GlobalUsings.g.cs
 Program.cs
-Services/AgentClient.cs
+Services/
+ AgentClient.cs
+ ToolRegistry.cs
 
 [metadataReferences]
 <DOTNET>/packs/Microsoft.NETCore.App.Ref/10.0.4/ref/net10.0/
