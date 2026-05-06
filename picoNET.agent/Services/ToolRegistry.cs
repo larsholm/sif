@@ -141,7 +141,9 @@ internal static class ToolRegistry
             var scriptPath = Path.Combine(Path.GetTempPath(), $"pico_bash_{Guid.NewGuid():N}.sh");
             File.WriteAllText(scriptPath, "#!/bin/bash\n" + command);
             // Make executable
-            _ = Process.Start(new ProcessStartInfo("chmod", $"+x \"{scriptPath}\"") { UseShellExecute = false });
+            var chmod = Process.Start(new ProcessStartInfo("chmod", $"+x \"{scriptPath}\"") { UseShellExecute = false });
+            if (chmod != null)
+                chmod.WaitForExit();
 
             var psi = new ProcessStartInfo
             {
