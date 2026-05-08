@@ -209,13 +209,14 @@ internal class AgentApp
         }
 
         bool running = true;
+        var files = new Lazy<List<string>>(GetFiles);
+
         while (running)
         {
-            AnsiConsole.Write(new Markup("[blue]user>[/] "));
-            string? input = await Console.In.ReadLineAsync();
+            string? input = await ReadChatInputAsync(files);
 
             if (input is null) break;
-            if (input.Trim() == "") continue;
+            if (string.IsNullOrWhiteSpace(input)) continue;
 
             var trimmed = input.Trim();
 
@@ -252,7 +253,6 @@ internal class AgentApp
             }
 
             history.Add(new ChatMessage("user", trimmed));
-            AnsiConsole.MarkupLine($"[blue]user>[/] {trimmed.EscapeMarkup()}");
 
             try
             {
@@ -450,6 +450,189 @@ internal class AgentApp
 
         AnsiConsole.Write(table);
         return 0;
+    }
+
+    private async Task<string?> ReadChatInputAsync(Lazy<List<string>> files)
+    {
+        var sb = new StringBuilder();
+        int cursor = 0;
+        AnsiConsole.Write(new Markup("[blue]user>[/] "));
+
+        while (true)
+        {
+            if (!Console.KeyAvailable)
+            {
+                await Task.Delay(20);
+                continue;
+            }
+
+            var key = Console.ReadKey(intercept: true);
+
+            if (key.Key == ConsoleKey.Enter)
+            {
+                Console.WriteLine();
+                return sb.ToString();
+            }
+
+            if (key.Key == ConsoleKey.Backspace)
+            {
+                if (cursor > 0)
+                {
+                    sb.Remove(cursor - 1, 1);
+                    cursor--;
+                    Console.Write("\b \b");
+                    if (cursor < sb.Length)
+                    {
+                        var remaining = sb.ToString()[cursor..];
+                        Console.Write(remaining + " ");
+                        for (int i = 0; i <= remaining.Length; i++) Console.Write("\b");
+                    }
+                }
+                continue;
+            }
+
+            if (key.Key == ConsoleKey.Delete)
+            {
+                if (cursor < sb.Length)
+                {
+                    sb.Remove(cursor, 1);
+                    var remaining = sb.ToString()[cursor..];
+                    Console.Write(remaining + " ");
+                    for (int i = 0; i <= remaining.Length; i++) Console.Write("\b");
+                }
+                continue;
+            }
+
+            if (key.Key == ConsoleKey.Home)
+            {
+                while (cursor > 0)
+                {
+                    Console.Write("\b");
+                    cursor--;
+                }
+                continue;
+            }
+
+            if (key.Key == ConsoleKey.End)
+            {
+                while (cursor < sb.Length)
+                {
+                    Console.Write(sb[cursor]);
+                    cursor++;
+                }
+                continue;
+            }
+
+            if (key.Key == ConsoleKey.LeftArrow)
+            {
+                if (cursor > 0)
+                {
+                    cursor--;
+                    Console.Write("\b");
+                }
+                continue;
+            }
+
+            if (key.Key == ConsoleKey.RightArrow)
+            {
+                if (cursor < sb.Length)
+                {
+                    Console.Write(sb[cursor]);
+                    cursor++;
+                }
+                continue;
+            }
+
+            if (key.Modifiers.HasFlag(ConsoleModifiers.Control) && key.Key == ConsoleKey.C)
+            {
+                return null;
+            }
+
+            if (key.Key == ConsoleKey.Tab)
+            {
+                // Find the word starting with # before the cursor
+                string currentText = sb.ToString();
+                int hashIdx = -1;
+                for (int i = cursor - 1; i >= 0; i--)
+                {
+                    if (currentText[i] == '#') { hashIdx = i; break; }
+                    if (char.IsWhiteSpace(currentText[i])) break;
+                }
+
+                if (hashIdx >= 0)
+                {
+                    string prefix = currentText.Substring(hashIdx + 1, cursor - (hashIdx + 1));
+                    var matches = files.Value
+                        .Where(f => f.Contains(prefix, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+
+                    if (matches.Count > 0)
+                    {
+                        string? choice = null;
+                        if (matches.Count == 1)
+                        {
+                            choice = matches[0];
+                        }
+                        else
+                        {
+                            choice = AnsiConsole.Prompt(
+                                new SelectionPrompt<string>()
+                                    .Title("Select a file")
+                                    .PageSize(10)
+                                    .AddChoices(matches));
+                        }
+
+                        if (choice != null)
+                        {
+                            sb.Remove(hashIdx + 1, prefix.Length);
+                            sb.Insert(hashIdx + 1, choice);
+                            cursor = hashIdx + 1 + choice.Length;
+
+                            // Redraw
+                            Console.Write("\r" + new string(' ', Math.Max(0, Console.WindowWidth - 1)) + "\r");
+                            AnsiConsole.Write(new Markup("[blue]user>[/] "));
+                            Console.Write(sb.ToString());
+                            for (int i = 0; i < sb.Length - cursor; i++) Console.Write("\b");
+                        }
+                    }
+                }
+                continue;
+            }
+            else if (!char.IsControl(key.KeyChar))
+            {
+                sb.Insert(cursor, key.KeyChar);
+                cursor++;
+                Console.Write(key.KeyChar);
+                if (cursor < sb.Length)
+                {
+                    var remaining = sb.ToString()[cursor..];
+                    Console.Write(remaining);
+                    for (int i = 0; i < remaining.Length; i++) Console.Write("\b");
+                }
+            }
+        }
+    }
+
+    private List<string> GetFiles()
+    {
+        var root = Environment.CurrentDirectory;
+        var files = new List<string>();
+        try
+        {
+            var excludeDirs = new HashSet<string> { ".git", "bin", "obj", "node_modules", ".vs", ".vscode", ".gemini" };
+
+            foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+            {
+                var relative = Path.GetRelativePath(root, file);
+                var parts = relative.Split(Path.DirectorySeparatorChar);
+                if (!parts.Any(p => excludeDirs.Contains(p) || p.StartsWith(".")))
+                {
+                    files.Add(relative.Replace(Path.DirectorySeparatorChar, '/'));
+                }
+            }
+        }
+        catch { }
+        return files;
     }
 }
 
