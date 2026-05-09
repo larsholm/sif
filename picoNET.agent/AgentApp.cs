@@ -294,7 +294,8 @@ internal class AgentApp
                 continue;
             }
 
-            history.Add(new ChatMessage("user", trimmed));
+            var historyContent = PrepareUserMessageForHistory(trimmed, tools);
+            history.Add(new ChatMessage("user", historyContent));
 
             try
             {
@@ -359,6 +360,10 @@ internal class AgentApp
 
         try
         {
+            var completed = await Task.WhenAny(actionTask, escapeTask);
+            if (completed == escapeTask && cts.IsCancellationRequested)
+                throw new OperationCanceledException(cts.Token);
+
             return await actionTask;
         }
         finally
@@ -366,6 +371,22 @@ internal class AgentApp
             cts.Cancel();
             try { await escapeTask; } catch { }
         }
+    }
+
+    private static string PrepareUserMessageForHistory(string message, string[]? tools)
+    {
+        if (message.Length <= ContextStore.AutoStoreThreshold || !HasContextTool(tools))
+            return message;
+
+        var stored = ContextStore.StoreAndDescribe("user message", message);
+        AnsiConsole.MarkupLine($"[dim]{stored.Split('\n')[0].EscapeMarkup()}[/]");
+        return stored;
+    }
+
+    private static bool HasContextTool(string[]? tools)
+    {
+        return tools?.Any(t => t.Equals("context", StringComparison.OrdinalIgnoreCase) ||
+                               t.Equals("ctx", StringComparison.OrdinalIgnoreCase)) == true;
     }
 
     private static async Task WatchEscapeForCancelAsync(CancellationTokenSource cts)

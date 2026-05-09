@@ -468,6 +468,8 @@ internal static class ToolRegistry
                     try { process.Kill(true); } catch { }
                     throw;
                 }
+
+                cancellationToken.ThrowIfCancellationRequested();
                 var output = outputTask.Result;
                 var errors = errorTask.Result;
 
