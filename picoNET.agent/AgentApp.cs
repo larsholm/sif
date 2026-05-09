@@ -708,7 +708,6 @@ internal class AgentApp
         int cursor = 0;
         int historyIndex = inputHistory.Count;
         string? historyDraft = null;
-        AnsiConsole.Write(new Markup("[blue]user>[/] "));
 
         void Redraw()
         {
@@ -750,193 +749,259 @@ internal class AgentApp
             Redraw();
         }
 
-        while (true)
+        bool TryReadEscapeSequence(string sequence)
         {
-            if (!Console.KeyAvailable)
+            foreach (var expected in sequence)
             {
-                await Task.Delay(20);
-                continue;
+                var waited = 0;
+                while (!Console.KeyAvailable && waited < 50)
+                {
+                    Thread.Sleep(2);
+                    waited += 2;
+                }
+
+                if (!Console.KeyAvailable)
+                    return false;
+
+                var next = Console.ReadKey(intercept: true);
+                if (next.KeyChar != expected)
+                    return false;
             }
 
-            var key = Console.ReadKey(intercept: true);
+            return true;
+        }
 
-            if (key.Key == ConsoleKey.Enter)
+        async Task<string> ReadBracketedPasteAsync()
+        {
+            const string endMarker = "\u001b[201~";
+            var pasted = new StringBuilder();
+
+            while (true)
             {
-                if (key.Modifiers.HasFlag(ConsoleModifiers.Alt))
+                if (!Console.KeyAvailable)
                 {
-                    sb.Insert(cursor, '\n');
-                    cursor++;
-                    Console.WriteLine();
-                    Console.Write("        "); // Prompt indent
+                    await Task.Delay(20);
+                    continue;
+                }
+
+                var next = Console.ReadKey(intercept: true);
+                pasted.Append(next.KeyChar);
+
+                if (pasted.Length >= endMarker.Length &&
+                    pasted.ToString().EndsWith(endMarker, StringComparison.Ordinal))
+                {
+                    pasted.Length -= endMarker.Length;
+                    return pasted.ToString().Replace("\r\n", "\n").Replace('\r', '\n');
+                }
+            }
+        }
+
+        Console.Write("\u001b[?2004h");
+        try
+        {
+            AnsiConsole.Write(new Markup("[blue]user>[/] "));
+
+            while (true)
+            {
+                if (!Console.KeyAvailable)
+                {
+                    await Task.Delay(20);
+                    continue;
+                }
+
+                var key = Console.ReadKey(intercept: true);
+
+                if (key.Key == ConsoleKey.Escape && TryReadEscapeSequence("[200~"))
+                {
+                    var pasted = await ReadBracketedPasteAsync();
+                    sb.Insert(cursor, pasted);
+                    cursor += pasted.Length;
                     Redraw();
                     continue;
                 }
-                Console.WriteLine();
-                return sb.ToString();
-            }
 
-            if (key.Key == ConsoleKey.Backspace)
-            {
-                if (cursor > 0)
+                if (key.Key == ConsoleKey.Enter)
                 {
-                    bool isNewline = sb[cursor - 1] == '\n';
-                    sb.Remove(cursor - 1, 1);
-                    cursor--;
-                    if (isNewline)
+                    if (key.Modifiers.HasFlag(ConsoleModifiers.Alt))
                     {
-                        AnsiConsole.Cursor.MoveUp(1);
+                        sb.Insert(cursor, '\n');
+                        cursor++;
+                        Console.WriteLine();
+                        Console.Write("        "); // Prompt indent
+                        Redraw();
+                        continue;
+                    }
+                    Console.WriteLine();
+                    return sb.ToString();
+                }
+
+                if (key.Key == ConsoleKey.Backspace)
+                {
+                    if (cursor > 0)
+                    {
+                        bool isNewline = sb[cursor - 1] == '\n';
+                        sb.Remove(cursor - 1, 1);
+                        cursor--;
+                        if (isNewline)
+                        {
+                            AnsiConsole.Cursor.MoveUp(1);
+                            Redraw();
+                        }
+                        else
+                        {
+                            Console.Write("\b \b");
+                            if (cursor < sb.Length)
+                            {
+                                var remaining = sb.ToString()[cursor..];
+                                Console.Write(remaining + " ");
+                                for (int i = 0; i <= remaining.Length; i++) Console.Write("\b");
+                            }
+                        }
+                    }
+                    continue;
+                }
+
+                if (key.Key == ConsoleKey.Delete)
+                {
+                    if (cursor < sb.Length)
+                    {
+                        sb.Remove(cursor, 1);
+                        Redraw();
+                    }
+                    continue;
+                }
+
+                if (key.Key == ConsoleKey.UpArrow)
+                {
+                    if (inputHistory.Count > 0 && historyIndex > 0)
+                    {
+                        if (historyIndex == inputHistory.Count)
+                            historyDraft = sb.ToString();
+
+                        historyIndex--;
+                        SetInput(inputHistory[historyIndex]);
+                    }
+                    continue;
+                }
+
+                if (key.Key == ConsoleKey.DownArrow)
+                {
+                    if (historyIndex < inputHistory.Count)
+                    {
+                        historyIndex++;
+                        SetInput(historyIndex == inputHistory.Count ? historyDraft ?? "" : inputHistory[historyIndex]);
+                    }
+                    continue;
+                }
+
+                if (key.Key == ConsoleKey.Home)
+                {
+                    cursor = 0;
+                    Redraw();
+                    continue;
+                }
+
+                if (key.Key == ConsoleKey.End)
+                {
+                    cursor = sb.Length;
+                    Redraw();
+                    continue;
+                }
+
+                if (key.Key == ConsoleKey.LeftArrow)
+                {
+                    if (cursor > 0)
+                    {
+                        cursor--;
+                        Redraw();
+                    }
+                    continue;
+                }
+
+                if (key.Key == ConsoleKey.RightArrow)
+                {
+                    if (cursor < sb.Length)
+                    {
+                        cursor++;
+                        Redraw();
+                    }
+                    continue;
+                }
+
+                if (key.Modifiers.HasFlag(ConsoleModifiers.Control) && key.Key == ConsoleKey.C)
+                {
+                    return null;
+                }
+
+                if (key.Key == ConsoleKey.Tab)
+                {
+                    // Find the word starting with # before the cursor
+                    string currentText = sb.ToString();
+                    int hashIdx = -1;
+                    for (int i = cursor - 1; i >= 0; i--)
+                    {
+                        if (currentText[i] == '#') { hashIdx = i; break; }
+                        if (char.IsWhiteSpace(currentText[i])) break;
+                    }
+
+                    if (hashIdx >= 0)
+                    {
+                        string prefix = currentText.Substring(hashIdx + 1, cursor - (hashIdx + 1));
+                        var matches = files.Value
+                            .Where(f => f.Contains(prefix, StringComparison.OrdinalIgnoreCase))
+                            .ToList();
+
+                        if (matches.Count > 0)
+                        {
+                            string? choice = null;
+                            if (matches.Count == 1)
+                            {
+                                choice = matches[0];
+                            }
+                            else
+                            {
+                                choice = AnsiConsole.Prompt(
+                                    new SelectionPrompt<string>()
+                                        .Title("Select a file")
+                                        .PageSize(10)
+                                        .AddChoices(matches));
+                            }
+
+                            if (choice != null)
+                            {
+                                sb.Remove(hashIdx + 1, prefix.Length);
+                                sb.Insert(hashIdx + 1, choice);
+                                cursor = hashIdx + 1 + choice.Length;
+                                Redraw();
+                            }
+                        }
+                    }
+                    continue;
+                }
+                else if (!char.IsControl(key.KeyChar))
+                {
+                    sb.Insert(cursor, key.KeyChar);
+                    cursor++;
+                    if (sb.ToString().Contains('\n'))
+                    {
                         Redraw();
                     }
                     else
                     {
-                        Console.Write("\b \b");
+                        Console.Write(key.KeyChar);
                         if (cursor < sb.Length)
                         {
                             var remaining = sb.ToString()[cursor..];
-                            Console.Write(remaining + " ");
-                            for (int i = 0; i <= remaining.Length; i++) Console.Write("\b");
+                            Console.Write(remaining);
+                            for (int i = 0; i < remaining.Length; i++) Console.Write("\b");
                         }
                     }
                 }
-                continue;
             }
-
-            if (key.Key == ConsoleKey.Delete)
-            {
-                if (cursor < sb.Length)
-                {
-                    sb.Remove(cursor, 1);
-                    Redraw();
-                }
-                continue;
-            }
-
-            if (key.Key == ConsoleKey.UpArrow)
-            {
-                if (inputHistory.Count > 0 && historyIndex > 0)
-                {
-                    if (historyIndex == inputHistory.Count)
-                        historyDraft = sb.ToString();
-
-                    historyIndex--;
-                    SetInput(inputHistory[historyIndex]);
-                }
-                continue;
-            }
-
-            if (key.Key == ConsoleKey.DownArrow)
-            {
-                if (historyIndex < inputHistory.Count)
-                {
-                    historyIndex++;
-                    SetInput(historyIndex == inputHistory.Count ? historyDraft ?? "" : inputHistory[historyIndex]);
-                }
-                continue;
-            }
-
-            if (key.Key == ConsoleKey.Home)
-            {
-                cursor = 0;
-                Redraw();
-                continue;
-            }
-
-            if (key.Key == ConsoleKey.End)
-            {
-                cursor = sb.Length;
-                Redraw();
-                continue;
-            }
-
-            if (key.Key == ConsoleKey.LeftArrow)
-            {
-                if (cursor > 0)
-                {
-                    cursor--;
-                    Redraw();
-                }
-                continue;
-            }
-
-            if (key.Key == ConsoleKey.RightArrow)
-            {
-                if (cursor < sb.Length)
-                {
-                    cursor++;
-                    Redraw();
-                }
-                continue;
-            }
-
-            if (key.Modifiers.HasFlag(ConsoleModifiers.Control) && key.Key == ConsoleKey.C)
-            {
-                return null;
-            }
-
-            if (key.Key == ConsoleKey.Tab)
-            {
-                // Find the word starting with # before the cursor
-                string currentText = sb.ToString();
-                int hashIdx = -1;
-                for (int i = cursor - 1; i >= 0; i--)
-                {
-                    if (currentText[i] == '#') { hashIdx = i; break; }
-                    if (char.IsWhiteSpace(currentText[i])) break;
-                }
-
-                if (hashIdx >= 0)
-                {
-                    string prefix = currentText.Substring(hashIdx + 1, cursor - (hashIdx + 1));
-                    var matches = files.Value
-                        .Where(f => f.Contains(prefix, StringComparison.OrdinalIgnoreCase))
-                        .ToList();
-
-                    if (matches.Count > 0)
-                    {
-                        string? choice = null;
-                        if (matches.Count == 1)
-                        {
-                            choice = matches[0];
-                        }
-                        else
-                        {
-                            choice = AnsiConsole.Prompt(
-                                new SelectionPrompt<string>()
-                                    .Title("Select a file")
-                                    .PageSize(10)
-                                    .AddChoices(matches));
-                        }
-
-                        if (choice != null)
-                        {
-                            sb.Remove(hashIdx + 1, prefix.Length);
-                            sb.Insert(hashIdx + 1, choice);
-                            cursor = hashIdx + 1 + choice.Length;
-                            Redraw();
-                        }
-                    }
-                }
-                continue;
-            }
-            else if (!char.IsControl(key.KeyChar))
-            {
-                sb.Insert(cursor, key.KeyChar);
-                cursor++;
-                if (sb.ToString().Contains('\n'))
-                {
-                    Redraw();
-                }
-                else
-                {
-                    Console.Write(key.KeyChar);
-                    if (cursor < sb.Length)
-                    {
-                        var remaining = sb.ToString()[cursor..];
-                        Console.Write(remaining);
-                        for (int i = 0; i < remaining.Length; i++) Console.Write("\b");
-                    }
-                }
-            }
+        }
+        finally
+        {
+            Console.Write("\u001b[?2004l");
         }
     }
 
