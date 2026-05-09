@@ -152,13 +152,6 @@ internal class AgentClient
                 var json = JsonSerializer.Serialize(messages, new JsonSerializerOptions { WriteIndented = true });
                 return $"Current conversation history (OpenAI Format):\n\n{json}";
             }
-            if (item == "breakpoint")
-            {
-                AnsiConsole.MarkupLine("\n[bold yellow]!!! BREAKPOINT HIT !!![/]");
-                AnsiConsole.MarkupLine("[dim]The agent has requested a pause. Review the state above.[/]");
-                new TextPrompt<string>("[yellow]Press Enter to continue...[/]").AllowEmpty().Show(AnsiConsole.Console);
-                return "Breakpoint cleared. Agent execution resumed.";
-            }
             return $"Error: Unknown debug item '{item}'";
         };
 
@@ -166,6 +159,7 @@ internal class AgentClient
         {
             while (true)
             {
+                AnsiConsole.Write(new Markup("[dim]Thinking...[/]"));
                 var opts = new OpenAI.Chat.ChatCompletionOptions();
                 foreach (var tool in _tools ?? Enumerable.Empty<OpenAI.Chat.ChatTool>())
                     opts.Tools.Add(tool);

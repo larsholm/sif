@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using OpenAI;
+using Spectre.Console;
 
 namespace picoNET.agent;
 
@@ -97,7 +98,7 @@ internal static class ToolRegistry
                     {
                         "type": "object",
                         "properties": {
-                            "item": { "type": "string", "enum": ["config", "env", "history", "breakpoint"], "description": "The item to debug: 'config' for configuration content, 'env' for environment variables, 'history' to see conversation history, 'breakpoint' to pause execution." }
+                            "item": { "type": "string", "enum": ["config", "env", "history"], "description": "The item to debug: 'config' for configuration content, 'env' for environment variables, 'history' to see conversation history." }
                         },
                         "required": ["item"]
                     }
@@ -107,34 +108,35 @@ internal static class ToolRegistry
 
         return tools;
     }
-public static Func<string, Task<string>>? DebugHandler { get; set; }
 
-public static async Task<string> ExecuteAsync(string toolName, string argumentsJson)
-{
-    return toolName switch
+    public static Func<string, Task<string>>? DebugHandler { get; set; }
+
+    public static async Task<string> ExecuteAsync(string toolName, string argumentsJson)
     {
-        "bash" => RunBash(argumentsJson),
-        "read" => RunRead(argumentsJson),
-        "edit" => RunEdit(argumentsJson),
-        "write" => RunWrite(argumentsJson),
-        "debug" => await RunDebugAsync(argumentsJson),
-        _ => $"Error: Unknown tool '{toolName}'"
-    };
-}
-
-private static async Task<string> RunDebugAsync(string argsJson)
-{
-    using var doc = JsonDocument.Parse(argsJson);
-    var root = doc.RootElement;
-    var item = root.GetProperty("item").GetString() ?? "";
-
-    if (item == "history" || item == "breakpoint")
-    {
-        if (DebugHandler == null) return "Error: Debug handler not registered.";
-        return await DebugHandler(item);
+        return toolName switch
+        {
+            "bash" => await RunBashAsync(argumentsJson),
+            "read" => RunRead(argumentsJson),
+            "edit" => RunEdit(argumentsJson),
+            "write" => RunWrite(argumentsJson),
+            "debug" => await RunDebugAsync(argumentsJson),
+            _ => $"Error: Unknown tool '{toolName}'"
+        };
     }
 
-    if (item == "config")
+    private static async Task<string> RunDebugAsync(string argsJson)
+    {
+        using var doc = JsonDocument.Parse(argsJson);
+        var root = doc.RootElement;
+        var item = root.GetProperty("item").GetString() ?? "";
+
+        if (item == "history")
+        {
+            if (DebugHandler == null) return "Error: Debug handler not registered.";
+            return await DebugHandler(item);
+        }
+
+        if (item == "config")
         {
             var path = AgentConfig.ConfigPath;
             if (File.Exists(path))
@@ -163,7 +165,7 @@ private static async Task<string> RunDebugAsync(string argsJson)
         return $"Error: Unknown debug item '{item}'";
     }
 
-    private static string RunBash(string argsJson)
+    private static async Task<string> RunBashAsync(string argsJson)
     {
         using var doc = JsonDocument.Parse(argsJson);
         var root = doc.RootElement;
@@ -194,17 +196,14 @@ private static async Task<string> RunDebugAsync(string argsJson)
 
         var firstWord = command.Split(' ').FirstOrDefault()?.Trim() ?? "";
         if (!allowed.Contains(firstWord))
-            return $"Error: Command '{firstWord}' not allowed. Safe commands: ls, cat, grep, find, pwd, cd, head, tail, wc, git, curl, python, node, jq, sed, awk, sort, uniq, tr, cut, mkdir, cp, mv, rm, touch, chmod, chown, tar, gzip, gunzip, zip, unzip, tree, less, more, strings, ping, ip, ifconfig, netstat, ss, ps, kill, top, lsof, mount, fdisk, blkid, test, command, type, alias, export, mktemp, vi, vim, nano, emacs, make, cmake, gcc, g++, clang, javac, java, ruby, swift, cl, rustc, cargo, dotnet, go, npm, yarn, pip, docker, kubectl, terraform, ansible, ssh, scp, rsync, diff, realpath, dirname, basename, xargs, tee, split, join, paste, comm, fold, fmt, pr, md5sum, sha1sum, sha256sum, base64, xxd, od, hexdump, dd, patch, cmp, diff3, sdiff";
+            return $"Error: Command '{firstWord}' not allowed.";
 
         try
         {
-            // Write command to a temp script to avoid shell escaping issues
             var scriptPath = Path.Combine(Path.GetTempPath(), $"pico_bash_{Guid.NewGuid():N}.sh");
             File.WriteAllText(scriptPath, "#!/bin/bash\n" + command);
-            // Make executable
             var chmod = Process.Start(new ProcessStartInfo("chmod", $"+x \"{scriptPath}\"") { UseShellExecute = false });
-            if (chmod != null)
-                chmod.WaitForExit();
+            if (chmod != null) chmod.WaitForExit();
 
             var psi = new ProcessStartInfo
             {
@@ -218,17 +217,21 @@ private static async Task<string> RunDebugAsync(string argsJson)
             try
             {
                 using var process = Process.Start(psi);
-                if (process is null)
-                    return "Error: Failed to start command.";
-                var task = process.WaitForExitAsync();
-                var readTask = process.StandardOutput.ReadToEndAsync();
-                var errTask = process.StandardError.ReadToEndAsync();
+                if (process is null) return "Error: Failed to start command.";
 
-                if (!task.Wait(TimeSpan.FromSeconds(30)))
+                var outputTask = process.StandardOutput.ReadToEndAsync();
+                var errorTask = process.StandardError.ReadToEndAsync();
+                var waitTask = process.WaitForExitAsync();
+
+                if (await Task.WhenAny(waitTask, Task.Delay(TimeSpan.FromSeconds(30))) != waitTask)
+                {
+                    try { process.Kill(true); } catch { }
                     return "Error: Command timed out after 30s.";
+                }
 
-                var output = readTask.Result;
-                var errors = errTask.Result;
+                await Task.WhenAll(outputTask, errorTask);
+                var output = outputTask.Result;
+                var errors = errorTask.Result;
 
                 var result = output.Trim();
                 if (!string.IsNullOrEmpty(errors))
@@ -238,10 +241,6 @@ private static async Task<string> RunDebugAsync(string argsJson)
                     result = result.Substring(0, limit) + $"\n... (truncated, {result.Length - limit} more chars)";
 
                 return string.IsNullOrEmpty(result) ? "(no output)" : result;
-            }
-            catch (Exception ex)
-            {
-                return $"Error executing command: {ex.Message}";
             }
             finally
             {
@@ -266,25 +265,13 @@ private static async Task<string> RunDebugAsync(string argsJson)
             return $"Error: File not found: {path}";
 
         var ext = Path.GetExtension(path).ToLowerInvariant();
-        var textExts = new HashSet<string>
-        {
-            ".cs", ".json", ".xml", ".txt", ".md", ".yaml", ".yml", ".sh", ".bash",
-            ".py", ".js", ".ts", ".go", ".rs", ".java", ".c", ".cpp", ".h", ".hpp",
-            ".html", ".css", ".sql", ".toml", ".ini", ".cfg", ".conf", ".env",
-            ".nuspec", ".csproj", ".sln", ".editorconfig", ".gitignore", ".rb",
-            ".php", ".pl", ".lua", ".swift", ".kt", ".scala", ".r", ".m", ".mm",
-            ".dart", ".v", ".sv", ".vhd", ".vhdl", ".asm", ".s", ".S", ".tex",
-            ".bib", ".csv", ".log", ".diff", ".patch", ".properties", ".gradle"
-        };
+        var textExts = new HashSet<string> { ".cs", ".json", ".xml", ".txt", ".md", ".yaml", ".yml", ".sh", ".bash", ".py", ".js", ".ts", ".go", ".rs", ".java", ".c", ".cpp", ".h", ".hpp", ".html", ".css", ".sql", ".toml", ".ini", ".cfg", ".conf", ".env", ".nuspec", ".csproj", ".sln", ".editorconfig", ".gitignore", ".rb", ".php", ".pl", ".lua", ".swift", ".kt", ".scala", ".r", ".m", ".mm", ".dart", ".v", ".sv", ".vhd", ".vhdl", ".asm", ".s", ".S", ".tex", ".bib", ".csv", ".log", ".diff", ".patch", ".properties", ".gradle" };
 
-        if (textExts.Contains(ext) || path.Contains(".gitignore") || path.Contains(".editorconfig")
-            || path.Contains("Makefile") || path.Contains("Dockerfile") || path.Contains("Vagrantfile"))
+        if (textExts.Contains(ext) || path.Contains(".gitignore") || path.Contains(".editorconfig") || path.Contains("Makefile") || path.Contains("Dockerfile") || path.Contains("Vagrantfile"))
         {
             var lines = File.ReadAllLines(path);
-            if (lines.Length > skiplines)
-                lines = lines.Skip(skiplines).ToArray();
-            if (lines.Length > limit)
-                return string.Join('\n', lines.Take(limit)) + $"\n... ({lines.Length - limit} more lines)";
+            if (lines.Length > skiplines) lines = lines.Skip(skiplines).ToArray();
+            if (lines.Length > limit) return string.Join('\n', lines.Take(limit)) + $"\n... ({lines.Length - limit} more lines)";
             return string.Join('\n', lines);
         }
 
@@ -300,14 +287,12 @@ private static async Task<string> RunDebugAsync(string argsJson)
         var oldText = root.GetProperty("oldText").GetString() ?? "";
         var newText = root.GetProperty("newText").GetString() ?? "";
 
-        if (!File.Exists(path))
-            return $"Error: File not found: {path}";
+        if (!File.Exists(path)) return $"Error: File not found: {path}";
 
         var content = File.ReadAllText(path);
         if (!content.Contains(oldText))
         {
-            if (content.Contains(oldText, StringComparison.OrdinalIgnoreCase))
-                return "Error: Text not found (case mismatch). The text must match exactly including whitespace.";
+            if (content.Contains(oldText, StringComparison.OrdinalIgnoreCase)) return "Error: Text not found (case mismatch). The text must match exactly including whitespace.";
             return $"Error: Text not found in {path}";
         }
 
@@ -324,8 +309,7 @@ private static async Task<string> RunDebugAsync(string argsJson)
         var content = root.GetProperty("content").GetString() ?? "";
 
         var dir = Path.GetDirectoryName(path);
-        if (!string.IsNullOrEmpty(dir))
-            Directory.CreateDirectory(dir);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
 
         File.WriteAllText(path, content);
         return $"Wrote {path} ({content.Length} chars).";

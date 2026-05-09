@@ -3,6 +3,7 @@ using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using OpenAI.Chat;
+using Spectre.Console;
 
 namespace picoNET.agent;
 
@@ -21,6 +22,7 @@ internal class McpService : IDisposable, IAsyncDisposable
         {
             try
             {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
                 var transportOptions = new StdioClientTransportOptions
                 {
                     Command = config.Command,
@@ -32,11 +34,11 @@ internal class McpService : IDisposable, IAsyncDisposable
                 var client = await McpClient.CreateAsync(transport, new McpClientOptions
                 {
                     ClientInfo = new Implementation { Name = "picoNET.agent", Version = "1.0.0" }
-                });
+                }, cancellationToken: cts.Token);
 
                 _clients[name] = client;
 
-                var tools = await client.ListToolsAsync();
+                var tools = await client.ListToolsAsync(cancellationToken: cts.Token);
                 foreach (var tool in tools)
                 {
                     // Map MCP tool to OpenAI ChatTool
@@ -50,9 +52,13 @@ internal class McpService : IDisposable, IAsyncDisposable
                     _toolToClientMap[tool.Name] = name;
                 }
             }
+            catch (OperationCanceledException)
+            {
+                AnsiConsole.MarkupLine($"[red]Error: MCP server '{name}' timed out during initialization.[/]");
+            }
             catch (Exception ex)
             {
-                Console.WriteLine($"[yellow]Warning: Failed to connect to MCP server '{name}': {ex.Message}[/]");
+                AnsiConsole.MarkupLine($"[yellow]Warning: Failed to connect to MCP server '{name}': {ex.Message}[/]");
             }
         }
     }
@@ -67,8 +73,9 @@ internal class McpService : IDisposable, IAsyncDisposable
         var client = _clients[clientName];
         try
         {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             var arguments = JsonSerializer.Deserialize<Dictionary<string, object?>>(argumentsJson);
-            var result = await client.CallToolAsync(toolName, arguments);
+            var result = await client.CallToolAsync(toolName, arguments, cancellationToken: cts.Token);
             
             // MCP results can have multiple content items (text, image, etc.)
             var textResults = result.Content
@@ -76,6 +83,10 @@ internal class McpService : IDisposable, IAsyncDisposable
                 .Select(c => c.Text);
             
             return string.Join("\n", textResults);
+        }
+        catch (OperationCanceledException)
+        {
+            return $"Error: MCP tool '{toolName}' timed out after 30s.";
         }
         catch (Exception ex)
         {
