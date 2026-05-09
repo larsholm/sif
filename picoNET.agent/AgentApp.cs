@@ -245,15 +245,18 @@ internal class AgentApp
 
         bool running = true;
         var files = new Lazy<List<string>>(GetFiles);
+        var inputHistory = new List<string>();
 
         while (running)
         {
-            string? input = await ReadChatInputAsync(files);
+            string? input = await ReadChatInputAsync(files, inputHistory);
 
             if (input is null) break;
             if (string.IsNullOrWhiteSpace(input)) continue;
 
             var trimmed = input.Trim();
+            if (inputHistory.Count == 0 || inputHistory[^1] != trimmed)
+                inputHistory.Add(trimmed);
 
             if (trimmed.StartsWith("/"))
             {
@@ -699,10 +702,12 @@ internal class AgentApp
         return 0;
     }
 
-    private async Task<string?> ReadChatInputAsync(Lazy<List<string>> files)
+    private async Task<string?> ReadChatInputAsync(Lazy<List<string>> files, List<string> inputHistory)
     {
         var sb = new StringBuilder();
         int cursor = 0;
+        int historyIndex = inputHistory.Count;
+        string? historyDraft = null;
         AnsiConsole.Write(new Markup("[blue]user>[/] "));
 
         void Redraw()
@@ -735,6 +740,14 @@ internal class AgentApp
             }
             Console.Write("\r");
             for (int i = 0; i < cursorCol + 7; i++) Console.Write("\x1b[C"); // Move right (prompt is 7 chars "user> ")
+        }
+
+        void SetInput(string text)
+        {
+            sb.Clear();
+            sb.Append(text);
+            cursor = sb.Length;
+            Redraw();
         }
 
         while (true)
@@ -794,6 +807,29 @@ internal class AgentApp
                 {
                     sb.Remove(cursor, 1);
                     Redraw();
+                }
+                continue;
+            }
+
+            if (key.Key == ConsoleKey.UpArrow)
+            {
+                if (inputHistory.Count > 0 && historyIndex > 0)
+                {
+                    if (historyIndex == inputHistory.Count)
+                        historyDraft = sb.ToString();
+
+                    historyIndex--;
+                    SetInput(inputHistory[historyIndex]);
+                }
+                continue;
+            }
+
+            if (key.Key == ConsoleKey.DownArrow)
+            {
+                if (historyIndex < inputHistory.Count)
+                {
+                    historyIndex++;
+                    SetInput(historyIndex == inputHistory.Count ? historyDraft ?? "" : inputHistory[historyIndex]);
                 }
                 continue;
             }
