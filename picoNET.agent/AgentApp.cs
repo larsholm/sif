@@ -1,5 +1,6 @@
 using System.Text;
 using Spectre.Console;
+using ConsoleMarkdownRenderer;
 
 namespace picoNET.agent;
 
@@ -305,7 +306,8 @@ internal class AgentApp
                             AnsiConsole.MarkupLine("[dim]  " + line.EscapeMarkup() + "[/]");
                         AnsiConsole.MarkupLine("");
                     }
-                    AnsiConsole.MarkupLine(response.EscapeMarkup());
+                    await Displayer.DisplayMarkdownAsync(response);
+                    AnsiConsole.WriteLine();
                     history.Add(new ChatMessage("assistant", response));
                 }
                 else
@@ -430,7 +432,8 @@ internal class AgentApp
                     AnsiConsole.MarkupLine("");
                 }
                 AnsiConsole.MarkupLine("[green]Response:[/]");
-                AnsiConsole.MarkupLine(response.EscapeMarkup());
+                await Displayer.DisplayMarkdownAsync(response);
+                AnsiConsole.WriteLine();
             }
         }
         catch (Exception ex)
@@ -494,6 +497,38 @@ internal class AgentApp
         int cursor = 0;
         AnsiConsole.Write(new Markup("[blue]user>[/] "));
 
+        void Redraw()
+        {
+            // Clear current line and move to start
+            Console.Write("\r" + new string(' ', Math.Max(0, Console.WindowWidth - 1)) + "\r");
+            
+            // This is a simplified redraw that doesn't handle multi-line wrapping perfectly
+            // but handles explicit newlines.
+            AnsiConsole.Write(new Markup("[blue]user>[/] "));
+            var lines = sb.ToString().Split('\n');
+            for (int i = 0; i < lines.Length; i++)
+            {
+                Console.Write(lines[i]);
+                if (i < lines.Length - 1) Console.Write("\n         "); // Offset for prompt
+            }
+
+            // Move cursor back to the correct position
+            // This is complex for multi-line. For now, we'll just put it at the end 
+            // if we've done a full redraw, or handle single-line movements.
+            var textUpToCursor = sb.ToString().Substring(0, cursor);
+            int cursorLine = textUpToCursor.Count(c => c == '\n');
+            int cursorCol = cursor - textUpToCursor.LastIndexOf('\n') - 1;
+            if (textUpToCursor.LastIndexOf('\n') == -1) cursorCol = cursor;
+
+            int totalLines = sb.ToString().Count(c => c == '\n');
+            if (totalLines > cursorLine)
+            {
+                AnsiConsole.Cursor.MoveUp(totalLines - cursorLine);
+            }
+            Console.Write("\r");
+            for (int i = 0; i < cursorCol + 7; i++) Console.Write("\x1b[C"); // Move right (prompt is 7 chars "user> ")
+        }
+
         while (true)
         {
             if (!Console.KeyAvailable)
@@ -506,6 +541,15 @@ internal class AgentApp
 
             if (key.Key == ConsoleKey.Enter)
             {
+                if (key.Modifiers.HasFlag(ConsoleModifiers.Alt))
+                {
+                    sb.Insert(cursor, '\n');
+                    cursor++;
+                    Console.WriteLine();
+                    Console.Write("        "); // Prompt indent
+                    Redraw();
+                    continue;
+                }
                 Console.WriteLine();
                 return sb.ToString();
             }
@@ -514,14 +558,23 @@ internal class AgentApp
             {
                 if (cursor > 0)
                 {
+                    bool isNewline = sb[cursor - 1] == '\n';
                     sb.Remove(cursor - 1, 1);
                     cursor--;
-                    Console.Write("\b \b");
-                    if (cursor < sb.Length)
+                    if (isNewline)
                     {
-                        var remaining = sb.ToString()[cursor..];
-                        Console.Write(remaining + " ");
-                        for (int i = 0; i <= remaining.Length; i++) Console.Write("\b");
+                        AnsiConsole.Cursor.MoveUp(1);
+                        Redraw();
+                    }
+                    else
+                    {
+                        Console.Write("\b \b");
+                        if (cursor < sb.Length)
+                        {
+                            var remaining = sb.ToString()[cursor..];
+                            Console.Write(remaining + " ");
+                            for (int i = 0; i <= remaining.Length; i++) Console.Write("\b");
+                        }
                     }
                 }
                 continue;
@@ -532,30 +585,22 @@ internal class AgentApp
                 if (cursor < sb.Length)
                 {
                     sb.Remove(cursor, 1);
-                    var remaining = sb.ToString()[cursor..];
-                    Console.Write(remaining + " ");
-                    for (int i = 0; i <= remaining.Length; i++) Console.Write("\b");
+                    Redraw();
                 }
                 continue;
             }
 
             if (key.Key == ConsoleKey.Home)
             {
-                while (cursor > 0)
-                {
-                    Console.Write("\b");
-                    cursor--;
-                }
+                cursor = 0;
+                Redraw();
                 continue;
             }
 
             if (key.Key == ConsoleKey.End)
             {
-                while (cursor < sb.Length)
-                {
-                    Console.Write(sb[cursor]);
-                    cursor++;
-                }
+                cursor = sb.Length;
+                Redraw();
                 continue;
             }
 
@@ -564,7 +609,7 @@ internal class AgentApp
                 if (cursor > 0)
                 {
                     cursor--;
-                    Console.Write("\b");
+                    Redraw();
                 }
                 continue;
             }
@@ -573,8 +618,8 @@ internal class AgentApp
             {
                 if (cursor < sb.Length)
                 {
-                    Console.Write(sb[cursor]);
                     cursor++;
+                    Redraw();
                 }
                 continue;
             }
@@ -623,12 +668,7 @@ internal class AgentApp
                             sb.Remove(hashIdx + 1, prefix.Length);
                             sb.Insert(hashIdx + 1, choice);
                             cursor = hashIdx + 1 + choice.Length;
-
-                            // Redraw
-                            Console.Write("\r" + new string(' ', Math.Max(0, Console.WindowWidth - 1)) + "\r");
-                            AnsiConsole.Write(new Markup("[blue]user>[/] "));
-                            Console.Write(sb.ToString());
-                            for (int i = 0; i < sb.Length - cursor; i++) Console.Write("\b");
+                            Redraw();
                         }
                     }
                 }
@@ -638,12 +678,19 @@ internal class AgentApp
             {
                 sb.Insert(cursor, key.KeyChar);
                 cursor++;
-                Console.Write(key.KeyChar);
-                if (cursor < sb.Length)
+                if (sb.ToString().Contains('\n'))
                 {
-                    var remaining = sb.ToString()[cursor..];
-                    Console.Write(remaining);
-                    for (int i = 0; i < remaining.Length; i++) Console.Write("\b");
+                    Redraw();
+                }
+                else
+                {
+                    Console.Write(key.KeyChar);
+                    if (cursor < sb.Length)
+                    {
+                        var remaining = sb.ToString()[cursor..];
+                        Console.Write(remaining);
+                        for (int i = 0; i < remaining.Length; i++) Console.Write("\b");
+                    }
                 }
             }
         }

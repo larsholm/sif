@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using OpenAI;
 using Spectre.Console;
+using ConsoleMarkdownRenderer;
 
 namespace picoNET.agent;
 
@@ -233,7 +234,9 @@ internal class AgentClient
                 // Final text response — strip thinking tags if they're in the content
                 var cleanContent = StripThinkingTags(contentText);
 
-                AnsiConsole.MarkupLine(cleanContent.EscapeMarkup());
+                await Displayer.DisplayMarkdownAsync(cleanContent);
+                AnsiConsole.WriteLine();
+                
                 history.Add(new ChatMessage("assistant", cleanContent));
                 messages.Add(OpenAI.Chat.ChatMessage.CreateAssistantMessage(result.Value));
 
