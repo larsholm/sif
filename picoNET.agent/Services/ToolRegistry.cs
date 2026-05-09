@@ -88,6 +88,23 @@ internal static class ToolRegistry
             ));
         }
 
+        if (enabled.Contains("debug"))
+        {
+            tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
+                "debug",
+                "Get diagnostic information about the agent's environment, configuration, and state.",
+                BinaryData.FromString("""
+                    {
+                        "type": "object",
+                        "properties": {
+                            "item": { "type": "string", "enum": ["config", "env"], "description": "The item to debug: 'config' for pico-agent.json content, 'env' for AGENT_ environment variables" }
+                        },
+                        "required": ["item"]
+                    }
+                    """)
+            ));
+        }
+
         return tools;
     }
 
@@ -99,8 +116,44 @@ internal static class ToolRegistry
             "read" => RunRead(argumentsJson),
             "edit" => RunEdit(argumentsJson),
             "write" => RunWrite(argumentsJson),
+            "debug" => RunDebug(argumentsJson),
             _ => $"Error: Unknown tool '{toolName}'"
         };
+    }
+
+    private static string RunDebug(string argsJson)
+    {
+        using var doc = JsonDocument.Parse(argsJson);
+        var root = doc.RootElement;
+        var item = root.GetProperty("item").GetString() ?? "";
+
+        if (item == "config")
+        {
+            var path = AgentConfig.ConfigPath;
+            if (File.Exists(path))
+            {
+                return $"Content of {path}:\n\n" + File.ReadAllText(path);
+            }
+            return $"Config file not found at: {path}";
+        }
+        else if (item == "env")
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("AGENT_ environment variables:");
+            foreach (System.Collections.DictionaryEntry de in Environment.GetEnvironmentVariables())
+            {
+                var key = de.Key.ToString() ?? "";
+                if (key.StartsWith("AGENT_"))
+                {
+                    var val = de.Value?.ToString() ?? "";
+                    if (key.Contains("KEY")) val = "****";
+                    sb.AppendLine($"{key}={val}");
+                }
+            }
+            return sb.ToString();
+        }
+
+        return $"Error: Unknown debug item '{item}'";
     }
 
     private static string RunBash(string argsJson)

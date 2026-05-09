@@ -14,12 +14,13 @@ internal class AgentConfig
     public float? Temperature { get; set; }
     public string[]? Tools { get; set; }
     public bool? ThinkingEnabled { get; set; } = true;
+    public Dictionary<string, McpServerConfig> McpServers { get; set; } = new();
     public Dictionary<string, string> Values { get; set; } = new();
 
-    private const string ConfigFileName = "piconet-agent.json";
-    private const string ConfigDirName = ".piconet";
+    private const string ConfigFileName = "pico-agent.json";
+    private const string ConfigDirName = ".pico";
 
-    private static string ConfigPath
+    internal static string ConfigPath
     {
         get
         {
@@ -32,7 +33,7 @@ internal class AgentConfig
     /// <summary>
     /// Build config from optional overrides (command-line takes priority).
     /// </summary>
-    public static AgentConfig Build(string? baseUrl, string? apiKey, string? model)
+    public static AgentConfig Build(string? baseUrl, string? apiKey, string? model, float? temperature = null, int? maxTokens = null)
     {
         var config = Load();
 
@@ -42,6 +43,10 @@ internal class AgentConfig
             config.ApiKey = apiKey;
         if (!string.IsNullOrEmpty(model))
             config.Model = model;
+        if (temperature.HasValue)
+            config.Temperature = temperature;
+        if (maxTokens.HasValue)
+            config.MaxTokens = maxTokens;
 
         return config;
     }
@@ -111,4 +116,11 @@ internal class AgentConfig
 
         File.WriteAllText(ConfigPath, json);
     }
+}
+
+internal class McpServerConfig
+{
+    public string Command { get; set; } = string.Empty;
+    public string[] Args { get; set; } = Array.Empty<string>();
+    public Dictionary<string, string>? Env { get; set; }
 }

@@ -83,6 +83,8 @@ internal class AgentApp
         AnsiConsole.WriteLine("  -u, --base-url <url>   API base URL");
         AnsiConsole.WriteLine("  -k, --api-key <key>    API key");
         AnsiConsole.WriteLine("  -s, --system <text>    System prompt");
+        AnsiConsole.WriteLine("  -t, --temperature <v>  Sampling temperature");
+        AnsiConsole.WriteLine("  -max, --max-tokens <v> Max tokens to generate");
         AnsiConsole.WriteLine("  -n, --no-stream        Disable streaming output");
         AnsiConsole.WriteLine("  --tools <list>         Enable tools: bash,edit,read,write (comma-separated)");
         AnsiConsole.WriteLine("  --thinking <true|false> Enable model thinking/reasoning");
@@ -93,6 +95,8 @@ internal class AgentApp
         AnsiConsole.WriteLine("  AGENT_MODEL     - Model name");
         AnsiConsole.WriteLine("  AGENT_TOOLS     - Comma-separated list of tools to enable");
         AnsiConsole.WriteLine("  AGENT_THINKING_ENABLED - Enable model thinking/reasoning");
+        AnsiConsole.WriteLine("  AGENT_MAX_TOKENS - Max tokens to generate");
+        AnsiConsole.WriteLine("  AGENT_TEMPERATURE - Sampling temperature");
     }
 
     private static CliArgs ParseArgs(string[] args)
@@ -110,13 +114,15 @@ internal class AgentApp
                 else if (pendingFlag == "-m" || pendingFlag == "--model") opts.Model = arg;
                 else if (pendingFlag == "-u" || pendingFlag == "--base-url") opts.BaseUrl = arg;
                 else if (pendingFlag == "-k" || pendingFlag == "--api-key") opts.ApiKey = arg;
+                else if (pendingFlag == "-t" || pendingFlag == "--temperature") opts.Temperature = float.TryParse(arg, out var t) ? t : null;
+                else if (pendingFlag == "-max" || pendingFlag == "--max-tokens") opts.MaxTokens = int.TryParse(arg, out var m) ? m : null;
                 else if (pendingFlag == "--tools") opts.Tools = arg.Split(',').Select(s => s.Trim()).ToArray();
                 else if (pendingFlag == "--thinking") opts.Thinking = ParseThinkingArg(arg);
                 pendingFlag = null;
                 continue;
             }
 
-            if (arg is "-s" or "--system" or "-m" or "--model" or "-u" or "--base-url" or "-k" or "--api-key" or "--tools" or "--thinking")
+            if (arg is "-s" or "--system" or "-m" or "--model" or "-u" or "--base-url" or "-k" or "--api-key" or "--tools" or "--thinking" or "-t" or "--temperature" or "-max" or "--max-tokens")
             {
                 nextIsValue = true;
                 pendingFlag = arg;
@@ -151,6 +157,14 @@ internal class AgentApp
                 opts.ApiKey = arg[3..];
             else if (arg.StartsWith("--api-key="))
                 opts.ApiKey = arg[11..];
+            else if (arg.StartsWith("-t="))
+                opts.Temperature = float.TryParse(arg[3..], out var t) ? t : null;
+            else if (arg.StartsWith("--temperature="))
+                opts.Temperature = float.TryParse(arg[14..], out var t2) ? t2 : null;
+            else if (arg.StartsWith("-max="))
+                opts.MaxTokens = int.TryParse(arg[5..], out var m) ? m : null;
+            else if (arg.StartsWith("--max-tokens="))
+                opts.MaxTokens = int.TryParse(arg[13..], out var m2) ? m2 : null;
             else if (arg.StartsWith("--tools="))
                 opts.Tools = arg[8..].Split(',').Select(s => s.Trim()).ToArray();
             else if (arg.StartsWith("--thinking="))
@@ -167,15 +181,27 @@ internal class AgentApp
     private async Task<int> RunChat(string[] args)
     {
         var opts = ParseArgs(args);
-        var config = AgentConfig.Build(opts.BaseUrl, opts.ApiKey, opts.Model);
+        var config = AgentConfig.Build(opts.BaseUrl, opts.ApiKey, opts.Model, opts.Temperature, opts.MaxTokens);
         if (opts.Thinking.HasValue)
             config.ThinkingEnabled = opts.Thinking;
+
+        await using var mcpService = new McpService();
+        if (config.McpServers?.Count > 0)
+        {
+            AnsiConsole.MarkupLine("[dim]Connecting to MCP servers...[/]");
+            await mcpService.InitializeAsync(config.McpServers);
+        }
+
         var tools = ResolveTools(opts.Tools, config);
-        var client = new AgentClient(config, tools);
+        var client = new AgentClient(config, tools, mcpService);
 
         var header = $"[green]pico[/] - [dim]{config.Model} @ {config.BaseUrl}[/]";
         if (tools?.Length > 0)
             header += $" [dim]tools: {string.Join(", ", tools)}[/]";
+        var mcpToolsCount = mcpService.GetTools().Count;
+        if (mcpToolsCount > 0)
+            header += $" [dim]mcp-tools: {mcpToolsCount}[/]";
+        
         AnsiConsole.MarkupLine(header);
         AnsiConsole.MarkupLine("Type [bold]/quit[/] or [bold]/exit[/] to quit, [bold]/clear[/] to reset conversation, [bold]/sys <prompt>[/] to change system prompt, [bold]/help[/] for help.");
         AnsiConsole.MarkupLine("[dim]Press Ctrl+C to exit.[/]\n");
@@ -328,7 +354,7 @@ internal class AgentApp
             return config.Tools;
 
         // Default: always enable tools
-        return new[] { "bash", "read", "edit", "write" };
+        return new[] { "bash", "read", "edit", "write", "debug" };
     }
 
     private async Task<int> RunComplete(string[] args)
@@ -358,15 +384,25 @@ internal class AgentApp
             return 1;
         }
 
-        var config = AgentConfig.Build(opts.BaseUrl, opts.ApiKey, opts.Model);
+        var config = AgentConfig.Build(opts.BaseUrl, opts.ApiKey, opts.Model, opts.Temperature, opts.MaxTokens);
         if (opts.Thinking.HasValue)
             config.ThinkingEnabled = opts.Thinking;
+
+        await using var mcpService = new McpService();
+        if (config.McpServers?.Count > 0)
+        {
+            await mcpService.InitializeAsync(config.McpServers);
+        }
+
         var tools = ResolveTools(opts.Tools, config);
-        var client = new AgentClient(config, tools);
+        var client = new AgentClient(config, tools, mcpService);
 
         AnsiConsole.MarkupLine($"[dim]Model: {config.Model}[/]");
         if (tools?.Length > 0)
             AnsiConsole.MarkupLine($"[dim]Tools: {string.Join(", ", tools)}[/]");
+        var mcpToolsCount = mcpService.GetTools().Count;
+        if (mcpToolsCount > 0)
+            AnsiConsole.MarkupLine($"[dim]MCP Tools: {mcpToolsCount}[/]");
         AnsiConsole.MarkupLine($"[dim]Endpoint: {config.BaseUrl}[/]");
         AnsiConsole.Write(new Markup("[dim]Prompt:[/] "));
         AnsiConsole.WriteLine(prompt.Trim());
@@ -646,4 +682,6 @@ internal class CliArgs
     public bool NoStream { get; set; }
     public string[]? Tools { get; set; }
     public bool? Thinking { get; set; }
+    public float? Temperature { get; set; }
+    public int? MaxTokens { get; set; }
 }

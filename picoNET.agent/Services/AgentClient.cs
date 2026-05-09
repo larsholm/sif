@@ -15,11 +15,14 @@ internal class AgentClient
 {
     private readonly OpenAI.Chat.ChatClient _chatClient;
     private readonly List<OpenAI.Chat.ChatTool>? _tools;
+    private readonly McpService? _mcpService;
     private readonly bool _thinkingEnabled;
     private readonly string _modelName;
     private readonly bool _isOModel;
+    private readonly float? _temperature;
+    private readonly int? _maxTokens;
 
-    public AgentClient(AgentConfig config, string[]? enabledTools = null)
+    public AgentClient(AgentConfig config, string[]? enabledTools = null, McpService? mcpService = null)
     {
         var endpoint = config.BaseUrl.TrimEnd('/');
         var apiKey = string.IsNullOrEmpty(config.ApiKey) ? "none" : config.ApiKey;
@@ -43,13 +46,26 @@ internal class AgentClient
         _thinkingEnabled = config.ThinkingEnabled ?? false;
         _isOModel = _modelName.StartsWith("o1", StringComparison.OrdinalIgnoreCase) ||
                     _modelName.StartsWith("o3", StringComparison.OrdinalIgnoreCase);
+        _mcpService = mcpService;
+        _temperature = config.Temperature;
+        _maxTokens = config.MaxTokens;
 
+        var allTools = new List<OpenAI.Chat.ChatTool>();
         if (enabledTools?.Length > 0)
-            _tools = ToolRegistry.GetTools(enabledTools);
+            allTools.AddRange(ToolRegistry.GetTools(enabledTools));
+        
+        if (_mcpService != null)
+            allTools.AddRange(_mcpService.GetTools());
+
+        if (allTools.Count > 0)
+            _tools = allTools;
     }
 
     private void ApplyThinkingOptions(OpenAI.Chat.ChatCompletionOptions opts)
     {
+        if (_temperature.HasValue) opts.Temperature = _temperature;
+        if (_maxTokens.HasValue) opts.MaxOutputTokenCount = _maxTokens;
+
         if (!_thinkingEnabled) return;
 
         // Only OpenAI o-series models support ReasoningEffortLevel via the SDK.
@@ -169,7 +185,19 @@ internal class AgentClient
                     var preview = argsJson.Length > 80 ? argsJson.Substring(0, 80) + "..." : argsJson;
                     AnsiConsole.MarkupLine($"\n[dim]Tool: {toolName.EscapeMarkup()} ({preview.EscapeMarkup()})[/]");
 
-                    var toolResult = ToolRegistry.Execute(toolName, argsJson);
+                    string toolResult;
+                    if (IsLocalTool(toolName))
+                    {
+                        toolResult = ToolRegistry.Execute(toolName, argsJson);
+                    }
+                    else if (_mcpService != null)
+                    {
+                        toolResult = await _mcpService.ExecuteToolAsync(toolName, argsJson);
+                    }
+                    else
+                    {
+                        toolResult = $"Error: Tool '{toolName}' not found.";
+                    }
 
                     // Display tool result
                     if (toolResult.Length > 4000)
@@ -254,6 +282,11 @@ internal class AgentClient
         }
 
         return (sb.ToString(), totalTokens);
+    }
+
+    private static bool IsLocalTool(string toolName)
+    {
+        return toolName is "bash" or "read" or "edit" or "write" or "debug";
     }
 
     private static OpenAI.Chat.ChatMessage ToRequestMessage(ChatMessage msg)
