@@ -73,7 +73,7 @@ internal class AgentApp
     {
         AnsiConsole.MarkupLine("[green]pico[/] - AI agent for local OpenAI-compatible models");
         AnsiConsole.WriteLine();
-        AnsiConsole.WriteLine("Usage: pico [--tools bash,edit,read,write,context] [--model name] [--base-url url]");
+        AnsiConsole.WriteLine("Usage: pico [--tools bash,edit,read,write,context,diagnostics] [--model name] [--base-url url]");
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine("  (no args)     Start an interactive chat session");
         AnsiConsole.MarkupLine("  [bold]complete[/]  Run a one-off prompt and exit");
@@ -87,7 +87,7 @@ internal class AgentApp
         AnsiConsole.WriteLine("  -t, --temperature <v>  Sampling temperature");
         AnsiConsole.WriteLine("  -max, --max-tokens <v> Max tokens to generate");
         AnsiConsole.WriteLine("  -n, --no-stream        Disable streaming output");
-        AnsiConsole.WriteLine("  --tools <list>         Enable tools: bash,edit,read,write,context (comma-separated)");
+        AnsiConsole.WriteLine("  --tools <list>         Enable tools: bash,edit,read,write,context,diagnostics (comma-separated)");
         AnsiConsole.WriteLine("  --thinking <true|false> Enable model thinking/reasoning");
         AnsiConsole.WriteLine();
         AnsiConsole.WriteLine("Environment variables:");
@@ -221,7 +221,9 @@ internal class AgentApp
                 { "edit", "Replace exact text in a file" },
                 { "write", "Create or overwrite a file" },
                 { "context", "Store and search large tool results out-of-band" },
-                { "ctx", "Store and search large tool results out-of-band" }
+                { "ctx", "Store and search large tool results out-of-band" },
+                { "diagnostics", "Inspect pico agent configuration, environment, and chat history" },
+                { "debug", "Legacy alias for pico agent diagnostics; not a debugger" }
             };
             var toolList = tools.Select(t => descriptions.TryGetValue(t, out var d) ? d : t)
                 .Aggregate((a, b) => $"{a}, {b}");
@@ -326,8 +328,9 @@ internal class AgentApp
             }
             catch (Exception ex)
             {
-                AnsiConsole.MarkupLine($"[red]Error:[/] {ex.Message}\n");
-                history.RemoveAt(history.Count - 1);
+                AnsiConsole.MarkupLine($"[red]Error:[/] {ex.Message.EscapeMarkup()}\n");
+                if (history.Count > 0 && history[^1].Role == "user")
+                    history.RemoveAt(history.Count - 1);
             }
         }
 
@@ -357,7 +360,7 @@ internal class AgentApp
         table.AddRow("[bold]/context[/]", "Show chat history and stored context summary");
         table.AddRow("[bold]/context list[/]", "List stored context entries");
         table.AddRow("[bold]/context search <query>[/]", "Search stored context");
-        table.AddRow("[bold]/context read <id> [query][/]", "Read a stored entry, optionally focused by query");
+        table.AddRow("[bold]/context read <id> [[query]][/]", "Read a stored entry, optionally focused by query");
         table.AddRow("[bold]/context delete <id>[/]", "Delete a stored context entry");
         table.AddRow("[bold]/context drop <count>[/]", "Remove recent non-system chat messages");
         table.AddRow("[bold]/context clear[/]", "Clear conversation history and keep the system prompt");
@@ -487,7 +490,7 @@ internal class AgentApp
     {
         if (string.IsNullOrWhiteSpace(arg))
         {
-            AnsiConsole.MarkupLine("[yellow]Usage:[/] /context read <id> [query]\n");
+            AnsiConsole.MarkupLine("[yellow]Usage:[/] /context read <id> [[query]]\n");
             return;
         }
 
@@ -557,7 +560,7 @@ internal class AgentApp
             return config.Tools;
 
         // Default: always enable tools
-        return new[] { "bash", "read", "edit", "write", "context", "debug" };
+        return new[] { "bash", "read", "edit", "write", "context" };
     }
 
     private async Task<int> RunComplete(string[] args)

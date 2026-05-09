@@ -149,27 +149,37 @@ internal static class ToolRegistry
             ));
         }
 
+        if (enabled.Contains("diagnostics"))
+        {
+            tools.Add(CreateDiagnosticsTool("diagnostics"));
+        }
+
         if (enabled.Contains("debug"))
         {
-            tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
-                "debug",
-                "Get diagnostic information about the agent's environment, configuration, and state.",
-                BinaryData.FromString("""
-                    {
-                        "type": "object",
-                        "properties": {
-                            "item": { "type": "string", "enum": ["config", "env", "history"], "description": "The item to debug: 'config' for configuration content, 'env' for environment variables, 'history' to see conversation history." }
-                        },
-                        "required": ["item"]
-                    }
-                    """)
-            ));
+            tools.Add(CreateDiagnosticsTool("debug"));
         }
 
         return tools;
     }
 
-    public static Func<string, Task<string>>? DebugHandler { get; set; }
+    private static OpenAI.Chat.ChatTool CreateDiagnosticsTool(string name)
+    {
+        return OpenAI.Chat.ChatTool.CreateFunctionTool(
+            name,
+            "Get pico agent diagnostics only: configuration, AGENT_ environment variables, or current chat history. This is not a debugger and cannot launch, attach to, or manage .NET debug adapter sessions.",
+            BinaryData.FromString("""
+                {
+                    "type": "object",
+                    "properties": {
+                        "item": { "type": "string", "enum": ["config", "env", "history"], "description": "Diagnostic item: 'config' for configuration content, 'env' for AGENT_ environment variables, 'history' for current conversation history." }
+                    },
+                    "required": ["item"]
+                }
+                """)
+        );
+    }
+
+    public static Func<string, Task<string>>? DiagnosticsHandler { get; set; }
 
     public static async Task<string> ExecuteAsync(string toolName, string argumentsJson)
     {
@@ -179,7 +189,8 @@ internal static class ToolRegistry
             "read" => RunRead(argumentsJson),
             "edit" => RunEdit(argumentsJson),
             "write" => RunWrite(argumentsJson),
-            "debug" => await RunDebugAsync(argumentsJson),
+            "debug" => await RunDiagnosticsAsync(argumentsJson),
+            "diagnostics" => await RunDiagnosticsAsync(argumentsJson),
             "ctx_index" => RunContextIndex(argumentsJson),
             "ctx_search" => RunContextSearch(argumentsJson),
             "ctx_read" => RunContextRead(argumentsJson),
@@ -216,7 +227,7 @@ internal static class ToolRegistry
         return ContextStore.Read(id, query, maxChars);
     }
 
-    private static async Task<string> RunDebugAsync(string argsJson)
+    private static async Task<string> RunDiagnosticsAsync(string argsJson)
     {
         using var doc = JsonDocument.Parse(argsJson);
         var root = doc.RootElement;
@@ -224,8 +235,8 @@ internal static class ToolRegistry
 
         if (item == "history")
         {
-            if (DebugHandler == null) return "Error: Debug handler not registered.";
-            return await DebugHandler(item);
+            if (DiagnosticsHandler == null) return "Error: Diagnostics handler not registered.";
+            return await DiagnosticsHandler(item);
         }
 
         if (item == "config")
@@ -254,7 +265,7 @@ internal static class ToolRegistry
             return sb.ToString();
         }
 
-        return $"Error: Unknown debug item '{item}'";
+        return $"Error: Unknown diagnostics item '{item}'";
     }
 
     private static async Task<string> RunBashAsync(string argsJson)

@@ -10,7 +10,7 @@ namespace picoNET.agent;
 
 /// <summary>
 /// Client wrapping the OpenAI SDK for chat completions.
-/// Supports tool calling for bash, read, edit, write.
+/// Supports tool calling for bash, read, edit, write, context, and diagnostics.
 /// </summary>
 internal class AgentClient
 {
@@ -145,15 +145,15 @@ internal class AgentClient
         var messages = history.Select(m => ToRequestMessage(m)).ToList();
         int totalTokens = 0;
 
-        // Register debug handler
-        ToolRegistry.DebugHandler = async (item) =>
+        // Register diagnostics handler
+        ToolRegistry.DiagnosticsHandler = async (item) =>
         {
             if (item == "history")
             {
                 var json = JsonSerializer.Serialize(messages, new JsonSerializerOptions { WriteIndented = true });
                 return $"Current conversation history (OpenAI Format):\n\n{json}";
             }
-            return $"Error: Unknown debug item '{item}'";
+            return $"Error: Unknown diagnostics item '{item}'";
         };
 
         try
@@ -250,7 +250,7 @@ internal class AgentClient
         }
         finally
         {
-            ToolRegistry.DebugHandler = null;
+            ToolRegistry.DiagnosticsHandler = null;
         }
     }
 
@@ -313,7 +313,7 @@ internal class AgentClient
 
     private static bool IsLocalTool(string toolName)
     {
-        return toolName is "bash" or "read" or "edit" or "write" or "debug"
+        return toolName is "bash" or "read" or "edit" or "write" or "debug" or "diagnostics"
             or "ctx_index" or "ctx_search" or "ctx_read" or "ctx_stats";
     }
 

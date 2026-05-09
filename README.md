@@ -38,10 +38,14 @@ Enable tool calling with `--tools` (comma-separated):
 | `edit`  | Edit files by replacing exact text                      |
 | `write` | Create or overwrite files                               |
 | `context` | Add `ctx_index`, `ctx_search`, `ctx_read`, and `ctx_stats` tools for large context |
+| `diagnostics` | Inspect pico agent configuration, AGENT_ environment variables, and chat history |
 
 ```bash
-# Use all tools
+# Use the default tool set explicitly
 pico --tools bash,read,edit,write,context
+
+# Add pico runtime diagnostics when needed
+pico --tools bash,read,edit,write,context,diagnostics
 
 # Or set persistently
 pico config --set TOOLS=bash,read,edit,write,context
@@ -49,6 +53,8 @@ pico
 ```
 
 When `context` is enabled, large local and MCP tool results are automatically stored under `~/.pico/context/` and replaced in the model context with a compact handle such as `ctx_abc123`. The model can then call `ctx_search` for focused snippets or `ctx_read` for a specific stored result.
+
+The `diagnostics` tool is for inspecting pico's own runtime state. It is not a debugger and does not launch, attach to, or manage .NET debug adapter sessions.
 
 **Note:** Tool calling is non-streaming (the model decides whether to use tools, then returns the final response). Thinking/reasoning display works for OpenAI o-series models and Qwen3.x models via vLLM.
 
@@ -106,7 +112,7 @@ pico config --set BASE_URL=http://100.118.58.55:8020/v1
 | `-k, --api-key`      | API key                        |
 | `-s, --system`       | System prompt                  |
 | `-n, --no-stream`    | Disable streaming output       |
-| `--tools`            | Enable tools: bash,edit,read,write,context |
+| `--tools`            | Enable tools: bash,edit,read,write,context,diagnostics |
 | `--thinking`         | Enable model thinking/reasoning (true/false) |
 
 ## Environment Variables
