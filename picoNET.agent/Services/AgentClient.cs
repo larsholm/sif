@@ -144,86 +144,111 @@ internal class AgentClient
         var messages = history.Select(m => ToRequestMessage(m)).ToList();
         int totalTokens = 0;
 
-        while (true)
+        // Register debug handler
+        ToolRegistry.DebugHandler = async (item) =>
         {
-            var opts = new OpenAI.Chat.ChatCompletionOptions();
-            foreach (var tool in _tools ?? Enumerable.Empty<OpenAI.Chat.ChatTool>())
-                opts.Tools.Add(tool);
-            ApplyThinkingOptions(opts);
-
-            var result = await _chatClient.CompleteChatAsync(messages, opts);
-
-            totalTokens += result.Value.Usage?.TotalTokenCount ?? 0;
-
-            // Extract reasoning from the raw response (vLLM/Qwen) or from content tags
-            string reasoningText = ExtractReasoningFromRawResponse(result);
-            var contentText = ExtractText(result.Value.Content);
-
-            // Fall back to extracting thinking tags from content if no separate reasoning field
-            if (string.IsNullOrEmpty(reasoningText))
-                reasoningText = ExtractThinking(contentText);
-
-            // Show reasoning/thinking before tool calls or final response
-            if (!string.IsNullOrEmpty(reasoningText))
+            if (item == "history")
             {
-                AnsiConsole.MarkupLine("\n[dim]Thinking:[/]");
-                foreach (var line in reasoningText.Trim().Split('\n'))
-                    AnsiConsole.MarkupLine("[dim]  " + line.EscapeMarkup() + "[/]");
-                AnsiConsole.MarkupLine("");
+                var json = JsonSerializer.Serialize(messages, new JsonSerializerOptions { WriteIndented = true });
+                return $"Current conversation history (OpenAI Format):\n\n{json}";
             }
-
-            // Check if the model wants to call tools
-            if (result.Value.ToolCalls.Count > 0)
+            if (item == "breakpoint")
             {
-                messages.Add(OpenAI.Chat.ChatMessage.CreateAssistantMessage(result.Value));
+                AnsiConsole.MarkupLine("\n[bold yellow]!!! BREAKPOINT HIT !!![/]");
+                AnsiConsole.MarkupLine("[dim]The agent has requested a pause. Review the state above.[/]");
+                new TextPrompt<string>("[yellow]Press Enter to continue...[/]").AllowEmpty().Show(AnsiConsole.Console);
+                return "Breakpoint cleared. Agent execution resumed.";
+            }
+            return $"Error: Unknown debug item '{item}'";
+        };
 
-                foreach (var toolCall in result.Value.ToolCalls)
+        try
+        {
+            while (true)
+            {
+                var opts = new OpenAI.Chat.ChatCompletionOptions();
+                foreach (var tool in _tools ?? Enumerable.Empty<OpenAI.Chat.ChatTool>())
+                    opts.Tools.Add(tool);
+                ApplyThinkingOptions(opts);
+
+                var result = await _chatClient.CompleteChatAsync(messages, opts);
+
+                totalTokens += result.Value.Usage?.TotalTokenCount ?? 0;
+
+                // Extract reasoning from the raw response (vLLM/Qwen) or from content tags
+                string reasoningText = ExtractReasoningFromRawResponse(result);
+                var contentText = ExtractText(result.Value.Content);
+
+                // Fall back to extracting thinking tags from content if no separate reasoning field
+                if (string.IsNullOrEmpty(reasoningText))
+                    reasoningText = ExtractThinking(contentText);
+
+                // Show reasoning/thinking before tool calls or final response
+                if (!string.IsNullOrEmpty(reasoningText))
                 {
-                    var toolName = toolCall.FunctionName;
-                    var argsJson = toolCall.FunctionArguments.ToString();
-
-                    var preview = argsJson.Length > 80 ? argsJson.Substring(0, 80) + "..." : argsJson;
-                    AnsiConsole.MarkupLine($"\n[dim]Tool: {toolName.EscapeMarkup()} ({preview.EscapeMarkup()})[/]");
-
-                    string toolResult;
-                    if (IsLocalTool(toolName))
-                    {
-                        toolResult = ToolRegistry.Execute(toolName, argsJson);
-                    }
-                    else if (_mcpService != null)
-                    {
-                        toolResult = await _mcpService.ExecuteToolAsync(toolName, argsJson);
-                    }
-                    else
-                    {
-                        toolResult = $"Error: Tool '{toolName}' not found.";
-                    }
-
-                    // Display tool result
-                    if (toolResult.Length > 4000)
-                        AnsiConsole.MarkupLine($"[dim]Result: {toolResult.Substring(0, 4000).EscapeMarkup()}... (truncated)[/]");
-                    else
-                        AnsiConsole.MarkupLine($"[dim]Result: {toolResult.EscapeMarkup()}[/]");
-
-                    // Truncate long results for the model
-                    if (toolResult.Length > 16000)
-                        toolResult = toolResult.Substring(0, 16000) + "\n... (truncated)";
-
-                    messages.Add(OpenAI.Chat.ChatMessage.CreateToolMessage(toolCall.Id, toolResult));
+                    AnsiConsole.MarkupLine("\n[dim]Thinking:[/]");
+                    foreach (var line in reasoningText.Trim().Split('\n'))
+                        AnsiConsole.MarkupLine("[dim]  " + line.EscapeMarkup() + "[/]");
+                    AnsiConsole.MarkupLine("");
                 }
 
-                // Continue the loop to get the next response
-                continue;
+                // Check if the model wants to call tools
+                if (result.Value.ToolCalls.Count > 0)
+                {
+                    messages.Add(OpenAI.Chat.ChatMessage.CreateAssistantMessage(result.Value));
+
+                    foreach (var toolCall in result.Value.ToolCalls)
+                    {
+                        var toolName = toolCall.FunctionName;
+                        var argsJson = toolCall.FunctionArguments.ToString();
+
+                        var preview = argsJson.Length > 80 ? argsJson.Substring(0, 80) + "..." : argsJson;
+                        AnsiConsole.MarkupLine($"\n[dim]Tool: {toolName.EscapeMarkup()} ({preview.EscapeMarkup()})[/]");
+
+                        string toolResult;
+                        if (IsLocalTool(toolName))
+                        {
+                            toolResult = await ToolRegistry.ExecuteAsync(toolName, argsJson);
+                        }
+                        else if (_mcpService != null)
+                        {
+                            toolResult = await _mcpService.ExecuteToolAsync(toolName, argsJson);
+                        }
+                        else
+                        {
+                            toolResult = $"Error: Tool '{toolName}' not found.";
+                        }
+
+                        // Display tool result
+                        if (toolResult.Length > 4000)
+                            AnsiConsole.MarkupLine($"[dim]Result: {toolResult.Substring(0, 4000).EscapeMarkup()}... (truncated)[/]");
+                        else
+                            AnsiConsole.MarkupLine($"[dim]Result: {toolResult.EscapeMarkup()}[/]");
+
+                        // Truncate long results for the model
+                        if (toolResult.Length > 16000)
+                            toolResult = toolResult.Substring(0, 16000) + "\n... (truncated)";
+
+                        messages.Add(OpenAI.Chat.ChatMessage.CreateToolMessage(toolCall.Id, toolResult));
+                    }
+
+                    // Continue the loop to get the next response
+                    continue;
+                }
+
+                // Final text response — strip thinking tags if they're in the content
+                var cleanContent = StripThinkingTags(contentText);
+
+                AnsiConsole.MarkupLine(cleanContent.EscapeMarkup());
+                history.Add(new ChatMessage("assistant", cleanContent));
+                messages.Add(OpenAI.Chat.ChatMessage.CreateAssistantMessage(result.Value));
+
+                return (cleanContent, totalTokens);
             }
-
-            // Final text response — strip thinking tags if they're in the content
-            var cleanContent = StripThinkingTags(contentText);
-
-            AnsiConsole.MarkupLine(cleanContent.EscapeMarkup());
-            history.Add(new ChatMessage("assistant", cleanContent));
-            messages.Add(OpenAI.Chat.ChatMessage.CreateAssistantMessage(result.Value));
-
-            return (cleanContent, totalTokens);
+        }
+        finally
+        {
+            ToolRegistry.DebugHandler = null;
         }
     }
 

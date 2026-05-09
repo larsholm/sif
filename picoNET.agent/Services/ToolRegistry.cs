@@ -97,7 +97,7 @@ internal static class ToolRegistry
                     {
                         "type": "object",
                         "properties": {
-                            "item": { "type": "string", "enum": ["config", "env"], "description": "The item to debug: 'config' for pico-agent.json content, 'env' for AGENT_ environment variables" }
+                            "item": { "type": "string", "enum": ["config", "env", "history", "breakpoint"], "description": "The item to debug: 'config' for configuration content, 'env' for environment variables, 'history' to see conversation history, 'breakpoint' to pause execution." }
                         },
                         "required": ["item"]
                     }
@@ -107,27 +107,34 @@ internal static class ToolRegistry
 
         return tools;
     }
+public static Func<string, Task<string>>? DebugHandler { get; set; }
 
-    public static string Execute(string toolName, string argumentsJson)
+public static async Task<string> ExecuteAsync(string toolName, string argumentsJson)
+{
+    return toolName switch
     {
-        return toolName switch
-        {
-            "bash" => RunBash(argumentsJson),
-            "read" => RunRead(argumentsJson),
-            "edit" => RunEdit(argumentsJson),
-            "write" => RunWrite(argumentsJson),
-            "debug" => RunDebug(argumentsJson),
-            _ => $"Error: Unknown tool '{toolName}'"
-        };
+        "bash" => RunBash(argumentsJson),
+        "read" => RunRead(argumentsJson),
+        "edit" => RunEdit(argumentsJson),
+        "write" => RunWrite(argumentsJson),
+        "debug" => await RunDebugAsync(argumentsJson),
+        _ => $"Error: Unknown tool '{toolName}'"
+    };
+}
+
+private static async Task<string> RunDebugAsync(string argsJson)
+{
+    using var doc = JsonDocument.Parse(argsJson);
+    var root = doc.RootElement;
+    var item = root.GetProperty("item").GetString() ?? "";
+
+    if (item == "history" || item == "breakpoint")
+    {
+        if (DebugHandler == null) return "Error: Debug handler not registered.";
+        return await DebugHandler(item);
     }
 
-    private static string RunDebug(string argsJson)
-    {
-        using var doc = JsonDocument.Parse(argsJson);
-        var root = doc.RootElement;
-        var item = root.GetProperty("item").GetString() ?? "";
-
-        if (item == "config")
+    if (item == "config")
         {
             var path = AgentConfig.ConfigPath;
             if (File.Exists(path))
