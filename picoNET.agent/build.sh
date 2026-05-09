@@ -55,6 +55,9 @@ NUSPEC
 # Create the package using zip (nupkg is just a zip with specific structure)
 cd /tmp/piconet-pack
 rm -f piconet.agent.1.0.0.nupkg
+PACKAGE_VERSION=1.0.0
+PACKAGE_ID=piconet.agent
+PACKAGE_DIR=/home/lars/source/picoNET/picoNET.agent/nupkg
 
 # Create proper Open Packaging Convention structure
 mkdir -p _rels
@@ -79,19 +82,22 @@ cat > _rels/.rels << 'RELS'
 </Relationships>
 RELS
 
-zip -r9 piconet.agent.1.0.0.nupkg piconet.agent.nuspec README.md '[Content_Types].xml' _rels tools/
+zip -r9 "${PACKAGE_ID}.${PACKAGE_VERSION}.nupkg" piconet.agent.nuspec README.md '[Content_Types].xml' _rels tools/
 rm -rf _rels
-mkdir -p /home/lars/source/picoNET/picoNET.agent/nupkg
-mv piconet.agent.1.0.0.nupkg /home/lars/source/picoNET/picoNET.agent/nupkg/
+mkdir -p "$PACKAGE_DIR"
+mv "${PACKAGE_ID}.${PACKAGE_VERSION}.nupkg" "$PACKAGE_DIR/"
 
 echo ""
-echo "Package created: nupkg/piconet.agent.1.0.0.nupkg"
+echo "Package created: nupkg/${PACKAGE_ID}.${PACKAGE_VERSION}.nupkg"
 echo ""
 
 if [ "$1" = "install" ]; then
     echo "Installing as global tool..."
-    dotnet tool uninstall --global piconet.agent 2>/dev/null || true
-    dotnet tool install --add-source /home/lars/source/picoNET/picoNET.agent/nupkg --global piconet.agent
+    if dotnet tool list --global | grep -q "^$PACKAGE_ID[[:space:]]"; then
+        dotnet tool uninstall --global "$PACKAGE_ID"
+    fi
+    rm -rf "$HOME/.nuget/packages/$PACKAGE_ID/$PACKAGE_VERSION"
+    dotnet tool install --source "$PACKAGE_DIR" --version "$PACKAGE_VERSION" --no-http-cache --global "$PACKAGE_ID"
     echo ""
     echo "Installed! Run 'pico' to start chatting."
 fi

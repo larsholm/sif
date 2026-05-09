@@ -73,7 +73,7 @@ internal class AgentApp
     {
         AnsiConsole.MarkupLine("[green]pico[/] - AI agent for local OpenAI-compatible models");
         AnsiConsole.WriteLine();
-        AnsiConsole.WriteLine("Usage: pico [--tools bash,edit,read,write,context,diagnostics] [--model name] [--base-url url]");
+        AnsiConsole.WriteLine("Usage: pico [--tools bash,edit,read,write,sleep,context,diagnostics] [--model name] [--base-url url]");
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine("  (no args)     Start an interactive chat session");
         AnsiConsole.MarkupLine("  [bold]complete[/]  Run a one-off prompt and exit");
@@ -87,7 +87,7 @@ internal class AgentApp
         AnsiConsole.WriteLine("  -t, --temperature <v>  Sampling temperature");
         AnsiConsole.WriteLine("  -max, --max-tokens <v> Max tokens to generate");
         AnsiConsole.WriteLine("  -n, --no-stream        Disable streaming output");
-        AnsiConsole.WriteLine("  --tools <list>         Enable tools: bash,edit,read,write,context,diagnostics (comma-separated)");
+        AnsiConsole.WriteLine("  --tools <list>         Enable tools: bash,edit,read,write,sleep,context,diagnostics (comma-separated)");
         AnsiConsole.WriteLine("  --thinking <true|false> Enable model thinking/reasoning");
         AnsiConsole.WriteLine();
         AnsiConsole.WriteLine("Environment variables:");
@@ -220,6 +220,7 @@ internal class AgentApp
                 { "read", "Read file contents" },
                 { "edit", "Replace exact text in a file" },
                 { "write", "Create or overwrite a file" },
+                { "sleep", "Pause briefly before continuing or retrying" },
                 { "context", "Store and search large tool results out-of-band" },
                 { "ctx", "Store and search large tool results out-of-band" },
                 { "diagnostics", "Inspect pico agent configuration, environment, and chat history" },
@@ -236,6 +237,7 @@ internal class AgentApp
                 "\n- Use 'read' to view file contents" +
                 "\n- Use 'edit' to modify files" +
                 "\n- Use 'write' to create new files" +
+                "\n- Use 'sleep' to pause briefly before continuing or retrying" +
                 "\n- Use 'ctx_search' and 'ctx_read' when a tool result says large context was stored" +
                 "\n- Use 'ctx_index' for large pasted text or generated data that should be searchable later" +
                 "\nThink before acting — explain your plan first."));
@@ -560,7 +562,7 @@ internal class AgentApp
             return config.Tools;
 
         // Default: always enable tools
-        return new[] { "bash", "read", "edit", "write", "context" };
+        return new[] { "bash", "read", "edit", "write", "sleep", "context" };
     }
 
     private async Task<int> RunComplete(string[] args)

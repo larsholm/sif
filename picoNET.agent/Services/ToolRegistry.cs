@@ -89,6 +89,23 @@ internal static class ToolRegistry
             ));
         }
 
+        if (enabled.Contains("sleep"))
+        {
+            tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
+                "sleep",
+                "Pause execution for a short period of time. Useful when waiting before retrying an operation.",
+                BinaryData.FromString("""
+                    {
+                        "type": "object",
+                        "properties": {
+                            "seconds": { "type": "number", "description": "Number of seconds to wait, from 0 to 60" }
+                        },
+                        "required": ["seconds"]
+                    }
+                    """)
+            ));
+        }
+
         if (enabled.Contains("context") || enabled.Contains("ctx"))
         {
             tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
@@ -189,6 +206,7 @@ internal static class ToolRegistry
             "read" => RunRead(argumentsJson),
             "edit" => RunEdit(argumentsJson),
             "write" => RunWrite(argumentsJson),
+            "sleep" => await RunSleepAsync(argumentsJson),
             "debug" => await RunDiagnosticsAsync(argumentsJson),
             "diagnostics" => await RunDiagnosticsAsync(argumentsJson),
             "ctx_index" => RunContextIndex(argumentsJson),
@@ -266,6 +284,23 @@ internal static class ToolRegistry
         }
 
         return $"Error: Unknown diagnostics item '{item}'";
+    }
+
+    private static async Task<string> RunSleepAsync(string argsJson)
+    {
+        using var doc = JsonDocument.Parse(argsJson);
+        var root = doc.RootElement;
+        var seconds = root.TryGetProperty("seconds", out var s) ? s.GetDouble() : 0;
+
+        if (double.IsNaN(seconds) || double.IsInfinity(seconds))
+            return "Error: seconds must be a finite number.";
+        if (seconds < 0)
+            return "Error: seconds must be greater than or equal to 0.";
+        if (seconds > 60)
+            return "Error: seconds must be less than or equal to 60.";
+
+        await Task.Delay(TimeSpan.FromSeconds(seconds));
+        return $"Slept for {seconds:0.###} seconds.";
     }
 
     private static async Task<string> RunBashAsync(string argsJson)

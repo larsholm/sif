@@ -10,7 +10,7 @@ namespace picoNET.agent;
 
 /// <summary>
 /// Client wrapping the OpenAI SDK for chat completions.
-/// Supports tool calling for bash, read, edit, write, context, and diagnostics.
+/// Supports tool calling for bash, read, edit, write, sleep, context, and diagnostics.
 /// </summary>
 internal class AgentClient
 {
@@ -313,7 +313,7 @@ internal class AgentClient
 
     private static bool IsLocalTool(string toolName)
     {
-        return toolName is "bash" or "read" or "edit" or "write" or "debug" or "diagnostics"
+        return toolName is "bash" or "read" or "edit" or "write" or "sleep" or "debug" or "diagnostics"
             or "ctx_index" or "ctx_search" or "ctx_read" or "ctx_stats";
     }
 

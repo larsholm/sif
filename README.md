@@ -5,7 +5,7 @@ A lightweight AI agent console tool supporting local models via OpenAI-compatibl
 ## Features
 
 - **Chat by default** — `pico` launches into interactive chat immediately
-- **Tool calling** — Enable tools for bash, file read/edit/write via `--tools`
+- **Tool calling** — Enable tools for bash, file read/edit/write, and sleep via `--tools`
 - **Context mode** — Large tool outputs are stored out-of-band and can be searched or read back by handle
 - **One-off completion** — Quick prompts from CLI or stdin with `pico complete`
 - **Local model support** — Works with any OpenAI-compatible endpoint (vLLM, Ollama, LM Studio, LiteLLM, etc.)
@@ -37,6 +37,7 @@ Enable tool calling with `--tools` (comma-separated):
 | `read`  | Read file contents                                      |
 | `edit`  | Edit files by replacing exact text                      |
 | `write` | Create or overwrite files                               |
+| `sleep` | Pause briefly before continuing or retrying              |
 | `context` | Add `ctx_index`, `ctx_search`, `ctx_read`, and `ctx_stats` tools for large context |
 | `diagnostics` | Inspect pico agent configuration, AGENT_ environment variables, and chat history |
 
@@ -112,7 +113,7 @@ pico config --set BASE_URL=http://100.118.58.55:8020/v1
 | `-k, --api-key`      | API key                        |
 | `-s, --system`       | System prompt                  |
 | `-n, --no-stream`    | Disable streaming output       |
-| `--tools`            | Enable tools: bash,edit,read,write,context,diagnostics |
+| `--tools`            | Enable tools: bash,edit,read,write,sleep,context,diagnostics |
 | `--thinking`         | Enable model thinking/reasoning (true/false) |
 
 ## Environment Variables
