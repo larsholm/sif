@@ -301,7 +301,7 @@ internal class AgentApp
                 if (tools?.Length > 0)
                 {
                     AnsiConsole.Write(new Markup("[green]agent>[/] "));
-                    var (response, tokenCount) = await client.ChatWithToolsAsync(history);
+                    var (response, tokenCount) = await RunWithEscapeCancel(ct => client.ChatWithToolsAsync(history, ct));
                     AnsiConsole.MarkupLine($"[dim]\n({tokenCount} tokens)[/]\n");
                 }
                 else if (opts.NoStream || (config.ThinkingEnabled ?? false) && !IsOModel(config.Model))
@@ -312,7 +312,7 @@ internal class AgentApp
                     if (useNonStream)
                         AnsiConsole.MarkupLine("[dim](thinking enabled, using non-streaming mode)[/]");
                     AnsiConsole.Write(new Markup("[green]agent>[/] "));
-                    var (response, reasoning) = await client.ChatAsync(history);
+                    var (response, reasoning) = await RunWithEscapeCancel(ct => client.ChatAsync(history, ct));
                     if (!string.IsNullOrEmpty(reasoning))
                     {
                         AnsiConsole.MarkupLine("");
@@ -328,10 +328,16 @@ internal class AgentApp
                 else
                 {
                     AnsiConsole.Write(new Markup("[green]agent>[/] "));
-                    var (response, tokenCount) = await client.ChatStreamingAsync(history);
+                    var (response, tokenCount) = await RunWithEscapeCancel(ct => client.ChatStreamingAsync(history, ct));
                     history.Add(new ChatMessage("assistant", response));
                     AnsiConsole.MarkupLine($"[dim]\n({tokenCount} tokens)[/]\n");
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                AnsiConsole.MarkupLine("[dim]Cancelled.[/]\n");
+                if (history.Count > 0 && history[^1].Role == "user")
+                    history.RemoveAt(history.Count - 1);
             }
             catch (Exception ex)
             {
@@ -343,6 +349,56 @@ internal class AgentApp
 
         AnsiConsole.MarkupLine("\n[dim]Goodbye![/]");
         return 0;
+    }
+
+    private static async Task<T> RunWithEscapeCancel<T>(Func<CancellationToken, Task<T>> action)
+    {
+        using var cts = new CancellationTokenSource();
+        var actionTask = action(cts.Token);
+        var escapeTask = WatchEscapeForCancelAsync(cts);
+
+        try
+        {
+            return await actionTask;
+        }
+        finally
+        {
+            cts.Cancel();
+            try { await escapeTask; } catch { }
+        }
+    }
+
+    private static async Task WatchEscapeForCancelAsync(CancellationTokenSource cts)
+    {
+        while (!cts.IsCancellationRequested)
+        {
+            try
+            {
+                if (Console.KeyAvailable)
+                {
+                    var key = Console.ReadKey(intercept: true);
+                    if (key.Key == ConsoleKey.Escape)
+                    {
+                        AnsiConsole.MarkupLine("\n[dim]Cancelling...[/]");
+                        cts.Cancel();
+                        return;
+                    }
+                }
+            }
+            catch (InvalidOperationException)
+            {
+                return;
+            }
+
+            try
+            {
+                await Task.Delay(25, cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+        }
     }
 
     private static bool ParseThinkingArg(string arg)
@@ -629,7 +685,7 @@ internal class AgentApp
                 if (!string.IsNullOrEmpty(opts.SystemPrompt))
                     history.Add(new ChatMessage("system", opts.SystemPrompt));
                 history.Add(new ChatMessage("user", prompt));
-                var (response, tokenCount) = await client.ChatWithToolsAsync(history);
+                var (response, tokenCount) = await RunWithEscapeCancel(ct => client.ChatWithToolsAsync(history, ct));
                 AnsiConsole.MarkupLine($"\n[dim]({tokenCount} tokens)[/]");
             }
             else
@@ -646,6 +702,11 @@ internal class AgentApp
                 await UiService.DisplayMarkdown(response);
                 AnsiConsole.WriteLine();
             }
+        }
+        catch (OperationCanceledException)
+        {
+            AnsiConsole.MarkupLine("[dim]Cancelled.[/]");
+            return 130;
         }
         catch (Exception ex)
         {

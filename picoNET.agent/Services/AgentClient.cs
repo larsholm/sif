@@ -140,7 +140,7 @@ internal class AgentClient
     /// Chat with tool calling support. Loops through tool calls until the model
     /// returns a text response. Returns (responseText, totalTokenCount).
     /// </summary>
-    public async Task<(string Response, int TokenCount)> ChatWithToolsAsync(List<ChatMessage> history)
+    public async Task<(string Response, int TokenCount)> ChatWithToolsAsync(List<ChatMessage> history, CancellationToken cancellationToken = default)
     {
         var messages = history.Select(m => ToRequestMessage(m)).ToList();
         int totalTokens = 0;
@@ -166,7 +166,7 @@ internal class AgentClient
                     opts.Tools.Add(tool);
                 ApplyThinkingOptions(opts);
 
-                var result = await _chatClient.CompleteChatAsync(messages, opts);
+                var result = await _chatClient.CompleteChatAsync(messages, opts, cancellationToken);
 
                 totalTokens += result.Value.Usage?.TotalTokenCount ?? 0;
 
@@ -203,7 +203,7 @@ internal class AgentClient
                         string toolResult;
                         if (IsLocalTool(toolName))
                         {
-                            toolResult = await ToolRegistry.ExecuteAsync(toolName, argsJson);
+                            toolResult = await ToolRegistry.ExecuteAsync(toolName, argsJson, cancellationToken);
                         }
                         else if (_mcpService != null)
                         {
@@ -258,12 +258,12 @@ internal class AgentClient
     /// Send a full conversation and get a complete response (no tools).
     /// Returns (responseText, reasoningText) where reasoning is displayed separately.
     /// </summary>
-    public async Task<(string Response, string Reasoning)> ChatAsync(List<ChatMessage> history)
+    public async Task<(string Response, string Reasoning)> ChatAsync(List<ChatMessage> history, CancellationToken cancellationToken = default)
     {
         var messages = history.Select(m => ToRequestMessage(m)).ToList();
         var opts = new OpenAI.Chat.ChatCompletionOptions();
         ApplyThinkingOptions(opts);
-        var result = await _chatClient.CompleteChatAsync(messages, opts);
+        var result = await _chatClient.CompleteChatAsync(messages, opts, cancellationToken);
 
         string reasoningText = ExtractReasoningFromRawResponse(result);
         var contentText = ExtractText(result.Value.Content);
@@ -280,17 +280,17 @@ internal class AgentClient
     /// Returns the full response text and total token count.
     /// Note: reasoning/thinking is only available in non-streaming mode.
     /// </summary>
-    public async Task<(string Response, int TokenCount)> ChatStreamingAsync(List<ChatMessage> history)
+    public async Task<(string Response, int TokenCount)> ChatStreamingAsync(List<ChatMessage> history, CancellationToken cancellationToken = default)
     {
         var messages = history.Select(m => ToRequestMessage(m)).ToList();
         var opts = new OpenAI.Chat.ChatCompletionOptions();
         ApplyThinkingOptions(opts);
-        var stream = _chatClient.CompleteChatStreamingAsync(messages, opts);
+        var stream = _chatClient.CompleteChatStreamingAsync(messages, opts, cancellationToken);
 
         var sb = new StringBuilder();
         int totalTokens = 0;
 
-        await foreach (var update in stream)
+        await foreach (var update in stream.WithCancellation(cancellationToken))
         {
             if (update.ContentUpdate is not null)
             {

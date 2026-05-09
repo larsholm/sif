@@ -218,15 +218,15 @@ internal static class ToolRegistry
 
     public static Func<string, Task<string>>? DiagnosticsHandler { get; set; }
 
-    public static async Task<string> ExecuteAsync(string toolName, string argumentsJson)
+    public static async Task<string> ExecuteAsync(string toolName, string argumentsJson, CancellationToken cancellationToken = default)
     {
         return toolName switch
         {
-            "bash" => await RunBashAsync(argumentsJson),
+            "bash" => await RunBashAsync(argumentsJson, cancellationToken),
             "read" => RunRead(argumentsJson),
             "edit" => RunEdit(argumentsJson),
             "write" => RunWrite(argumentsJson),
-            "sleep" => await RunSleepAsync(argumentsJson),
+            "sleep" => await RunSleepAsync(argumentsJson, cancellationToken),
             "serve" => RunServe(argumentsJson),
             "debug" => await RunDiagnosticsAsync(argumentsJson),
             "diagnostics" => await RunDiagnosticsAsync(argumentsJson),
@@ -307,7 +307,7 @@ internal static class ToolRegistry
         return $"Error: Unknown diagnostics item '{item}'";
     }
 
-    private static async Task<string> RunSleepAsync(string argsJson)
+    private static async Task<string> RunSleepAsync(string argsJson, CancellationToken cancellationToken)
     {
         using var doc = JsonDocument.Parse(argsJson);
         var root = doc.RootElement;
@@ -320,7 +320,7 @@ internal static class ToolRegistry
         if (seconds > 60)
             return "Error: seconds must be less than or equal to 60.";
 
-        await Task.Delay(TimeSpan.FromSeconds(seconds));
+        await Task.Delay(TimeSpan.FromSeconds(seconds), cancellationToken);
         return $"Slept for {seconds:0.###} seconds.";
     }
 
@@ -395,7 +395,7 @@ internal static class ToolRegistry
         return ((IPEndPoint)listener.LocalEndpoint).Port;
     }
 
-    private static async Task<string> RunBashAsync(string argsJson)
+    private static async Task<string> RunBashAsync(string argsJson, CancellationToken cancellationToken)
     {
         using var doc = JsonDocument.Parse(argsJson);
         var root = doc.RootElement;
@@ -451,15 +451,23 @@ internal static class ToolRegistry
 
                 var outputTask = process.StandardOutput.ReadToEndAsync();
                 var errorTask = process.StandardError.ReadToEndAsync();
-                var waitTask = process.WaitForExitAsync();
+                var waitTask = process.WaitForExitAsync(cancellationToken);
 
-                if (await Task.WhenAny(waitTask, Task.Delay(TimeSpan.FromSeconds(30))) != waitTask)
+                try
+                {
+                    if (await Task.WhenAny(waitTask, Task.Delay(TimeSpan.FromSeconds(30))) != waitTask)
+                    {
+                        try { process.Kill(true); } catch { }
+                        return "Error: Command timed out after 30s.";
+                    }
+
+                    await Task.WhenAll(outputTask, errorTask, waitTask);
+                }
+                catch (OperationCanceledException)
                 {
                     try { process.Kill(true); } catch { }
-                    return "Error: Command timed out after 30s.";
+                    throw;
                 }
-
-                await Task.WhenAll(outputTask, errorTask);
                 var output = outputTask.Result;
                 var errors = errorTask.Result;
 
