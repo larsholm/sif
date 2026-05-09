@@ -141,6 +141,61 @@ internal static class ContextStore
                $"Stored chars: {chars:N0}";
     }
 
+    public static IReadOnlyList<ContextEntry> ListEntries()
+    {
+        return LoadEntries()
+            .OrderBy(e => e.CreatedAt, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    public static bool Delete(string id, out string message)
+    {
+        var entries = LoadEntries().ToList();
+        var entry = entries.FirstOrDefault(e => e.Id == id);
+        if (entry == null)
+        {
+            message = $"Context id not found: {id}";
+            return false;
+        }
+
+        lock (Lock)
+        {
+            if (File.Exists(entry.Path))
+                File.Delete(entry.Path);
+
+            WriteIndex(entries.Where(e => e.Id != id));
+        }
+
+        message = $"Deleted context entry {id}.";
+        return true;
+    }
+
+    public static int Clear()
+    {
+        var entries = LoadEntries().ToList();
+        lock (Lock)
+        {
+            foreach (var entry in entries)
+            {
+                if (File.Exists(entry.Path))
+                    File.Delete(entry.Path);
+            }
+
+            WriteIndex(Array.Empty<ContextEntry>());
+        }
+
+        return entries.Count;
+    }
+
+    public static string GetRootPath() => RootPath;
+
+    private static void WriteIndex(IEnumerable<ContextEntry> entries)
+    {
+        Directory.CreateDirectory(RootPath);
+        var lines = entries.Select(entry => JsonSerializer.Serialize(entry, JsonOptions));
+        File.WriteAllLines(IndexPath, lines);
+    }
+
     private static IEnumerable<ContextEntry> LoadEntries()
     {
         if (!File.Exists(IndexPath))

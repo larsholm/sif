@@ -204,7 +204,7 @@ internal class AgentApp
             header += $" [dim]mcp-tools: {mcpToolsCount}[/]";
         
         AnsiConsole.MarkupLine(header);
-        AnsiConsole.MarkupLine("Type [bold]/quit[/] or [bold]/exit[/] to quit, [bold]/clear[/] to reset conversation, [bold]/sys <prompt>[/] to change system prompt, [bold]/help[/] for help.");
+        AnsiConsole.MarkupLine("Type [bold]/quit[/] or [bold]/exit[/] to quit, [bold]/clear[/] to reset conversation, [bold]/context[/] to inspect context, [bold]/help[/] for help.");
         AnsiConsole.MarkupLine("[dim]Press Ctrl+C to exit.[/]\n");
 
         var history = new List<ChatMessage>();
@@ -259,9 +259,7 @@ internal class AgentApp
                 }
                 else if (trimmed == "/clear")
                 {
-                    var sys = history.FirstOrDefault(m => m.Role == "system");
-                    history.Clear();
-                    if (sys != null) history.Add(sys);
+                    ClearChatHistory(history);
                     AnsiConsole.MarkupLine("[dim]Conversation cleared.[/]\n");
                 }
                 else if (trimmed.StartsWith("/sys "))
@@ -272,9 +270,13 @@ internal class AgentApp
                     else history.Insert(0, new ChatMessage("system", newSys));
                     AnsiConsole.MarkupLine("[dim]System prompt updated.[/]\n");
                 }
+                else if (trimmed == "/context" || trimmed.StartsWith("/context "))
+                {
+                    HandleContextCommand(trimmed, history);
+                }
                 else if (trimmed == "/help")
                 {
-                    ShowHelp();
+                    ShowChatHelp();
                 }
                 else
                 {
@@ -342,6 +344,201 @@ internal class AgentApp
     {
         return model.StartsWith("o1", StringComparison.OrdinalIgnoreCase) ||
                model.StartsWith("o3", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void ShowChatHelp()
+    {
+        var table = new Table();
+        table.AddColumn("Command");
+        table.AddColumn("Description");
+        table.AddRow("[bold]/quit[/] or [bold]/exit[/]", "Exit the chat session");
+        table.AddRow("[bold]/clear[/]", "Clear conversation history and keep the system prompt");
+        table.AddRow("[bold]/sys <prompt>[/]", "Change the system prompt");
+        table.AddRow("[bold]/context[/]", "Show chat history and stored context summary");
+        table.AddRow("[bold]/context list[/]", "List stored context entries");
+        table.AddRow("[bold]/context search <query>[/]", "Search stored context");
+        table.AddRow("[bold]/context read <id> [query][/]", "Read a stored entry, optionally focused by query");
+        table.AddRow("[bold]/context delete <id>[/]", "Delete a stored context entry");
+        table.AddRow("[bold]/context drop <count>[/]", "Remove recent non-system chat messages");
+        table.AddRow("[bold]/context clear[/]", "Clear conversation history and keep the system prompt");
+        table.AddRow("[bold]/context clear-history[/]", "Clear conversation history and keep the system prompt");
+        table.AddRow("[bold]/context clear-store[/]", "Delete stored context entries for this session");
+        table.AddRow("[bold]/context clear all[/]", "Clear chat history and stored context");
+        AnsiConsole.Write(table);
+        AnsiConsole.WriteLine();
+    }
+
+    private static void HandleContextCommand(string command, List<ChatMessage> history)
+    {
+        var rest = command.Length == "/context".Length ? "" : command["/context".Length..].Trim();
+        if (string.IsNullOrWhiteSpace(rest) || rest.Equals("stats", StringComparison.OrdinalIgnoreCase))
+        {
+            ShowContextSummary(history);
+            return;
+        }
+
+        var parts = rest.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var subcommand = parts[0].ToLowerInvariant();
+        var arg = parts.Length > 1 ? parts[1].Trim() : "";
+
+        switch (subcommand)
+        {
+            case "help":
+                ShowChatHelp();
+                break;
+            case "list":
+                ShowContextEntries();
+                break;
+            case "search":
+                if (string.IsNullOrWhiteSpace(arg))
+                    AnsiConsole.MarkupLine("[yellow]Usage:[/] /context search <query>\n");
+                else
+                    AnsiConsole.WriteLine(ContextStore.Search(arg));
+                break;
+            case "read":
+                HandleContextRead(arg);
+                break;
+            case "delete":
+            case "remove":
+            case "rm":
+                HandleContextDelete(arg);
+                break;
+            case "drop":
+                HandleContextDrop(arg, history);
+                break;
+            case "clear-history":
+                ClearChatHistory(history);
+                AnsiConsole.MarkupLine("[dim]Conversation cleared.[/]\n");
+                break;
+            case "clear-store":
+                AnsiConsole.MarkupLine($"[dim]Deleted {ContextStore.Clear():N0} stored context entries.[/]\n");
+                break;
+            case "clear" when string.IsNullOrWhiteSpace(arg) || arg.Equals("history", StringComparison.OrdinalIgnoreCase):
+                ClearChatHistory(history);
+                AnsiConsole.MarkupLine("[dim]Conversation cleared.[/]\n");
+                break;
+            case "clear" when arg.Equals("store", StringComparison.OrdinalIgnoreCase):
+                AnsiConsole.MarkupLine($"[dim]Deleted {ContextStore.Clear():N0} stored context entries.[/]\n");
+                break;
+            case "clear" when arg.Equals("all", StringComparison.OrdinalIgnoreCase):
+                ClearChatHistory(history);
+                AnsiConsole.MarkupLine($"[dim]Conversation cleared. Deleted {ContextStore.Clear():N0} stored context entries.[/]\n");
+                break;
+            default:
+                AnsiConsole.MarkupLine($"[yellow]Unknown /context command:[/] {subcommand.EscapeMarkup()}");
+                AnsiConsole.MarkupLine("[dim]Use /context help for available commands.[/]\n");
+                break;
+        }
+    }
+
+    private static void ShowContextSummary(List<ChatMessage> history)
+    {
+        var nonSystemMessages = history.Count(m => m.Role != "system");
+        var chars = history.Sum(m => m.Content.Length);
+        var entries = ContextStore.ListEntries();
+        var storedChars = entries.Sum(e => e.Length);
+
+        var table = new Table();
+        table.Title("[green]Current Context[/]");
+        table.AddColumn("Area");
+        table.AddColumn("Count");
+        table.AddColumn("Size");
+        table.AddRow("Chat messages", history.Count.ToString("N0"), $"~{chars / 4:N0} tokens / {chars:N0} chars");
+        table.AddRow("Non-system messages", nonSystemMessages.ToString("N0"), "");
+        table.AddRow("Stored context", entries.Count.ToString("N0"), $"{storedChars:N0} chars");
+        table.AddRow("Store path", "", $"[dim]{ContextStore.GetRootPath().EscapeMarkup()}[/]");
+        AnsiConsole.Write(table);
+        AnsiConsole.MarkupLine("[dim]Use /context help for management commands.[/]\n");
+    }
+
+    private static void ShowContextEntries()
+    {
+        var entries = ContextStore.ListEntries();
+        if (entries.Count == 0)
+        {
+            AnsiConsole.MarkupLine("[dim]No stored context entries for this session.[/]\n");
+            return;
+        }
+
+        var table = new Table();
+        table.AddColumn("Id");
+        table.AddColumn("Source");
+        table.AddColumn("Size");
+        table.AddColumn("Preview");
+
+        foreach (var entry in entries)
+        {
+            var preview = entry.Preview.Replace("\r\n", "\n").Replace('\n', ' ');
+            if (preview.Length > 90)
+                preview = preview[..90] + "...";
+
+            table.AddRow(
+                $"[bold]{entry.Id.EscapeMarkup()}[/]",
+                entry.Source.EscapeMarkup(),
+                $"{entry.Length:N0}",
+                preview.EscapeMarkup());
+        }
+
+        AnsiConsole.Write(table);
+        AnsiConsole.WriteLine();
+    }
+
+    private static void HandleContextRead(string arg)
+    {
+        if (string.IsNullOrWhiteSpace(arg))
+        {
+            AnsiConsole.MarkupLine("[yellow]Usage:[/] /context read <id> [query]\n");
+            return;
+        }
+
+        var parts = arg.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var id = parts[0];
+        var query = parts.Length > 1 ? parts[1] : null;
+        AnsiConsole.WriteLine(ContextStore.Read(id, query));
+        AnsiConsole.WriteLine();
+    }
+
+    private static void HandleContextDelete(string id)
+    {
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            AnsiConsole.MarkupLine("[yellow]Usage:[/] /context delete <id>\n");
+            return;
+        }
+
+        var deleted = ContextStore.Delete(id, out var message);
+        AnsiConsole.MarkupLine(deleted
+            ? $"[dim]{message.EscapeMarkup()}[/]\n"
+            : $"[yellow]{message.EscapeMarkup()}[/]\n");
+    }
+
+    private static void HandleContextDrop(string arg, List<ChatMessage> history)
+    {
+        if (!int.TryParse(arg, out var count) || count <= 0)
+        {
+            AnsiConsole.MarkupLine("[yellow]Usage:[/] /context drop <count>\n");
+            return;
+        }
+
+        var removed = 0;
+        for (var i = history.Count - 1; i >= 0 && removed < count; i--)
+        {
+            if (history[i].Role == "system")
+                continue;
+
+            history.RemoveAt(i);
+            removed++;
+        }
+
+        AnsiConsole.MarkupLine($"[dim]Removed {removed:N0} recent non-system message(s).[/]\n");
+    }
+
+    private static void ClearChatHistory(List<ChatMessage> history)
+    {
+        var sys = history.FirstOrDefault(m => m.Role == "system");
+        history.Clear();
+        if (sys != null)
+            history.Add(sys);
     }
 
     private static string[]? ResolveTools(string[]? cliTools, AgentConfig config)

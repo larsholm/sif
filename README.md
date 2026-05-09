@@ -130,6 +130,16 @@ During a chat session, type these commands:
 | `/quit` or `/exit` | Exit the chat session                   |
 | `/clear`             | Clear conversation history (keeps system prompt) |
 | `/sys <prompt>`     | Change the system prompt                 |
+| `/context`           | Show current chat history and stored context summary |
+| `/context list`      | List stored context entries for this session |
+| `/context search <query>` | Search stored context entries |
+| `/context read <id> [query]` | Read a stored entry, optionally focused by query |
+| `/context delete <id>` | Delete a stored context entry |
+| `/context drop <count>` | Remove recent non-system chat messages |
+| `/context clear` | Clear conversation history (keeps system prompt) |
+| `/context clear-history` | Clear conversation history (keeps system prompt) |
+| `/context clear-store` | Delete stored context entries for this session |
+| `/context clear all` | Clear both chat history and stored context |
 | `/help`              | Show help and options                    |
 
 ## Examples
