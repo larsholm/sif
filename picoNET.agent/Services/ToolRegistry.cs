@@ -17,11 +17,31 @@ internal static class ToolRegistry
     {
         var tools = new List<OpenAI.Chat.ChatTool>();
 
+        if (enabled.Contains("tool_catalog"))
+        {
+            tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
+                "tool_catalog",
+                "List or enable optional native tools.",
+                BinaryData.FromString("""
+                    {
+                        "type": "object",
+                        "properties": {
+                            "enable": {
+                                "type": "array",
+                                "items": { "type": "string" },
+                                "description": "Optional tool names to enable for the next step"
+                            }
+                        }
+                    }
+                    """)
+            ));
+        }
+
         if (enabled.Contains("bash"))
         {
             tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
                 "bash",
-                "Execute a shell command and return its output. Only safe commands allowed: ls, cat, grep, find, pwd, head, tail, wc, whoami, hostname, date, env, echo, file, stat, du, df, git, curl, python, node, jq, sed, awk, sort, uniq, tr, cut, mkdir, cp, mv, rm, ln, touch, chmod, chown, tar, gzip, gunzip, zip, unzip, tree, less, more, strings, ping, ip, ifconfig, netstat, ss, ps, kill, top, lsof, mount, fdisk, blkid, test, command, type, alias, export, mktemp, vi, vim, nano, emacs, make, cmake, gcc, g++, clang, javac, java, ruby, swift, cl, rustc, cargo, dotnet, go, npm, yarn, pip, docker, kubectl, terraform, ansible, ssh, scp, rsync, diff, realpath, dirname, basename, xargs, tee, split, join, paste, comm, uniq, fmt, fold, pr, nroff, groff, man, info, apropos, whatis, locate, which, whereis, strings, file, stat, wc, head, tail, cut, paste, tr, sed, awk, grep, sort, uniq, comm, join, split, diff, cmp, patch, md5sum, sha1sum, sha256sum, base64, uuencode, uudecode, xxd, od, hexdump, dd, dd if=...",
+                "Run an allowed shell command and return output. Times out after 30s; use serve for static HTTP servers.",
                 BinaryData.FromString("""
                     {
                         "type": "object",
@@ -126,7 +146,7 @@ internal static class ToolRegistry
             ));
         }
 
-        if (enabled.Contains("context") || enabled.Contains("ctx"))
+        if (enabled.Contains("context") || enabled.Contains("ctx") || enabled.Contains("ctx_index"))
         {
             tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
                 "ctx_index",
@@ -142,7 +162,10 @@ internal static class ToolRegistry
                     }
                     """)
             ));
+        }
 
+        if (enabled.Contains("context") || enabled.Contains("ctx") || enabled.Contains("ctx_search"))
+        {
             tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
                 "ctx_search",
                 "Search previously stored large context and return focused snippets instead of full blobs.",
@@ -157,7 +180,10 @@ internal static class ToolRegistry
                     }
                     """)
             ));
+        }
 
+        if (enabled.Contains("context") || enabled.Contains("ctx") || enabled.Contains("ctx_read"))
+        {
             tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
                 "ctx_read",
                 "Read stored context by id. Use query to retrieve a focused snippet from a large stored blob.",
@@ -173,7 +199,10 @@ internal static class ToolRegistry
                     }
                     """)
             ));
+        }
 
+        if (enabled.Contains("context") || enabled.Contains("ctx") || enabled.Contains("ctx_stats"))
+        {
             tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
                 "ctx_stats",
                 "Show local context store statistics for this pico session.",

@@ -238,6 +238,7 @@ internal class AgentApp
                 "\n- Use 'read' to view file contents" +
                 "\n- Use 'edit' to modify files" +
                 "\n- Use 'write' to create new files" +
+                "\n- Use 'tool_catalog' to list or enable optional native tools before using less common capabilities" +
                 "\n- Use 'sleep' to pause briefly before continuing or retrying" +
                 "\n- Use 'serve' to start a local static HTTP server; do not start long-running servers with 'bash'" +
                 "\n- Use 'ctx_search' and 'ctx_read' when a tool result says large context was stored" +

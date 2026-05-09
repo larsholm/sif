@@ -10,12 +10,14 @@ namespace picoNET.agent;
 
 /// <summary>
 /// Client wrapping the OpenAI SDK for chat completions.
-/// Supports tool calling for bash, read, edit, write, sleep, serve, context, and diagnostics.
+/// Supports lazy tool calling for native tools, MCP tools, and diagnostics.
 /// </summary>
 internal class AgentClient
 {
     private readonly OpenAI.Chat.ChatClient _chatClient;
-    private readonly List<OpenAI.Chat.ChatTool>? _tools;
+    private readonly HashSet<string> _availableLocalTools = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _activeLocalTools = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<OpenAI.Chat.ChatTool> _mcpTools = new();
     private readonly McpService? _mcpService;
     private readonly bool _thinkingEnabled;
     private readonly string _modelName;
@@ -51,15 +53,17 @@ internal class AgentClient
         _temperature = config.Temperature;
         _maxTokens = config.MaxTokens;
 
-        var allTools = new List<OpenAI.Chat.ChatTool>();
         if (enabledTools?.Length > 0)
-            allTools.AddRange(ToolRegistry.GetTools(enabledTools));
+        {
+            foreach (var tool in ExpandToolNames(enabledTools))
+                _availableLocalTools.Add(tool);
+
+            foreach (var tool in SelectInitialTools(_availableLocalTools))
+                _activeLocalTools.Add(tool);
+        }
         
         if (_mcpService != null)
-            allTools.AddRange(_mcpService.GetTools());
-
-        if (allTools.Count > 0)
-            _tools = allTools;
+            _mcpTools.AddRange(_mcpService.GetTools());
     }
 
     private void ApplyThinkingOptions(OpenAI.Chat.ChatCompletionOptions opts)
@@ -162,7 +166,7 @@ internal class AgentClient
             {
                 AnsiConsole.Write(new Markup("[dim]Thinking...[/]"));
                 var opts = new OpenAI.Chat.ChatCompletionOptions();
-                foreach (var tool in _tools ?? Enumerable.Empty<OpenAI.Chat.ChatTool>())
+                foreach (var tool in GetCurrentTools())
                     opts.Tools.Add(tool);
                 ApplyThinkingOptions(opts);
 
@@ -201,7 +205,11 @@ internal class AgentClient
                         AnsiConsole.MarkupLine($"\n[dim]Tool: {toolName.EscapeMarkup()} ({preview.EscapeMarkup()})[/]");
 
                         string toolResult;
-                        if (IsLocalTool(toolName))
+                        if (toolName == "tool_catalog")
+                        {
+                            toolResult = RunToolCatalog(argsJson);
+                        }
+                        else if (IsLocalTool(toolName))
                         {
                             toolResult = await ToolRegistry.ExecuteAsync(toolName, argsJson, cancellationToken);
                         }
@@ -311,9 +319,98 @@ internal class AgentClient
         return (sb.ToString(), totalTokens);
     }
 
+    private List<OpenAI.Chat.ChatTool> GetCurrentTools()
+    {
+        var visible = new HashSet<string>(_activeLocalTools, StringComparer.OrdinalIgnoreCase);
+        if (_availableLocalTools.Except(_activeLocalTools, StringComparer.OrdinalIgnoreCase).Any())
+            visible.Add("tool_catalog");
+
+        var tools = ToolRegistry.GetTools(visible.ToArray());
+        tools.AddRange(_mcpTools);
+        return tools;
+    }
+
+    private string RunToolCatalog(string argsJson)
+    {
+        var enabled = new List<string>();
+        using var doc = JsonDocument.Parse(argsJson);
+        if (doc.RootElement.TryGetProperty("enable", out var enable) && enable.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in enable.EnumerateArray())
+            {
+                var name = item.GetString();
+                if (string.IsNullOrWhiteSpace(name))
+                    continue;
+
+                if (_availableLocalTools.Contains(name))
+                {
+                    _activeLocalTools.Add(name);
+                    enabled.Add(name);
+                }
+            }
+        }
+
+        var optional = _availableLocalTools
+            .Except(_activeLocalTools, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(t => t, StringComparer.OrdinalIgnoreCase)
+            .Select(t => $"{t}: {DescribeTool(t)}");
+
+        var sb = new StringBuilder();
+        if (enabled.Count > 0)
+            sb.AppendLine("Enabled: " + string.Join(", ", enabled));
+        sb.AppendLine("Active: " + string.Join(", ", _activeLocalTools.OrderBy(t => t, StringComparer.OrdinalIgnoreCase)));
+        sb.AppendLine("Optional tools:");
+        var optionalText = string.Join('\n', optional);
+        sb.AppendLine(string.IsNullOrWhiteSpace(optionalText) ? "(none)" : optionalText);
+        return sb.ToString().TrimEnd();
+    }
+
+    private static IEnumerable<string> ExpandToolNames(IEnumerable<string> tools)
+    {
+        foreach (var tool in tools.Select(t => t.Trim()).Where(t => t.Length > 0))
+        {
+            if (tool.Equals("context", StringComparison.OrdinalIgnoreCase) ||
+                tool.Equals("ctx", StringComparison.OrdinalIgnoreCase))
+            {
+                yield return "ctx_index";
+                yield return "ctx_search";
+                yield return "ctx_read";
+                yield return "ctx_stats";
+            }
+            else
+            {
+                yield return tool;
+            }
+        }
+    }
+
+    private static IEnumerable<string> SelectInitialTools(HashSet<string> available)
+    {
+        var initial = new[] { "bash", "read", "edit", "write", "ctx_search", "ctx_read" };
+        foreach (var tool in initial)
+        {
+            if (available.Contains(tool))
+                yield return tool;
+        }
+    }
+
+    private static string DescribeTool(string toolName)
+    {
+        return toolName switch
+        {
+            "sleep" => "pause briefly before retrying",
+            "serve" => "start a local static HTTP server",
+            "ctx_index" => "store large generated/pasted text",
+            "ctx_stats" => "show context-store stats",
+            "diagnostics" => "inspect pico config/env/history",
+            "debug" => "legacy diagnostics alias",
+            _ => "native tool"
+        };
+    }
+
     private static bool IsLocalTool(string toolName)
     {
-        return toolName is "bash" or "read" or "edit" or "write" or "sleep" or "serve" or "debug" or "diagnostics"
+        return toolName is "bash" or "read" or "edit" or "write" or "sleep" or "serve" or "debug" or "diagnostics" or "tool_catalog"
             or "ctx_index" or "ctx_search" or "ctx_read" or "ctx_stats";
     }
 
