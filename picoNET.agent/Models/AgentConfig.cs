@@ -178,6 +178,7 @@ internal class McpServerConfig
     public string Command { get; set; } = string.Empty;
     public string[] Args { get; set; } = Array.Empty<string>();
     public Dictionary<string, string>? Env { get; set; }
+    public Dictionary<string, string>? Headers { get; set; }
     public string Type { get; set; } = "stdio";
     public string? Url { get; set; }
     public bool Disabled { get; set; }
