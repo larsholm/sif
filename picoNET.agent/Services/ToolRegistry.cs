@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using OpenAI;
@@ -106,6 +108,24 @@ internal static class ToolRegistry
             ));
         }
 
+        if (enabled.Contains("serve"))
+        {
+            tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
+                "serve",
+                "Start a local static HTTP server for a directory and return immediately with its URL and process id.",
+                BinaryData.FromString("""
+                    {
+                        "type": "object",
+                        "properties": {
+                            "path": { "type": "string", "description": "Directory to serve. Defaults to the current working directory." },
+                            "port": { "type": "integer", "description": "Port to use. Use 0 or omit to choose a free port." },
+                            "bind": { "type": "string", "description": "Bind address. Defaults to 127.0.0.1." }
+                        }
+                    }
+                    """)
+            ));
+        }
+
         if (enabled.Contains("context") || enabled.Contains("ctx"))
         {
             tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
@@ -207,6 +227,7 @@ internal static class ToolRegistry
             "edit" => RunEdit(argumentsJson),
             "write" => RunWrite(argumentsJson),
             "sleep" => await RunSleepAsync(argumentsJson),
+            "serve" => RunServe(argumentsJson),
             "debug" => await RunDiagnosticsAsync(argumentsJson),
             "diagnostics" => await RunDiagnosticsAsync(argumentsJson),
             "ctx_index" => RunContextIndex(argumentsJson),
@@ -301,6 +322,77 @@ internal static class ToolRegistry
 
         await Task.Delay(TimeSpan.FromSeconds(seconds));
         return $"Slept for {seconds:0.###} seconds.";
+    }
+
+    private static string RunServe(string argsJson)
+    {
+        using var doc = JsonDocument.Parse(argsJson);
+        var root = doc.RootElement;
+        var pathArg = root.TryGetProperty("path", out var p) ? p.GetString() : null;
+        var path = ResolvePath(pathArg ?? "");
+        var bind = root.TryGetProperty("bind", out var b) ? b.GetString() ?? "127.0.0.1" : "127.0.0.1";
+        var port = root.TryGetProperty("port", out var portElement) ? portElement.GetInt32() : 0;
+
+        if (!Directory.Exists(path))
+            return $"Error: Directory not found: {path}";
+        if (port < 0 || port > 65535)
+            return "Error: port must be between 0 and 65535.";
+        if (bind is not "127.0.0.1" and not "localhost" and not "0.0.0.0")
+            return "Error: bind must be 127.0.0.1, localhost, or 0.0.0.0.";
+
+        if (port == 0)
+            port = GetFreeTcpPort(IPAddress.Loopback);
+
+        var logPath = Path.Combine(Path.GetTempPath(), $"pico_http_{port}_{Guid.NewGuid():N}.log");
+        var scriptPath = Path.Combine(Path.GetTempPath(), $"pico_http_{Guid.NewGuid():N}.sh");
+        var escapedPath = path.Replace("'", "'\"'\"'");
+        var escapedLog = logPath.Replace("'", "'\"'\"'");
+        var escapedBind = bind.Replace("'", "'\"'\"'");
+
+        File.WriteAllText(scriptPath,
+            "#!/bin/bash\n" +
+            $"cd '{escapedPath}'\n" +
+            $"exec python3 -m http.server {port} --bind '{escapedBind}' >'{escapedLog}' 2>&1\n");
+
+        try
+        {
+            var chmod = Process.Start(new ProcessStartInfo("chmod", $"+x \"{scriptPath}\"") { UseShellExecute = false });
+            chmod?.WaitForExit();
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = "setsid",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            psi.ArgumentList.Add(scriptPath);
+
+            var process = Process.Start(psi);
+            if (process is null)
+                return "Error: Failed to start HTTP server.";
+
+            Thread.Sleep(300);
+            if (process.HasExited)
+            {
+                var log = File.Exists(logPath) ? File.ReadAllText(logPath).Trim() : "";
+                return string.IsNullOrWhiteSpace(log)
+                    ? $"Error: HTTP server exited immediately with code {process.ExitCode}."
+                    : $"Error: HTTP server exited immediately with code {process.ExitCode}.\n{log}";
+            }
+
+            return $"Serving {path} at http://{bind}:{port}/\nPID: {process.Id}\nLog: {logPath}";
+        }
+        catch (Exception ex)
+        {
+            return $"Error starting HTTP server: {ex.Message}";
+        }
+    }
+
+    private static int GetFreeTcpPort(IPAddress address)
+    {
+        using var listener = new TcpListener(address, 0);
+        listener.Start();
+        return ((IPEndPoint)listener.LocalEndpoint).Port;
     }
 
     private static async Task<string> RunBashAsync(string argsJson)
