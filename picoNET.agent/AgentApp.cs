@@ -306,7 +306,7 @@ internal class AgentApp
                             AnsiConsole.MarkupLine("[dim]  " + line.EscapeMarkup() + "[/]");
                         AnsiConsole.MarkupLine("");
                     }
-                    await Displayer.DisplayMarkdownAsync(response);
+                    await UiService.DisplayMarkdown(response);
                     AnsiConsole.WriteLine();
                     history.Add(new ChatMessage("assistant", response));
                 }
@@ -432,7 +432,7 @@ internal class AgentApp
                     AnsiConsole.MarkupLine("");
                 }
                 AnsiConsole.MarkupLine("[green]Response:[/]");
-                await Displayer.DisplayMarkdownAsync(response);
+                await UiService.DisplayMarkdown(response);
                 AnsiConsole.WriteLine();
             }
         }

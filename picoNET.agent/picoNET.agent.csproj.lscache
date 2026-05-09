@@ -67,6 +67,7 @@ Services/
  AgentClient.cs
  McpService.cs
  ToolRegistry.cs
+ UiService.cs
 
 [metadataReferences]
 <DOTNET>/packs/Microsoft.NETCore.App.Ref/10.0.4/ref/net10.0/

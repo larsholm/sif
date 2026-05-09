@@ -234,7 +234,7 @@ internal class AgentClient
                 // Final text response — strip thinking tags if they're in the content
                 var cleanContent = StripThinkingTags(contentText);
 
-                await Displayer.DisplayMarkdownAsync(cleanContent);
+                await UiService.DisplayMarkdown(cleanContent);
                 AnsiConsole.WriteLine();
                 
                 history.Add(new ChatMessage("assistant", cleanContent));
