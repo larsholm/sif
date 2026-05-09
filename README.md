@@ -11,6 +11,7 @@ A lightweight AI agent console tool supporting local models via OpenAI-compatibl
 - **Local model support** — Works with any OpenAI-compatible endpoint (vLLM, Ollama, LM Studio, LiteLLM, etc.)
 - **Streaming output** — See responses as they're generated
 - **System prompts** — Set custom system instructions for your agent
+- **Skill files** — Add reusable markdown instructions under `.pico/skills` or `~/.pico/skills`
 - **Config management** — Persist settings in `~/.piconet/piconet-agent.json`
 
 ## Prerequisites
@@ -104,6 +105,27 @@ pico config
 pico config --set MODEL=qwen3.6-27b-autoround
 pico config --set BASE_URL=http://100.118.58.55:8020/v1
 ```
+
+### Skills
+
+pico loads skill files at startup and appends them to the system prompt. Use skills for reusable instructions that should apply when a request matches the skill description.
+
+Supported locations:
+
+```text
+./.pico/skills/
+../.pico/skills/        # parent directories are checked up to filesystem root
+~/.pico/skills/
+```
+
+Supported file layouts:
+
+```text
+.pico/skills/my-skill.md
+.pico/skills/my-skill/SKILL.md
+```
+
+Skill files are plain markdown. Frontmatter such as `name` and `description` is allowed and is passed through to the model as part of the skill content.
 
 ### Options
 

@@ -67,6 +67,7 @@ Services/
  AgentClient.cs
  ContextStore.cs
  McpService.cs
+ SkillStore.cs
  ToolRegistry.cs
  UiService.cs
 

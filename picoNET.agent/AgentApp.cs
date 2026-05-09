@@ -195,10 +195,13 @@ internal class AgentApp
 
         var tools = ResolveTools(opts.Tools, config);
         var client = new AgentClient(config, tools, mcpService);
+        var skills = SkillStore.Load();
 
         var header = $"[green]pico[/] - [dim]{config.Model} @ {config.BaseUrl}[/]";
         if (tools?.Length > 0)
             header += $" [dim]tools: {string.Join(", ", tools)}[/]";
+        if (skills.Count > 0)
+            header += $" [dim]skills: {skills.Count}[/]";
         var mcpToolsCount = mcpService.GetTools().Count;
         if (mcpToolsCount > 0)
             header += $" [dim]mcp-tools: {mcpToolsCount}[/]";
@@ -208,43 +211,9 @@ internal class AgentApp
         AnsiConsole.MarkupLine("[dim]Press Ctrl+C to exit.[/]\n");
 
         var history = new List<ChatMessage>();
-
-        if (!string.IsNullOrEmpty(opts.SystemPrompt))
-            history.Add(new ChatMessage("system", opts.SystemPrompt));
-        else if (tools?.Length > 0)
-        {
-            // Default system prompt for tool-enabled mode
-            var descriptions = new Dictionary<string, string>
-            {
-                { "bash", "Run a shell command (ls, cat, grep, find, etc.)" },
-                { "read", "Read file contents" },
-                { "edit", "Replace exact text in a file" },
-                { "write", "Create or overwrite a file" },
-                { "sleep", "Pause briefly before continuing or retrying" },
-                { "serve", "Start a local static HTTP server for a directory" },
-                { "context", "Store and search large tool results out-of-band" },
-                { "ctx", "Store and search large tool results out-of-band" },
-                { "diagnostics", "Inspect pico agent configuration, environment, and chat history" },
-                { "debug", "Legacy alias for pico agent diagnostics; not a debugger" }
-            };
-            var toolList = tools.Select(t => descriptions.TryGetValue(t, out var d) ? d : t)
-                .Aggregate((a, b) => $"{a}, {b}");
-            history.Add(new ChatMessage("system",
-                $"You are a helpful assistant with access to these tools: {toolList}. " +
-                $"Current working directory: {Environment.CurrentDirectory}. " +
-                "Always use absolute paths when referring to files." +
-                "\n\nUse tools proactively: " +
-                "\n- Use 'bash' with 'ls' to list files, 'grep' to search" +
-                "\n- Use 'read' to view file contents" +
-                "\n- Use 'edit' to modify files" +
-                "\n- Use 'write' to create new files" +
-                "\n- Use 'tool_catalog' to list or enable optional native tools before using less common capabilities" +
-                "\n- Use 'sleep' to pause briefly before continuing or retrying" +
-                "\n- Use 'serve' to start a local static HTTP server; do not start long-running servers with 'bash'" +
-                "\n- Use 'ctx_search' and 'ctx_read' when a tool result says large context was stored" +
-                "\n- Use 'ctx_index' for large pasted text or generated data that should be searchable later" +
-                "\nThink before acting — explain your plan first."));
-        }
+        var initialSystemPrompt = BuildInitialSystemPrompt(opts.SystemPrompt, tools, skills);
+        if (!string.IsNullOrWhiteSpace(initialSystemPrompt))
+            history.Add(new ChatMessage("system", initialSystemPrompt));
 
         bool running = true;
         var files = new Lazy<List<string>>(GetFiles);
@@ -275,9 +244,10 @@ internal class AgentApp
                 else if (trimmed.StartsWith("/sys "))
                 {
                     var newSys = trimmed[5..].Trim();
+                    var effectiveSys = SkillStore.BuildSystemPrompt(newSys, skills);
                     var idx = history.FindIndex(m => m.Role == "system");
-                    if (idx >= 0) history[idx] = new ChatMessage("system", newSys);
-                    else history.Insert(0, new ChatMessage("system", newSys));
+                    if (idx >= 0) history[idx] = new ChatMessage("system", effectiveSys);
+                    else history.Insert(0, new ChatMessage("system", effectiveSys));
                     AnsiConsole.MarkupLine("[dim]System prompt updated.[/]\n");
                 }
                 else if (trimmed == "/context" || trimmed.StartsWith("/context "))
@@ -648,6 +618,53 @@ internal class AgentApp
         return new[] { "bash", "read", "edit", "write", "sleep", "serve", "context" };
     }
 
+    private static string BuildInitialSystemPrompt(string? cliSystemPrompt, string[]? tools, IReadOnlyList<SkillFile> skills)
+    {
+        var basePrompt = !string.IsNullOrWhiteSpace(cliSystemPrompt)
+            ? cliSystemPrompt
+            : BuildDefaultSystemPrompt(tools);
+
+        return SkillStore.BuildSystemPrompt(basePrompt, skills);
+    }
+
+    private static string? BuildDefaultSystemPrompt(string[]? tools)
+    {
+        if (tools is not { Length: > 0 })
+            return null;
+
+        var descriptions = new Dictionary<string, string>
+        {
+            { "bash", "Run a shell command (ls, cat, grep, find, etc.)" },
+            { "read", "Read file contents" },
+            { "edit", "Replace exact text in a file" },
+            { "write", "Create or overwrite a file" },
+            { "sleep", "Pause briefly before continuing or retrying" },
+            { "serve", "Start a local static HTTP server for a directory" },
+            { "context", "Store and search large tool results out-of-band" },
+            { "ctx", "Store and search large tool results out-of-band" },
+            { "diagnostics", "Inspect pico agent configuration, environment, and chat history" },
+            { "debug", "Legacy alias for pico agent diagnostics; not a debugger" }
+        };
+
+        var toolList = tools.Select(t => descriptions.TryGetValue(t, out var d) ? d : t)
+            .Aggregate((a, b) => $"{a}, {b}");
+
+        return $"You are a helpful assistant with access to these tools: {toolList}. " +
+               $"Current working directory: {Environment.CurrentDirectory}. " +
+               "Always use absolute paths when referring to files." +
+               "\n\nUse tools proactively: " +
+               "\n- Use 'bash' with 'ls' to list files, 'grep' to search" +
+               "\n- Use 'read' to view file contents" +
+               "\n- Use 'edit' to modify files" +
+               "\n- Use 'write' to create new files" +
+               "\n- Use 'tool_catalog' to list or enable optional native tools before using less common capabilities" +
+               "\n- Use 'sleep' to pause briefly before continuing or retrying" +
+               "\n- Use 'serve' to start a local static HTTP server; do not start long-running servers with 'bash'" +
+               "\n- Use 'ctx_search' and 'ctx_read' when a tool result says large context was stored" +
+               "\n- Use 'ctx_index' for large pasted text or generated data that should be searchable later" +
+               "\nThink before acting — explain your plan first.";
+    }
+
     private async Task<int> RunComplete(string[] args)
     {
         var opts = ParseArgs(args);
@@ -687,10 +704,14 @@ internal class AgentApp
 
         var tools = ResolveTools(opts.Tools, config);
         var client = new AgentClient(config, tools, mcpService);
+        var skills = SkillStore.Load();
+        var systemPrompt = BuildInitialSystemPrompt(opts.SystemPrompt, tools, skills);
 
         AnsiConsole.MarkupLine($"[dim]Model: {config.Model}[/]");
         if (tools?.Length > 0)
             AnsiConsole.MarkupLine($"[dim]Tools: {string.Join(", ", tools)}[/]");
+        if (skills.Count > 0)
+            AnsiConsole.MarkupLine($"[dim]Skills: {skills.Count}[/]");
         var mcpToolsCount = mcpService.GetTools().Count;
         if (mcpToolsCount > 0)
             AnsiConsole.MarkupLine($"[dim]MCP Tools: {mcpToolsCount}[/]");
@@ -704,15 +725,15 @@ internal class AgentApp
             if (tools?.Length > 0)
             {
                 var history = new List<ChatMessage>();
-                if (!string.IsNullOrEmpty(opts.SystemPrompt))
-                    history.Add(new ChatMessage("system", opts.SystemPrompt));
+                if (!string.IsNullOrEmpty(systemPrompt))
+                    history.Add(new ChatMessage("system", systemPrompt));
                 history.Add(new ChatMessage("user", prompt));
                 var (response, tokenCount) = await RunWithEscapeCancel(ct => client.ChatWithToolsAsync(history, ct));
                 AnsiConsole.MarkupLine($"\n[dim]({tokenCount} tokens)[/]");
             }
             else
             {
-                var (response, reasoning) = await client.CompleteAsync(prompt, opts.SystemPrompt);
+                var (response, reasoning) = await client.CompleteAsync(prompt, systemPrompt);
                 if (!string.IsNullOrEmpty(reasoning))
                 {
                     AnsiConsole.MarkupLine("[dim]Thinking:[/]");
