@@ -64,7 +64,10 @@ internal class AgentConfig
             try
             {
                 var json = File.ReadAllText(ConfigPath);
-                var loaded = JsonSerializer.Deserialize<AgentConfig>(json);
+                var loaded = JsonSerializer.Deserialize<AgentConfig>(json, new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                });
                 if (loaded != null)
                 {
                     config.BaseUrl = loaded.BaseUrl;
@@ -74,7 +77,8 @@ internal class AgentConfig
                     config.Temperature = loaded.Temperature;
                     config.Tools = loaded.Tools;
                     config.ThinkingEnabled = loaded.ThinkingEnabled;
-                    config.Values = loaded.Values;
+                    config.McpServers = loaded.McpServers ?? new();
+                    config.Values = loaded.Values ?? new();
                 }
             }
             catch
@@ -82,6 +86,8 @@ internal class AgentConfig
                 // Ignore parse errors
             }
         }
+
+        ApplyValues(config);
 
         // Environment variables override everything
         if (Environment.GetEnvironmentVariable("AGENT_BASE_URL") is { Length: > 0 } envBase)
@@ -100,6 +106,55 @@ internal class AgentConfig
             config.ThinkingEnabled = envThinking;
 
         return config;
+    }
+
+    public void ApplyValue(string key, string value)
+    {
+        ApplyValue(this, key, value);
+    }
+
+    private static void ApplyValues(AgentConfig config)
+    {
+        foreach (var (key, value) in config.Values)
+            ApplyValue(config, key, value);
+    }
+
+    private static void ApplyValue(AgentConfig config, string key, string value)
+    {
+        switch (key.Trim().ToUpperInvariant())
+        {
+            case "BASE_URL":
+            case "AGENT_BASE_URL":
+                config.BaseUrl = value.TrimEnd('/');
+                break;
+            case "API_KEY":
+            case "AGENT_API_KEY":
+                config.ApiKey = value;
+                break;
+            case "MODEL":
+            case "AGENT_MODEL":
+                config.Model = value;
+                break;
+            case "MAX_TOKENS":
+            case "AGENT_MAX_TOKENS":
+                if (int.TryParse(value, out var maxTokens))
+                    config.MaxTokens = maxTokens;
+                break;
+            case "TEMPERATURE":
+            case "AGENT_TEMPERATURE":
+                if (float.TryParse(value, out var temperature))
+                    config.Temperature = temperature;
+                break;
+            case "THINKING_ENABLED":
+            case "AGENT_THINKING_ENABLED":
+                if (bool.TryParse(value, out var thinkingEnabled))
+                    config.ThinkingEnabled = thinkingEnabled;
+                break;
+            case "TOOLS":
+            case "AGENT_TOOLS":
+                config.Tools = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                break;
+        }
     }
 
     public void Save()
@@ -123,4 +178,7 @@ internal class McpServerConfig
     public string Command { get; set; } = string.Empty;
     public string[] Args { get; set; } = Array.Empty<string>();
     public Dictionary<string, string>? Env { get; set; }
+    public string Type { get; set; } = "stdio";
+    public string? Url { get; set; }
+    public bool Disabled { get; set; }
 }

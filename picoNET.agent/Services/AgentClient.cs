@@ -214,6 +214,11 @@ internal class AgentClient
                             toolResult = $"Error: Tool '{toolName}' not found.";
                         }
 
+                        if (!IsContextTool(toolName) && toolResult.Length > ContextStore.AutoStoreThreshold)
+                        {
+                            toolResult = ContextStore.StoreAndDescribe($"{toolName} {preview}", toolResult);
+                        }
+
                         // Display tool result
                         if (toolResult.Length > 4000)
                             AnsiConsole.MarkupLine($"[dim]Result: {toolResult.Substring(0, 4000).EscapeMarkup()}... (truncated)[/]");
@@ -308,7 +313,13 @@ internal class AgentClient
 
     private static bool IsLocalTool(string toolName)
     {
-        return toolName is "bash" or "read" or "edit" or "write" or "debug";
+        return toolName is "bash" or "read" or "edit" or "write" or "debug"
+            or "ctx_index" or "ctx_search" or "ctx_read" or "ctx_stats";
+    }
+
+    private static bool IsContextTool(string toolName)
+    {
+        return toolName is "ctx_index" or "ctx_search" or "ctx_read" or "ctx_stats";
     }
 
     private static OpenAI.Chat.ChatMessage ToRequestMessage(ChatMessage msg)

@@ -6,6 +6,7 @@ A lightweight AI agent console tool supporting local models via OpenAI-compatibl
 
 - **Chat by default** — `pico` launches into interactive chat immediately
 - **Tool calling** — Enable tools for bash, file read/edit/write via `--tools`
+- **Context mode** — Large tool outputs are stored out-of-band and can be searched or read back by handle
 - **One-off completion** — Quick prompts from CLI or stdin with `pico complete`
 - **Local model support** — Works with any OpenAI-compatible endpoint (vLLM, Ollama, LM Studio, LiteLLM, etc.)
 - **Streaming output** — See responses as they're generated
@@ -36,15 +37,18 @@ Enable tool calling with `--tools` (comma-separated):
 | `read`  | Read file contents                                      |
 | `edit`  | Edit files by replacing exact text                      |
 | `write` | Create or overwrite files                               |
+| `context` | Add `ctx_index`, `ctx_search`, `ctx_read`, and `ctx_stats` tools for large context |
 
 ```bash
 # Use all tools
-pico --tools bash,read,edit,write
+pico --tools bash,read,edit,write,context
 
 # Or set persistently
-pico config --set TOOLS=bash,read,edit,write
+pico config --set TOOLS=bash,read,edit,write,context
 pico
 ```
+
+When `context` is enabled, large local and MCP tool results are automatically stored under `~/.pico/context/` and replaced in the model context with a compact handle such as `ctx_abc123`. The model can then call `ctx_search` for focused snippets or `ctx_read` for a specific stored result.
 
 **Note:** Tool calling is non-streaming (the model decides whether to use tools, then returns the final response). Thinking/reasoning display works for OpenAI o-series models and Qwen3.x models via vLLM.
 
@@ -102,7 +106,7 @@ pico config --set BASE_URL=http://100.118.58.55:8020/v1
 | `-k, --api-key`      | API key                        |
 | `-s, --system`       | System prompt                  |
 | `-n, --no-stream`    | Disable streaming output       |
-| `--tools`            | Enable tools: bash,edit,read,write |
+| `--tools`            | Enable tools: bash,edit,read,write,context |
 | `--thinking`         | Enable model thinking/reasoning (true/false) |
 
 ## Environment Variables

@@ -22,6 +22,21 @@ internal class McpService : IDisposable, IAsyncDisposable
         {
             try
             {
+                if (config.Disabled)
+                    continue;
+
+                if (!string.Equals(config.Type, "stdio", StringComparison.OrdinalIgnoreCase))
+                {
+                    AnsiConsole.MarkupLine($"[dim]Skipping MCP server '{name}' ({config.Type}); only stdio MCP servers are supported.[/]");
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(config.Command))
+                {
+                    AnsiConsole.MarkupLine($"[yellow]Warning: Skipping MCP server '{name}': missing command.[/]");
+                    continue;
+                }
+
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
                 var transportOptions = new StdioClientTransportOptions
                 {

@@ -89,6 +89,66 @@ internal static class ToolRegistry
             ));
         }
 
+        if (enabled.Contains("context") || enabled.Contains("ctx"))
+        {
+            tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
+                "ctx_index",
+                "Store large text in the local context store and return a compact handle for later search/read.",
+                BinaryData.FromString("""
+                    {
+                        "type": "object",
+                        "properties": {
+                            "source": { "type": "string", "description": "Short label describing where this content came from" },
+                            "content": { "type": "string", "description": "The text content to store out-of-band" }
+                        },
+                        "required": ["source", "content"]
+                    }
+                    """)
+            ));
+
+            tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
+                "ctx_search",
+                "Search previously stored large context and return focused snippets instead of full blobs.",
+                BinaryData.FromString("""
+                    {
+                        "type": "object",
+                        "properties": {
+                            "query": { "type": "string", "description": "Search terms" },
+                            "limit": { "type": "integer", "description": "Maximum result count (default 8)" }
+                        },
+                        "required": ["query"]
+                    }
+                    """)
+            ));
+
+            tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
+                "ctx_read",
+                "Read stored context by id. Use query to retrieve a focused snippet from a large stored blob.",
+                BinaryData.FromString("""
+                    {
+                        "type": "object",
+                        "properties": {
+                            "id": { "type": "string", "description": "Context id returned by ctx_index or automatic context storage" },
+                            "query": { "type": "string", "description": "Optional search focus within this context blob" },
+                            "maxChars": { "type": "integer", "description": "Maximum characters to return (default 6000)" }
+                        },
+                        "required": ["id"]
+                    }
+                    """)
+            ));
+
+            tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
+                "ctx_stats",
+                "Show local context store statistics for this pico session.",
+                BinaryData.FromString("""
+                    {
+                        "type": "object",
+                        "properties": {}
+                    }
+                    """)
+            ));
+        }
+
         if (enabled.Contains("debug"))
         {
             tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
@@ -120,8 +180,40 @@ internal static class ToolRegistry
             "edit" => RunEdit(argumentsJson),
             "write" => RunWrite(argumentsJson),
             "debug" => await RunDebugAsync(argumentsJson),
+            "ctx_index" => RunContextIndex(argumentsJson),
+            "ctx_search" => RunContextSearch(argumentsJson),
+            "ctx_read" => RunContextRead(argumentsJson),
+            "ctx_stats" => ContextStore.Stats(),
             _ => $"Error: Unknown tool '{toolName}'"
         };
+    }
+
+    private static string RunContextIndex(string argsJson)
+    {
+        using var doc = JsonDocument.Parse(argsJson);
+        var root = doc.RootElement;
+        var source = root.TryGetProperty("source", out var s) ? s.GetString() ?? "manual" : "manual";
+        var content = root.GetProperty("content").GetString() ?? "";
+        return ContextStore.StoreAndDescribe(source, content);
+    }
+
+    private static string RunContextSearch(string argsJson)
+    {
+        using var doc = JsonDocument.Parse(argsJson);
+        var root = doc.RootElement;
+        var query = root.GetProperty("query").GetString() ?? "";
+        var limit = root.TryGetProperty("limit", out var l) ? l.GetInt32() : 8;
+        return ContextStore.Search(query, limit);
+    }
+
+    private static string RunContextRead(string argsJson)
+    {
+        using var doc = JsonDocument.Parse(argsJson);
+        var root = doc.RootElement;
+        var id = root.GetProperty("id").GetString() ?? "";
+        var query = root.TryGetProperty("query", out var q) ? q.GetString() : null;
+        var maxChars = root.TryGetProperty("maxChars", out var m) ? m.GetInt32() : 6000;
+        return ContextStore.Read(id, query, maxChars);
     }
 
     private static async Task<string> RunDebugAsync(string argsJson)

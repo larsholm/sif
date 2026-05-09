@@ -65,6 +65,7 @@ obj/Debug/net10.0/
 Program.cs
 Services/
  AgentClient.cs
+ ContextStore.cs
  McpService.cs
  ToolRegistry.cs
  UiService.cs

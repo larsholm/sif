@@ -73,7 +73,7 @@ internal class AgentApp
     {
         AnsiConsole.MarkupLine("[green]pico[/] - AI agent for local OpenAI-compatible models");
         AnsiConsole.WriteLine();
-        AnsiConsole.WriteLine("Usage: pico [--tools bash,edit,read,write] [--model name] [--base-url url]");
+        AnsiConsole.WriteLine("Usage: pico [--tools bash,edit,read,write,context] [--model name] [--base-url url]");
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine("  (no args)     Start an interactive chat session");
         AnsiConsole.MarkupLine("  [bold]complete[/]  Run a one-off prompt and exit");
@@ -87,7 +87,7 @@ internal class AgentApp
         AnsiConsole.WriteLine("  -t, --temperature <v>  Sampling temperature");
         AnsiConsole.WriteLine("  -max, --max-tokens <v> Max tokens to generate");
         AnsiConsole.WriteLine("  -n, --no-stream        Disable streaming output");
-        AnsiConsole.WriteLine("  --tools <list>         Enable tools: bash,edit,read,write (comma-separated)");
+        AnsiConsole.WriteLine("  --tools <list>         Enable tools: bash,edit,read,write,context (comma-separated)");
         AnsiConsole.WriteLine("  --thinking <true|false> Enable model thinking/reasoning");
         AnsiConsole.WriteLine();
         AnsiConsole.WriteLine("Environment variables:");
@@ -219,7 +219,9 @@ internal class AgentApp
                 { "bash", "Run a shell command (ls, cat, grep, find, etc.)" },
                 { "read", "Read file contents" },
                 { "edit", "Replace exact text in a file" },
-                { "write", "Create or overwrite a file" }
+                { "write", "Create or overwrite a file" },
+                { "context", "Store and search large tool results out-of-band" },
+                { "ctx", "Store and search large tool results out-of-band" }
             };
             var toolList = tools.Select(t => descriptions.TryGetValue(t, out var d) ? d : t)
                 .Aggregate((a, b) => $"{a}, {b}");
@@ -228,10 +230,12 @@ internal class AgentApp
                 $"Current working directory: {Environment.CurrentDirectory}. " +
                 "Always use absolute paths when referring to files." +
                 "\n\nUse tools proactively: " +
-                "- Use 'bash' with 'ls' to list files, 'grep' to search" +
-                "- Use 'read' to view file contents" +
-                "- Use 'edit' to modify files" +
-                "- Use 'write' to create new files" +
+                "\n- Use 'bash' with 'ls' to list files, 'grep' to search" +
+                "\n- Use 'read' to view file contents" +
+                "\n- Use 'edit' to modify files" +
+                "\n- Use 'write' to create new files" +
+                "\n- Use 'ctx_search' and 'ctx_read' when a tool result says large context was stored" +
+                "\n- Use 'ctx_index' for large pasted text or generated data that should be searchable later" +
                 "\nThink before acting — explain your plan first."));
         }
 
@@ -356,7 +360,7 @@ internal class AgentApp
             return config.Tools;
 
         // Default: always enable tools
-        return new[] { "bash", "read", "edit", "write", "debug" };
+        return new[] { "bash", "read", "edit", "write", "context", "debug" };
     }
 
     private async Task<int> RunComplete(string[] args)
@@ -458,6 +462,7 @@ internal class AgentApp
                 if (parts.Length == 2)
                 {
                     config.Values[parts[0].Trim().ToUpperInvariant()] = parts[1];
+                    config.ApplyValue(parts[0], parts[1]);
                     config.Save();
                     AnsiConsole.MarkupLine("[green]Configuration updated.[/]\n");
                 }
@@ -477,6 +482,7 @@ internal class AgentApp
             ("AGENT_MAX_TOKENS", "Max Tokens", config.MaxTokens?.ToString() ?? "default"),
             ("AGENT_TEMPERATURE", "Temperature", config.Temperature?.ToString() ?? "default"),
             ("AGENT_THINKING_ENABLED", "Thinking", config.ThinkingEnabled?.ToString() ?? "default"),
+            ("AGENT_TOOLS", "Tools", config.Tools is { Length: > 0 } ? string.Join(",", config.Tools) : "default"),
         };
 
         foreach (var (key, label, value) in sources)
