@@ -3,7 +3,7 @@
 
 set -euo pipefail
 
-REPO_URL="${SIF_INSTALL_REPO:-https://github.com/sif/sif}"
+REPO_URL="${SIF_INSTALL_REPO:-https://github.com/larsholm/sif}"
 REF="${SIF_INSTALL_REF:-main}"
 ARCHIVE_URL="${REPO_URL%/}/archive/refs/heads/${REF}.tar.gz"
 TMP_DIR="$(mktemp -d)"

@@ -26,7 +26,7 @@
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sif/sif/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/larsholm/sif/main/install.sh | bash
 ```
 
 This downloads the latest `main` archive, builds the agent, and installs it as a global .NET tool. The `sif` command will be available in your PATH.
