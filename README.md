@@ -20,13 +20,22 @@
 ## Requirements
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download)
-- `curl`, `tar`, and `zip`
 - An OpenAI-compatible API endpoint
+- Unix-like shells: `curl`, `tar`, and `zip`
+- Windows PowerShell: no external archive tool required
 
 ## Install
 
+Linux/macOS:
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/larsholm/sif/main/install.sh | bash
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/larsholm/sif/main/install.ps1 | iex
 ```
 
 This downloads the latest `main` archive, builds the agent, and installs it as a global .NET tool. The `sif` command will be available in your PATH.
@@ -40,6 +49,8 @@ For local development from a checked-out repository:
 ```bash
 ./sif.agent/build.sh install
 ```
+
+On Windows, run `.\install.ps1` from the repository root.
 
 ## Quick Start
 

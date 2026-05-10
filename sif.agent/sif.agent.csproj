@@ -8,6 +8,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <PackageOutputPath>./nupkg</PackageOutputPath>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>sif</ToolCommandName>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <RollForward>Major</RollForward>
     <NoWarn>$(NoWarn);OPENAI001</NoWarn>
