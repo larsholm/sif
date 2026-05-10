@@ -1,0 +1,57 @@
+{
+  "name": "sif-vscode",
+  "displayName": "sif",
+  "description": "Launch sif with live VS Code editor context.",
+  "version": "0.1.0",
+  "publisher": "sif",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:sif.startChat",
+    "onCommand:sif.updateContext",
+    "onCommand:sif.showContextFile"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "sif.startChat",
+        "title": "sif: Start Chat With Editor Context"
+      },
+      {
+        "command": "sif.updateContext",
+        "title": "sif: Update Editor Context"
+      },
+      {
+        "command": "sif.showContextFile",
+        "title": "sif: Show Context File"
+      }
+    ],
+    "configuration": {
+      "title": "sif",
+      "properties": {
+        "sif.command": {
+          "type": "string",
+          "default": "sif",
+          "description": "Command used to start sif in the integrated terminal."
+        },
+        "sif.terminalName": {
+          "type": "string",
+          "default": "sif",
+          "description": "Name of the VS Code terminal used for sif."
+        },
+        "sif.maxSelectionChars": {
+          "type": "number",
+          "default": 6000,
+          "minimum": 0,
+          "description": "Maximum selected text characters written to sif editor context."
+        }
+      }
+    }
+  }
+}

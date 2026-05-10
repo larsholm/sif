@@ -28,6 +28,8 @@ cd sif.agent
 
 This builds the project and installs it as a global .NET tool. The `sif` command will be available in your PATH.
 
+The install command also installs the companion VS Code extension into `~/.vscode/extensions`. Set `VSCODE_EXTENSIONS=/path/to/extensions` before running the installer to target another VS Code-compatible extensions directory.
+
 ## Tools
 
 Enable tool calling with `--tools` (comma-separated):
@@ -151,6 +153,23 @@ Skill files are plain markdown. Frontmatter such as `name` and `description` is 
 | `AGENT_TEMPERATURE`| Sampling temperature (0-1)               | model default        |
 | `AGENT_THINKING_ENABLED` | Enable model thinking/reasoning      | `false`              |
 
+## VS Code Terminal Context
+
+When `sif` runs inside a VS Code integrated terminal, it detects that environment automatically. VS Code does not expose the active editor or selection to terminal child processes by default, but the companion extension writes live editor context to a small JSON file and exposes it through `SIF_VSCODE_CONTEXT_FILE` for new integrated terminals.
+
+| Variable | Description |
+|----------|-------------|
+| `SIF_VSCODE_CONTEXT_FILE` | JSON file containing live editor context, used by the VS Code extension |
+| `SIF_VSCODE_FILE` | Active editor file path or `file://` URI |
+| `SIF_VSCODE_LINE` | Active cursor line number |
+| `SIF_VSCODE_COLUMN` | Active cursor column number |
+| `SIF_VSCODE_SELECTED_TEXT` | Current selected text |
+| `SIF_VSCODE_SELECTED_TEXT_B64` | Current selected text as UTF-8 base64, useful for multiline selections |
+
+Use `/vscode` in chat to inspect what `sif` can see.
+
+The VS Code extension lives in `sif.vscode/`. For local development, open the repository in VS Code and run the extension host with that folder as the extension development path. The command `sif: Start Chat With Editor Context` opens a `sif` terminal and keeps the context file updated as the active editor, cursor, or selection changes. Regular integrated terminals opened after the extension activates also receive `SIF_VSCODE_CONTEXT_FILE`.
+
 ## Chat Commands
 
 During a chat session, type these commands:
@@ -170,6 +189,7 @@ During a chat session, type these commands:
 | `/context clear-history` | Clear conversation history (keeps system prompt) |
 | `/context clear-store` | Delete stored context entries for this session |
 | `/context clear all` | Clear both chat history and stored context |
+| `/vscode`            | Show detected VS Code terminal/editor context |
 | `/help`              | Show help and options                    |
 
 ## Examples

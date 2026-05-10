@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using Spectre.Console;
 using ConsoleMarkdownRenderer;
 
@@ -205,6 +206,8 @@ internal class AgentApp
         var mcpToolsCount = mcpService.GetTools().Count;
         if (mcpToolsCount > 0)
             header += $" [dim]mcp-tools: {mcpToolsCount}[/]";
+        if (VscodeContext.IsRunningInVscodeTerminal())
+            header += " [dim]vscode[/]";
         
         AnsiConsole.MarkupLine(header);
         AnsiConsole.MarkupLine("Type [bold]/quit[/] or [bold]/exit[/] to quit, [bold]/clear[/] to reset conversation, [bold]/context[/] to inspect context, [bold]/help[/] for help.");
@@ -253,6 +256,10 @@ internal class AgentApp
                 else if (trimmed == "/context" || trimmed.StartsWith("/context "))
                 {
                     HandleContextCommand(trimmed, history);
+                }
+                else if (trimmed == "/vscode")
+                {
+                    ShowVscodeContext();
                 }
                 else if (trimmed == "/help")
                 {
@@ -346,6 +353,8 @@ internal class AgentApp
 
     private static string PrepareUserMessageForHistory(string message, string[]? tools)
     {
+        message = VscodeContext.AppendToUserMessage(message);
+
         if (message.Length <= ContextStore.AutoStoreThreshold || !HasContextTool(tools))
             return message;
 
@@ -422,8 +431,25 @@ internal class AgentApp
         table.AddRow("[bold]/context clear-history[/]", "Clear conversation history and keep the system prompt");
         table.AddRow("[bold]/context clear-store[/]", "Delete stored context entries for this session");
         table.AddRow("[bold]/context clear all[/]", "Clear chat history and stored context");
+        table.AddRow("[bold]/vscode[/]", "Show detected VS Code terminal/editor context");
         AnsiConsole.Write(table);
         AnsiConsole.WriteLine();
+    }
+
+    private static void ShowVscodeContext()
+    {
+        var table = new Table();
+        table.Title("[green]VS Code Context[/]");
+        table.AddColumn("Item");
+        table.AddColumn("Value");
+        table.AddRow("Terminal", VscodeContext.IsRunningInVscodeTerminal() ? "[green]yes[/]" : "[dim]no[/]");
+        table.AddRow("File", VscodeContext.GetDisplayValue(VscodeContext.FilePath));
+        table.AddRow("Line", VscodeContext.GetDisplayValue(VscodeContext.Line));
+        table.AddRow("Column", VscodeContext.GetDisplayValue(VscodeContext.Column));
+        table.AddRow("Selection", string.IsNullOrEmpty(VscodeContext.SelectedText) ? "[dim]not provided[/]" : $"{VscodeContext.SelectedText.Length:N0} chars");
+        table.AddRow("Context file", VscodeContext.GetDisplayValue(Environment.GetEnvironmentVariable("SIF_VSCODE_CONTEXT_FILE")));
+        AnsiConsole.Write(table);
+        AnsiConsole.MarkupLine("[dim]Editor context is read from SIF_VSCODE_CONTEXT_FILE or SIF_VSCODE_FILE, SIF_VSCODE_LINE, SIF_VSCODE_COLUMN, SIF_VSCODE_SELECTED_TEXT, and SIF_VSCODE_SELECTED_TEXT_B64.[/]\n");
     }
 
     private static void HandleContextCommand(string command, List<ChatMessage> history)
@@ -719,6 +745,7 @@ internal class AgentApp
         AnsiConsole.Write(new Markup("[dim]Prompt:[/] "));
         AnsiConsole.WriteLine(prompt.Trim());
         AnsiConsole.WriteLine();
+        var promptWithEditorContext = VscodeContext.AppendToUserMessage(prompt);
 
         try
         {
@@ -727,13 +754,13 @@ internal class AgentApp
                 var history = new List<ChatMessage>();
                 if (!string.IsNullOrEmpty(systemPrompt))
                     history.Add(new ChatMessage("system", systemPrompt));
-                history.Add(new ChatMessage("user", prompt));
+                history.Add(new ChatMessage("user", promptWithEditorContext));
                 var (response, tokenCount) = await RunWithEscapeCancel(ct => client.ChatWithToolsAsync(history, ct));
                 AnsiConsole.MarkupLine($"\n[dim]({tokenCount} tokens)[/]");
             }
             else
             {
-                var (response, reasoning) = await client.CompleteAsync(prompt, systemPrompt);
+                var (response, reasoning) = await client.CompleteAsync(promptWithEditorContext, systemPrompt);
                 if (!string.IsNullOrEmpty(reasoning))
                 {
                     AnsiConsole.MarkupLine("[dim]Thinking:[/]");
@@ -1120,4 +1147,197 @@ internal class CliArgs
     public bool? Thinking { get; set; }
     public float? Temperature { get; set; }
     public int? MaxTokens { get; set; }
+}
+
+internal static class VscodeContext
+{
+    private const int MaxInlineTextChars = 6000;
+    private const int MaxLineChars = 1000;
+
+    public static string? FilePath => ReadSnapshot().FilePath ?? NormalizePath(GetFirstEnv("SIF_VSCODE_FILE", "VSCODE_ACTIVE_FILE"));
+    public static string? Line => ReadSnapshot().Line ?? GetFirstEnv("SIF_VSCODE_LINE", "SIF_VSCODE_SELECTION_START_LINE", "VSCODE_ACTIVE_LINE");
+    public static string? Column => ReadSnapshot().Column ?? GetFirstEnv("SIF_VSCODE_COLUMN", "SIF_VSCODE_SELECTION_START_COLUMN", "VSCODE_ACTIVE_COLUMN");
+    public static string? SelectedText => ReadSnapshot().SelectedText
+        ?? DecodeText(GetFirstEnv("SIF_VSCODE_SELECTED_TEXT_B64"), isBase64: true)
+        ?? DecodeText(GetFirstEnv("SIF_VSCODE_SELECTED_TEXT", "VSCODE_SELECTED_TEXT"), isBase64: false);
+
+    public static bool IsRunningInVscodeTerminal()
+    {
+        return string.Equals(Environment.GetEnvironmentVariable("TERM_PROGRAM"), "vscode", StringComparison.OrdinalIgnoreCase)
+            || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("VSCODE_IPC_HOOK_CLI"))
+            || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("VSCODE_PID"))
+            || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SIF_VSCODE_CONTEXT_FILE"));
+    }
+
+    public static string AppendToUserMessage(string message)
+    {
+        if (!IsRunningInVscodeTerminal())
+            return message;
+
+        var block = BuildMessageBlock();
+        if (string.IsNullOrWhiteSpace(block))
+            return message;
+
+        return block + "\n\nUser message:\n" + message;
+    }
+
+    public static string GetDisplayValue(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? "[dim]not provided[/]" : value.EscapeMarkup();
+    }
+
+    private static string? BuildMessageBlock()
+    {
+        var snapshot = ReadSnapshot();
+        var file = snapshot.FilePath ?? NormalizePath(GetFirstEnv("SIF_VSCODE_FILE", "VSCODE_ACTIVE_FILE"));
+        var line = snapshot.Line ?? GetFirstEnv("SIF_VSCODE_LINE", "SIF_VSCODE_SELECTION_START_LINE", "VSCODE_ACTIVE_LINE");
+        var column = snapshot.Column ?? GetFirstEnv("SIF_VSCODE_COLUMN", "SIF_VSCODE_SELECTION_START_COLUMN", "VSCODE_ACTIVE_COLUMN");
+        var selectedText = snapshot.SelectedText
+            ?? DecodeText(GetFirstEnv("SIF_VSCODE_SELECTED_TEXT_B64"), isBase64: true)
+            ?? DecodeText(GetFirstEnv("SIF_VSCODE_SELECTED_TEXT", "VSCODE_SELECTED_TEXT"), isBase64: false);
+        var currentLine = TryReadLine(file, line);
+
+        if (string.IsNullOrWhiteSpace(file) &&
+            string.IsNullOrWhiteSpace(line) &&
+            string.IsNullOrWhiteSpace(column) &&
+            string.IsNullOrWhiteSpace(selectedText))
+            return null;
+
+        var sb = new StringBuilder();
+        sb.AppendLine("<editor_context source=\"vscode\">");
+        if (!string.IsNullOrWhiteSpace(file))
+            sb.AppendLine($"Open file: {file}");
+        if (!string.IsNullOrWhiteSpace(line) || !string.IsNullOrWhiteSpace(column))
+            sb.AppendLine($"Cursor: line {ValueOrUnknown(line)}, column {ValueOrUnknown(column)}");
+        if (!string.IsNullOrWhiteSpace(currentLine))
+            sb.AppendLine($"Current line: {currentLine}");
+        if (!string.IsNullOrWhiteSpace(selectedText))
+        {
+            sb.AppendLine("Selected text:");
+            sb.AppendLine(TrimText(selectedText, MaxInlineTextChars));
+        }
+        sb.AppendLine("</editor_context>");
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string? TryReadLine(string? file, string? line)
+    {
+        if (string.IsNullOrWhiteSpace(file) || !int.TryParse(line, out var lineNumber) || lineNumber <= 0)
+            return null;
+
+        try
+        {
+            var path = Path.IsPathRooted(file) ? file : Path.GetFullPath(file, Environment.CurrentDirectory);
+            if (!File.Exists(path))
+                return null;
+
+            var current = 1;
+            foreach (var text in File.ReadLines(path))
+            {
+                if (current == lineNumber)
+                    return TrimText(text, MaxLineChars);
+                current++;
+            }
+        }
+        catch
+        {
+            return null;
+        }
+
+        return null;
+    }
+
+    private static EditorSnapshot ReadSnapshot()
+    {
+        var path = Environment.GetEnvironmentVariable("SIF_VSCODE_CONTEXT_FILE");
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+            return EditorSnapshot.Empty;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            var root = doc.RootElement;
+            return new EditorSnapshot(
+                NormalizePath(GetJsonString(root, "file")),
+                GetJsonString(root, "line"),
+                GetJsonString(root, "column"),
+                GetJsonString(root, "selectedText"));
+        }
+        catch
+        {
+            return EditorSnapshot.Empty;
+        }
+    }
+
+    private static string? GetJsonString(JsonElement root, string propertyName)
+    {
+        if (!root.TryGetProperty(propertyName, out var value))
+            return null;
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => value.GetString(),
+            JsonValueKind.Number => value.GetRawText(),
+            _ => null
+        };
+    }
+
+    private static string ValueOrUnknown(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? "unknown" : value;
+    }
+
+    private static string? GetFirstEnv(params string[] names)
+    {
+        foreach (var name in names)
+        {
+            var value = Environment.GetEnvironmentVariable(name);
+            if (!string.IsNullOrWhiteSpace(value))
+                return value;
+        }
+
+        return null;
+    }
+
+    private static string? DecodeText(string? value, bool isBase64)
+    {
+        if (string.IsNullOrEmpty(value))
+            return null;
+
+        if (!isBase64)
+            return value.Replace("\\r\\n", "\n").Replace("\\n", "\n");
+
+        try
+        {
+            return Encoding.UTF8.GetString(Convert.FromBase64String(value));
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? NormalizePath(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        if (Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.IsFile)
+            return uri.LocalPath;
+
+        return value;
+    }
+
+    private static string TrimText(string value, int maxChars)
+    {
+        if (value.Length <= maxChars)
+            return value;
+
+        return value[..maxChars] + $"\n...[truncated {value.Length - maxChars:N0} chars]";
+    }
+
+    private sealed record EditorSnapshot(string? FilePath, string? Line, string? Column, string? SelectedText)
+    {
+        public static EditorSnapshot Empty { get; } = new(null, null, null, null);
+    }
 }

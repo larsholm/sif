@@ -5,6 +5,11 @@
 set -e
 
 cd "$(dirname "$0")"
+ROOT_DIR="$(cd .. && pwd)"
+EXTENSION_SRC="$ROOT_DIR/sif.vscode"
+EXTENSION_ID="sif.sif-vscode"
+EXTENSION_VERSION="0.1.0"
+EXTENSION_INSTALL_DIR="${VSCODE_EXTENSIONS:-$HOME/.vscode/extensions}/${EXTENSION_ID}-${EXTENSION_VERSION}"
 
 echo "Building..."
 dotnet build -c Release
@@ -30,7 +35,7 @@ cat > /tmp/sif-pack/tools/net10.0/any/DotnetToolSettings.xml << 'SETTINGS'
 SETTINGS
 
 # Copy readme
-cp ../README.md /tmp/sif-pack/
+cp "$ROOT_DIR/README.md" /tmp/sif-pack/
 
 # Create proper nuspec
 cat > /tmp/sif-pack/sif.agent.nuspec << 'NUSPEC'
@@ -57,7 +62,7 @@ cd /tmp/sif-pack
 rm -f sif.agent.1.0.0.nupkg
 PACKAGE_VERSION=1.0.0
 PACKAGE_ID=sif.agent
-PACKAGE_DIR=/home/lars/source/sif/sif.agent/nupkg
+PACKAGE_DIR="$ROOT_DIR/sif.agent/nupkg"
 
 # Create proper Open Packaging Convention structure
 mkdir -p _rels
@@ -99,7 +104,20 @@ if [ "$1" = "install" ]; then
     rm -rf "$HOME/.nuget/packages/$PACKAGE_ID/$PACKAGE_VERSION"
     dotnet tool install --source "$PACKAGE_DIR" --version "$PACKAGE_VERSION" --no-http-cache --global "$PACKAGE_ID"
     echo ""
-    echo "Installed! Run 'sif' to start chatting."
+    echo "Installing VS Code extension..."
+    if [ -d "$EXTENSION_SRC" ]; then
+        rm -rf "$EXTENSION_INSTALL_DIR"
+        mkdir -p "$EXTENSION_INSTALL_DIR"
+        cp "$EXTENSION_SRC/package.json" "$EXTENSION_INSTALL_DIR/"
+        cp "$EXTENSION_SRC/extension.js" "$EXTENSION_INSTALL_DIR/"
+        cp "$EXTENSION_SRC/README.md" "$EXTENSION_INSTALL_DIR/"
+        cp "$EXTENSION_SRC/.vscodeignore" "$EXTENSION_INSTALL_DIR/" 2>/dev/null || true
+        echo "VS Code extension installed: $EXTENSION_INSTALL_DIR"
+    else
+        echo "Warning: VS Code extension source not found at $EXTENSION_SRC"
+    fi
+    echo ""
+    echo "Installed! Run 'sif' to start chatting, or use 'sif: Start Chat With Editor Context' in VS Code."
 fi
 
 # Cleanup
