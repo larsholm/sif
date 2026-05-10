@@ -19,18 +19,24 @@
 ## Requirements
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download)
+- `curl`, `tar`, and `zip`
 - An OpenAI-compatible API endpoint
 
 ## Install
 
 ```bash
-cd sif.agent
-./build.sh install
+curl -fsSL https://raw.githubusercontent.com/sif/sif/main/install.sh | bash
 ```
 
-This builds the agent and installs it as a global .NET tool. The `sif` command will be available in your PATH.
+This downloads the latest `main` archive, builds the agent, and installs it as a global .NET tool. The `sif` command will be available in your PATH.
 
 The installer also installs the companion VS Code extension into `~/.vscode/extensions`. Set `VSCODE_EXTENSIONS=/path/to/extensions` before running the installer to target another VS Code-compatible extensions directory.
+
+For local development from a checked-out repository:
+
+```bash
+./sif.agent/build.sh install
+```
 
 ## Quick Start
 
