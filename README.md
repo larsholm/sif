@@ -11,6 +11,7 @@
 - **Interactive by default** - run `sif` to start a chat session.
 - **Local model friendly** - use vLLM, Ollama, LM Studio, LiteLLM, OpenAI, or any compatible endpoint.
 - **Tool calling** - enable shell, file, context, sleep, static server, and diagnostics tools.
+- **MCP servers** - connect to Model Context Protocol servers over stdio, HTTP, streamable HTTP, or SSE.
 - **Context store** - large tool outputs are stored out-of-band and can be searched or read back by handle.
 - **VS Code context** - the companion extension exposes active editor, cursor, and selection context to `sif`.
 - **Skills** - reusable markdown instructions can be loaded from project or user skill folders.
@@ -98,6 +99,31 @@ When `context` is enabled, large local and MCP tool results are stored under `~/
 The `diagnostics` tool is for inspecting sif's runtime state only. It is not a debugger and does not launch, attach to, or manage .NET debug adapter sessions. There is also a legacy `debug` tool alias for the same diagnostics behavior.
 
 Tool calling is non-streaming: the model decides whether to call tools, then returns the final response. Thinking and reasoning display works for OpenAI o-series models and Qwen3.x models via vLLM.
+
+## MCP Servers
+
+`sif` can connect to Model Context Protocol servers configured in `~/.sif/sif-agent.json`. MCP tools are listed at startup and exposed to the model alongside local tools.
+
+```json
+{
+  "McpServers": {
+    "filesystem": {
+      "Type": "stdio",
+      "Command": "npx",
+      "Args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/lars/source"]
+    },
+    "remote-tools": {
+      "Type": "streamableHttp",
+      "Url": "https://example.com/mcp",
+      "Headers": {
+        "Authorization": "Bearer TOKEN"
+      }
+    }
+  }
+}
+```
+
+Supported `Type` values are `stdio`, `http`, `streamableHttp`, `streamable-http`, and `sse`. Stdio servers use `Command`, `Args`, and optional `Env`; HTTP-based servers use `Url` and optional `Headers`. Set `Disabled` to `true` to keep a server in the config without connecting to it.
 
 ## Configuration
 
