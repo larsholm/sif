@@ -82,7 +82,7 @@ Available tools:
 
 | Tool | Description |
 |------|-------------|
-| `bash` | Execute safe shell commands such as `ls`, `cat`, `grep`, and `find` |
+| `bash` | Execute allowed shell commands. Uses Bash on Unix-like systems and PowerShell on Windows, with aliases such as `ls`, `cat`, `grep`/`Select-String`, `find`/`Get-ChildItem`, `dir`, and `type` |
 | `read` | Read file contents |
 | `edit` | Edit files by replacing exact text |
 | `write` | Create or overwrite files |

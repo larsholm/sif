@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using OpenAI;
@@ -41,7 +42,7 @@ internal static class ToolRegistry
         {
             tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
                 "bash",
-                "Run an allowed shell command and return output. Times out after 30s; use serve for static HTTP servers.",
+                "Run an allowed shell command and return output. Uses Bash on Unix-like systems and PowerShell on Windows. Times out after 30s; use serve for static HTTP servers.",
                 BinaryData.FromString("""
                     {
                         "type": "object",
@@ -373,40 +374,46 @@ internal static class ToolRegistry
             port = GetFreeTcpPort(IPAddress.Loopback);
 
         var logPath = Path.Combine(Path.GetTempPath(), $"sif_http_{port}_{Guid.NewGuid():N}.log");
-        var scriptPath = Path.Combine(Path.GetTempPath(), $"sif_http_{Guid.NewGuid():N}.sh");
-        var escapedPath = path.Replace("'", "'\"'\"'");
-        var escapedLog = logPath.Replace("'", "'\"'\"'");
-        var escapedBind = bind.Replace("'", "'\"'\"'");
-
-        File.WriteAllText(scriptPath,
-            "#!/bin/bash\n" +
-            $"cd '{escapedPath}'\n" +
-            $"exec python3 -m http.server {port} --bind '{escapedBind}' >'{escapedLog}' 2>&1\n");
-
         try
         {
-            var chmod = Process.Start(new ProcessStartInfo("chmod", $"+x \"{scriptPath}\"") { UseShellExecute = false });
-            chmod?.WaitForExit();
+            var python = FindExecutable(RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                ? ["python", "py"]
+                : ["python3", "python"]);
+            if (python == null)
+                return "Error: Python was not found. Install Python or add it to PATH to use the serve tool.";
 
+            File.WriteAllText(logPath, "");
             var psi = new ProcessStartInfo
             {
-                FileName = "setsid",
+                FileName = python,
+                WorkingDirectory = path,
                 UseShellExecute = false,
                 CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
             };
-            psi.ArgumentList.Add(scriptPath);
+            if (Path.GetFileNameWithoutExtension(python).Equals("py", StringComparison.OrdinalIgnoreCase))
+                psi.ArgumentList.Add("-3");
+            psi.ArgumentList.Add("-m");
+            psi.ArgumentList.Add("http.server");
+            psi.ArgumentList.Add(port.ToString());
+            psi.ArgumentList.Add("--bind");
+            psi.ArgumentList.Add(bind);
 
             var process = Process.Start(psi);
             if (process is null)
                 return "Error: Failed to start HTTP server.";
 
+            _ = PipeToLogAsync(process.StandardOutput, logPath);
+            _ = PipeToLogAsync(process.StandardError, logPath);
+
             Thread.Sleep(300);
             if (process.HasExited)
             {
-                var log = File.Exists(logPath) ? File.ReadAllText(logPath).Trim() : "";
-                return string.IsNullOrWhiteSpace(log)
+                var logText = File.Exists(logPath) ? File.ReadAllText(logPath).Trim() : "";
+                return string.IsNullOrWhiteSpace(logText)
                     ? $"Error: HTTP server exited immediately with code {process.ExitCode}."
-                    : $"Error: HTTP server exited immediately with code {process.ExitCode}.\n{log}";
+                    : $"Error: HTTP server exited immediately with code {process.ExitCode}.\n{logText}";
             }
 
             return $"Serving {path} at http://{bind}:{port}/\nPID: {process.Id}\nLog: {logPath}";
@@ -424,6 +431,48 @@ internal static class ToolRegistry
         return ((IPEndPoint)listener.LocalEndpoint).Port;
     }
 
+    private static async Task PipeToLogAsync(StreamReader reader, string logPath)
+    {
+        try
+        {
+            while (await reader.ReadLineAsync() is { } line)
+                await File.AppendAllTextAsync(logPath, line + Environment.NewLine);
+        }
+        catch
+        {
+            // Best-effort logging for background server processes.
+        }
+    }
+
+    private static string? FindExecutable(IEnumerable<string> names)
+    {
+        var pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
+        var pathExts = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+            ? (Environment.GetEnvironmentVariable("PATHEXT") ?? ".EXE;.BAT;.CMD;.COM")
+                .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            : [""];
+
+        foreach (var name in names)
+        {
+            if (Path.IsPathRooted(name) && File.Exists(name))
+                return name;
+
+            foreach (var dir in pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                foreach (var ext in pathExts)
+                {
+                    var candidate = Path.Combine(dir, name);
+                    if (!candidate.EndsWith(ext, StringComparison.OrdinalIgnoreCase))
+                        candidate += ext;
+                    if (File.Exists(candidate))
+                        return candidate;
+                }
+            }
+        }
+
+        return null;
+    }
+
     private static async Task<string> RunBashAsync(string argsJson, CancellationToken cancellationToken)
     {
         using var doc = JsonDocument.Parse(argsJson);
@@ -431,47 +480,14 @@ internal static class ToolRegistry
         var command = root.GetProperty("command").GetString() ?? "";
         var limit = root.TryGetProperty("limit", out var l) ? l.GetInt32() : 8000;
 
-        var allowed = new HashSet<string>
-        {
-            "ls", "cat", "grep", "find", "pwd", "cd", "csi", "head", "tail", "wc", "whoami",
-            "hostname", "date", "env", "echo", "file", "stat", "du", "df",
-            "man", "locate", "which", "dirname", "basename", "realpath",
-            "diff", "sort", "uniq", "tr", "cut", "sed", "awk", "gzip",
-            "gunzip", "tar", "zip", "unzip", "tree", "less", "more",
-            "strings", "curl", "wget", "ping", "ip", "ifconfig", "netstat",
-            "ss", "ps", "kill", "top", "htop", "lsof", "mount", "fdisk",
-            "blkid", "test", "command", "type", "alias", "export", "set",
-            "mktemp", "tmux", "screen", "vi", "vim", "nano", "emacs",
-            "git", "npm", "yarn", "pip", "python", "python3", "node",
-            "ruby", "java", "javac", "gcc", "g++", "clang", "make",
-            "cmake", "cargo", "rustc", "dotnet", "go", "swift",
-            "docker", "kubectl", "terraform", "ansible", "ssh", "scp",
-            "rsync", "chmod", "chown", "mkdir", "rm", "cp", "mv", "ln",
-            "touch", "tee", "split", "join", "paste", "comm", "fold",
-            "fmt", "pr", "xargs", "md5sum", "sha1sum", "sha256sum",
-            "base64", "xxd", "od", "hexdump", "dd", "jq", "patch",
-            "cmp", "diff3", "sdiff"
-        };
-
-        var firstWord = command.Split(' ').FirstOrDefault()?.Trim() ?? "";
-        if (!allowed.Contains(firstWord))
+        var firstWord = GetFirstCommandWord(command);
+        var allowed = GetAllowedShellCommands();
+        if (!allowed.Contains(firstWord) && !allowed.Contains(Path.GetFileNameWithoutExtension(firstWord)))
             return $"Error: Command '{firstWord}' not allowed.";
 
         try
         {
-            var scriptPath = Path.Combine(Path.GetTempPath(), $"sif_bash_{Guid.NewGuid():N}.sh");
-            File.WriteAllText(scriptPath, "#!/bin/bash\n" + command);
-            var chmod = Process.Start(new ProcessStartInfo("chmod", $"+x \"{scriptPath}\"") { UseShellExecute = false });
-            if (chmod != null) chmod.WaitForExit();
-
-            var psi = new ProcessStartInfo
-            {
-                FileName = scriptPath,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                WorkingDirectory = Environment.CurrentDirectory
-            };
+            var scriptPath = CreateShellScript(command, out var psi);
 
             try
             {
@@ -520,6 +536,118 @@ internal static class ToolRegistry
         {
             return $"Error executing command: {ex.Message}";
         }
+    }
+
+    private static string GetFirstCommandWord(string command)
+    {
+        var trimmed = command.TrimStart();
+        if (trimmed.Length == 0)
+            return "";
+
+        if (trimmed[0] is '"' or '\'')
+        {
+            var quote = trimmed[0];
+            var end = trimmed.IndexOf(quote, 1);
+            return end > 1 ? trimmed[1..end] : trimmed.Trim(quote);
+        }
+
+        return trimmed.Split([' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .FirstOrDefault() ?? "";
+    }
+
+    private static HashSet<string> GetAllowedShellCommands()
+    {
+        var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "ls", "cat", "grep", "find", "pwd", "cd", "csi", "head", "tail", "wc", "whoami",
+            "hostname", "date", "env", "echo", "file", "stat", "du", "df",
+            "man", "locate", "which", "dirname", "basename", "realpath",
+            "diff", "sort", "uniq", "tr", "cut", "sed", "awk", "gzip",
+            "gunzip", "tar", "zip", "unzip", "tree", "less", "more",
+            "strings", "curl", "wget", "ping", "ip", "ifconfig", "netstat",
+            "ss", "ps", "kill", "top", "htop", "lsof", "mount", "fdisk",
+            "blkid", "test", "command", "type", "alias", "export", "set",
+            "mktemp", "tmux", "screen", "vi", "vim", "nano", "emacs",
+            "git", "npm", "yarn", "pip", "python", "python3", "node",
+            "ruby", "java", "javac", "gcc", "g++", "clang", "make",
+            "cmake", "cargo", "rustc", "dotnet", "go", "swift",
+            "docker", "kubectl", "terraform", "ansible", "ssh", "scp",
+            "rsync", "chmod", "chown", "mkdir", "rm", "cp", "mv", "ln",
+            "touch", "tee", "split", "join", "paste", "comm", "fold",
+            "fmt", "pr", "xargs", "md5sum", "sha1sum", "sha256sum",
+            "base64", "xxd", "od", "hexdump", "dd", "jq", "patch",
+            "cmp", "diff3", "sdiff"
+        };
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            foreach (var command in new[]
+            {
+                "dir", "type", "findstr", "where", "cls", "ver", "vol", "path", "setx",
+                "copy", "xcopy", "robocopy", "move", "del", "erase", "ren", "rename", "rmdir",
+                "md", "rd", "attrib", "icacls", "takeown", "fc", "comp", "certutil",
+                "tasklist", "taskkill", "sc", "net", "netsh", "ipconfig", "arp", "route",
+                "nslookup", "tracert", "powershell", "powershell.exe", "pwsh", "pwsh.exe",
+                "Get-ChildItem", "Get-Content", "Select-String", "Get-Location", "Set-Location",
+                "Get-Command", "Get-Item", "Get-ItemProperty", "Get-Date", "Get-Process",
+                "Stop-Process", "Get-Service", "Start-Service", "Stop-Service", "Restart-Service",
+                "New-Item", "Remove-Item", "Copy-Item", "Move-Item", "Rename-Item",
+                "Set-Content", "Add-Content", "Out-File", "Measure-Object", "Sort-Object",
+                "Where-Object", "ForEach-Object", "Format-Table", "Format-List",
+                "Resolve-Path", "Split-Path", "Join-Path", "Test-Path", "Get-FileHash",
+                "Expand-Archive", "Compress-Archive", "Invoke-WebRequest", "Invoke-RestMethod",
+                "iwr", "irm", "gc", "sc", "gci", "gi", "gp", "pwd", "sls", "sort",
+                "measure", "ft", "fl", "rvpa", "sp", "ni", "ri", "mi", "ren", "cp", "mv", "rm"
+            })
+            {
+                allowed.Add(command);
+            }
+        }
+
+        return allowed;
+    }
+
+    private static string CreateShellScript(string command, out ProcessStartInfo psi)
+    {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            var scriptPath = Path.Combine(Path.GetTempPath(), $"sif_shell_{Guid.NewGuid():N}.ps1");
+            File.WriteAllText(scriptPath, command);
+            var shell = FindExecutable(["pwsh", "powershell"]) ?? "powershell.exe";
+            psi = new ProcessStartInfo
+            {
+                FileName = shell,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                WorkingDirectory = Environment.CurrentDirectory,
+                CreateNoWindow = true,
+            };
+            psi.ArgumentList.Add("-NoProfile");
+            if (Path.GetFileNameWithoutExtension(shell).Equals("powershell", StringComparison.OrdinalIgnoreCase))
+            {
+                psi.ArgumentList.Add("-ExecutionPolicy");
+                psi.ArgumentList.Add("Bypass");
+            }
+            psi.ArgumentList.Add("-File");
+            psi.ArgumentList.Add(scriptPath);
+            return scriptPath;
+        }
+
+        var bashScriptPath = Path.Combine(Path.GetTempPath(), $"sif_bash_{Guid.NewGuid():N}.sh");
+        File.WriteAllText(bashScriptPath, "#!/bin/bash\n" + command);
+        var chmod = Process.Start(new ProcessStartInfo("chmod", $"+x \"{bashScriptPath}\"") { UseShellExecute = false });
+        if (chmod != null) chmod.WaitForExit();
+
+        psi = new ProcessStartInfo
+        {
+            FileName = bashScriptPath,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            WorkingDirectory = Environment.CurrentDirectory
+        };
+        return bashScriptPath;
     }
 
     private static string RunRead(string argsJson)

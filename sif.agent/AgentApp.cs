@@ -666,7 +666,7 @@ internal class AgentApp
 
         var descriptions = new Dictionary<string, string>
         {
-            { "bash", "Run a shell command (ls, cat, grep, find, etc.)" },
+            { "bash", "Run an allowed shell command using Bash on Unix-like systems or PowerShell on Windows" },
             { "read", "Read file contents" },
             { "edit", "Replace exact text in a file" },
             { "write", "Create or overwrite a file" },
@@ -685,7 +685,7 @@ internal class AgentApp
                $"Current working directory: {Environment.CurrentDirectory}. " +
                "Always use absolute paths when referring to files." +
                "\n\nUse tools proactively: " +
-               "\n- Use 'bash' with 'ls' to list files, 'grep' to search" +
+               "\n- Use 'bash' with platform-appropriate commands: ls/grep/find on Unix-like systems, or dir/Select-String/Get-ChildItem on Windows" +
                "\n- Use 'read' to view file contents" +
                "\n- Use 'edit' to modify files" +
                "\n- Use 'write' to create new files" +
