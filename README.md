@@ -1,116 +1,176 @@
 # sif agent
 
-A lightweight AI agent console tool supporting local models via OpenAI-compatible APIs.
+<p align="center">
+  <img src="assets/sif.png" alt="Sif" width="720">
+</p>
 
-## Features
+`sif` is a lightweight AI agent console tool written in C#. It works with OpenAI-compatible APIs, local model servers, and a small set of built-in tools for reading, editing, searching, serving, and inspecting local context.
 
-- **Chat by default** — `sif` launches into interactive chat immediately
-- **Tool calling** — Enable tools for bash, file read/edit/write, sleep, and local static serving via `--tools`
-- **Context mode** — Large tool outputs are stored out-of-band and can be searched or read back by handle
-- **One-off completion** — Quick prompts from CLI or stdin with `sif complete`
-- **Local model support** — Works with any OpenAI-compatible endpoint (vLLM, Ollama, LM Studio, LiteLLM, etc.)
-- **Streaming output** — See responses as they're generated
-- **System prompts** — Set custom system instructions for your agent
-- **Skill files** — Add reusable markdown instructions under `.sif/skills` or `~/.sif/skills`
-- **Config management** — Persist settings in `~/.sif/sif-agent.json`
+## Highlights
 
-## Prerequisites
+- **Interactive by default** - run `sif` to start a chat session.
+- **Local model friendly** - use vLLM, Ollama, LM Studio, LiteLLM, OpenAI, or any compatible endpoint.
+- **Tool calling** - enable shell, file, context, sleep, static server, and diagnostics tools.
+- **Context store** - large tool outputs are stored out-of-band and can be searched or read back by handle.
+- **VS Code context** - the companion extension exposes active editor, cursor, and selection context to `sif`.
+- **Skills** - reusable markdown instructions can be loaded from project or user skill folders.
+- **Persistent config** - store model, endpoint, tool, and reasoning settings in `~/.sif/sif-agent.json`.
+
+## Requirements
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download)
-- A running OpenAI-compatible API (Ollama, LM Studio, LiteLLM, or OpenAI)
+- An OpenAI-compatible API endpoint
 
-## Installation
+## Install
 
 ```bash
 cd sif.agent
 ./build.sh install
 ```
 
-This builds the project and installs it as a global .NET tool. The `sif` command will be available in your PATH.
+This builds the agent and installs it as a global .NET tool. The `sif` command will be available in your PATH.
 
-The install command also installs the companion VS Code extension into `~/.vscode/extensions`. Set `VSCODE_EXTENSIONS=/path/to/extensions` before running the installer to target another VS Code-compatible extensions directory.
+The installer also installs the companion VS Code extension into `~/.vscode/extensions`. Set `VSCODE_EXTENSIONS=/path/to/extensions` before running the installer to target another VS Code-compatible extensions directory.
 
-## Tools
-
-Enable tool calling with `--tools` (comma-separated):
-
-| Tool    | Description                                            |
-|---------|--------------------------------------------------------|
-| `bash`  | Execute safe shell commands (ls, cat, grep, find, etc.) |
-| `read`  | Read file contents                                      |
-| `edit`  | Edit files by replacing exact text                      |
-| `write` | Create or overwrite files                               |
-| `sleep` | Pause briefly before continuing or retrying              |
-| `serve` | Start a local static HTTP server for a directory         |
-| `context` | Add `ctx_index`, `ctx_search`, `ctx_read`, and `ctx_stats` tools for large context |
-| `diagnostics` | Inspect sif agent configuration, AGENT_ environment variables, and chat history |
+## Quick Start
 
 ```bash
-# Use the default tool set explicitly
-sif --tools bash,read,edit,write,context
-
-# Add sif runtime diagnostics when needed
-sif --tools bash,read,edit,write,context,diagnostics
-
-# Or set persistently
-sif config --set TOOLS=bash,read,edit,write,context
-sif
-```
-
-When `context` is enabled, large local and MCP tool results are automatically stored under `~/.sif/context/` and replaced in the model context with a compact handle such as `ctx_abc123`. The model can then call `ctx_search` for focused snippets or `ctx_read` for a specific stored result.
-
-The `diagnostics` tool is for inspecting sif's own runtime state. It is not a debugger and does not launch, attach to, or manage .NET debug adapter sessions.
-
-**Note:** Tool calling is non-streaming (the model decides whether to use tools, then returns the final response). Thinking/reasoning display works for OpenAI o-series models and Qwen3.x models via vLLM.
-
-## Usage
-
-### Interactive Chat (Default)
-
-```bash
-# Start chat (default behavior)
+# Start an interactive chat
 sif
 
-# With custom endpoint and model
-sif -u http://100.118.58.55:8020/v1 -m qwen3.6-27b-autoround
+# Use a specific endpoint and model
+sif -u http://localhost:11434/v1 -m llama3.2
 
-# With a system prompt
-sif -s "You are a helpful C# coding assistant."
-
-# Without streaming (shows full response at once)
-sif --no-stream
-```
-
-### One-off Completion
-
-```bash
-# From command line
+# Run one prompt and exit
 sif complete "Explain async/await in C#"
 
-# With custom endpoint and model
-sif complete "Write a Fibonacci function" -u http://100.118.58.55:8020/v1 -m qwen3.6-27b-autoround
-
-# With system prompt
-sif complete "Explain closures" -s "Respond concisely in 2 sentences."
-
-# From stdin
+# Pipe a prompt from stdin
 cat prompt.txt | sif complete -
 ```
 
-### Configuration
+## Tools
+
+Tools can be enabled with `--tools`, `AGENT_TOOLS`, or persistent config. The CLI flag has highest priority, then `AGENT_TOOLS`, then `~/.sif/sif-agent.json`.
+
+The default tool set is:
+
+```text
+bash,read,edit,write,sleep,serve,context
+```
+
+Available tools:
+
+| Tool | Description |
+|------|-------------|
+| `bash` | Execute safe shell commands such as `ls`, `cat`, `grep`, and `find` |
+| `read` | Read file contents |
+| `edit` | Edit files by replacing exact text |
+| `write` | Create or overwrite files |
+| `sleep` | Pause briefly before continuing or retrying |
+| `serve` | Start a local static HTTP server for a directory |
+| `context` | Enable `ctx_index`, `ctx_search`, `ctx_read`, and `ctx_stats` |
+| `diagnostics` | Inspect sif configuration, `AGENT_` environment variables, and chat history |
+
+```bash
+# Use the default tool set explicitly
+sif --tools bash,read,edit,write,sleep,serve,context
+
+# Add runtime diagnostics for this session
+sif --tools bash,read,edit,write,sleep,serve,context,diagnostics
+
+# Enable tools through the environment
+export AGENT_TOOLS=bash,read,edit,write,context,diagnostics
+sif
+
+# Store tools persistently
+sif config --set TOOLS=bash,read,edit,write,context,diagnostics
+sif
+```
+
+When `context` is enabled, large local and MCP tool results are stored under `~/.sif/context/` and replaced in model context with a compact handle such as `ctx_abc123`. The model can then call `ctx_search` for focused snippets or `ctx_read` for a specific stored result.
+
+The `diagnostics` tool is for inspecting sif's runtime state only. It is not a debugger and does not launch, attach to, or manage .NET debug adapter sessions. There is also a legacy `debug` tool alias for the same diagnostics behavior.
+
+Tool calling is non-streaming: the model decides whether to call tools, then returns the final response. Thinking and reasoning display works for OpenAI o-series models and Qwen3.x models via vLLM.
+
+## Configuration
 
 ```bash
 # Show current configuration
 sif config
 
-# Set persistent config values
-sif config --set MODEL=qwen3.6-27b-autoround
-sif config --set BASE_URL=http://100.118.58.55:8020/v1
+# Set persistent values
+sif config --set BASE_URL=http://localhost:11434/v1
+sif config --set MODEL=llama3.2
+sif config --set TOOLS=bash,read,edit,write,context
+sif config --set THINKING_ENABLED=true
 ```
 
-### Skills
+Configuration is loaded from `~/.sif/sif-agent.json`, then overridden by environment variables, then overridden by CLI flags.
 
-sif loads skill files at startup and appends them to the system prompt. Use skills for reusable instructions that should apply when a request matches the skill description.
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `AGENT_BASE_URL` | OpenAI-compatible API base URL | `https://api.openai.com` |
+| `AGENT_API_KEY` | API key, optional for local models | - |
+| `AGENT_MODEL` | Model name | `gpt-4o` |
+| `AGENT_TOOLS` | Comma-separated list of tools | default tool set |
+| `AGENT_MAX_TOKENS` | Maximum output tokens | model default |
+| `AGENT_TEMPERATURE` | Sampling temperature | model default |
+| `AGENT_THINKING_ENABLED` | Enable model thinking or reasoning display | `false` |
+
+## CLI Reference
+
+| Flag | Description |
+|------|-------------|
+| `-m, --model` | Model name |
+| `-u, --base-url` | API base URL |
+| `-k, --api-key` | API key |
+| `-s, --system` | System prompt |
+| `-n, --no-stream` | Disable streaming output |
+| `--tools` | Enable tools, comma-separated |
+| `--thinking` | Enable model thinking or reasoning display |
+
+## Chat Commands
+
+During an interactive chat session:
+
+| Command | Description |
+|---------|-------------|
+| `/quit`, `/exit` | Exit the chat session |
+| `/clear` | Clear conversation history, keeping the system prompt |
+| `/sys <prompt>` | Change the system prompt |
+| `/context` | Show chat history and stored context summary |
+| `/context list` | List stored context entries |
+| `/context search <query>` | Search stored context entries |
+| `/context read <id> [query]` | Read a stored entry, optionally focused by query |
+| `/context delete <id>` | Delete a stored context entry |
+| `/context drop <count>` | Remove recent non-system chat messages |
+| `/context clear-history` | Clear conversation history, keeping the system prompt |
+| `/context clear-store` | Delete stored context entries for this session |
+| `/context clear all` | Clear both chat history and stored context |
+| `/vscode` | Show detected VS Code terminal/editor context |
+| `/help` | Show help and options |
+
+## VS Code Context
+
+When `sif` runs inside a VS Code integrated terminal, it detects that environment automatically. VS Code does not expose the active editor or selection to terminal child processes by default, so the companion extension writes live editor context to a small JSON file and exposes it through `SIF_VSCODE_CONTEXT_FILE` for new integrated terminals.
+
+| Variable | Description |
+|----------|-------------|
+| `SIF_VSCODE_CONTEXT_FILE` | JSON file containing live editor context |
+| `SIF_VSCODE_FILE` | Active editor file path or `file://` URI |
+| `SIF_VSCODE_LINE` | Active cursor line number |
+| `SIF_VSCODE_COLUMN` | Active cursor column number |
+| `SIF_VSCODE_SELECTED_TEXT` | Current selected text |
+| `SIF_VSCODE_SELECTED_TEXT_B64` | Current selected text as UTF-8 base64 |
+
+Use `/vscode` in chat to inspect what `sif` can see.
+
+The VS Code extension lives in `sif.vscode/`. For local development, open the repository in VS Code and run the extension host with that folder as the extension development path. The `sif: Start Chat With Editor Context` command opens a `sif` terminal and keeps the context file updated as the active editor, cursor, or selection changes. Regular integrated terminals opened after the extension activates also receive `SIF_VSCODE_CONTEXT_FILE`.
+
+## Skills
+
+`sif` loads skill files at startup and appends them to the system prompt. Use skills for reusable instructions that should apply when a request matches the skill description.
 
 Supported locations:
 
@@ -129,91 +189,23 @@ Supported file layouts:
 
 Skill files are plain markdown. Frontmatter such as `name` and `description` is allowed and is passed through to the model as part of the skill content.
 
-### Options
-
-| Flag                 | Description                    |
-|----------------------|--------------------------------|
-| `-m, --model`        | Model name                     |
-| `-u, --base-url`     | API base URL                   |
-| `-k, --api-key`      | API key                        |
-| `-s, --system`       | System prompt                  |
-| `-n, --no-stream`    | Disable streaming output       |
-| `--tools`            | Enable tools: bash,edit,read,write,sleep,serve,context,diagnostics |
-| `--thinking`         | Enable model thinking/reasoning (true/false) |
-
-## Environment Variables
-
-| Variable           | Description                              | Default              |
-|--------------------|------------------------------------------|----------------------|
-| `AGENT_BASE_URL`   | OpenAI-compatible API base URL           | `https://api.openai.com` |
-| `AGENT_API_KEY`    | API key (optional for local models)      | -                    |
-| `AGENT_MODEL`      | Model name to use                        | `gpt-4o`             |
-| `AGENT_TOOLS`      | Comma-separated list of tools            | -                    |
-| `AGENT_MAX_TOKENS` | Maximum output tokens                    | model default        |
-| `AGENT_TEMPERATURE`| Sampling temperature (0-1)               | model default        |
-| `AGENT_THINKING_ENABLED` | Enable model thinking/reasoning      | `false`              |
-
-## VS Code Terminal Context
-
-When `sif` runs inside a VS Code integrated terminal, it detects that environment automatically. VS Code does not expose the active editor or selection to terminal child processes by default, but the companion extension writes live editor context to a small JSON file and exposes it through `SIF_VSCODE_CONTEXT_FILE` for new integrated terminals.
-
-| Variable | Description |
-|----------|-------------|
-| `SIF_VSCODE_CONTEXT_FILE` | JSON file containing live editor context, used by the VS Code extension |
-| `SIF_VSCODE_FILE` | Active editor file path or `file://` URI |
-| `SIF_VSCODE_LINE` | Active cursor line number |
-| `SIF_VSCODE_COLUMN` | Active cursor column number |
-| `SIF_VSCODE_SELECTED_TEXT` | Current selected text |
-| `SIF_VSCODE_SELECTED_TEXT_B64` | Current selected text as UTF-8 base64, useful for multiline selections |
-
-Use `/vscode` in chat to inspect what `sif` can see.
-
-The VS Code extension lives in `sif.vscode/`. For local development, open the repository in VS Code and run the extension host with that folder as the extension development path. The command `sif: Start Chat With Editor Context` opens a `sif` terminal and keeps the context file updated as the active editor, cursor, or selection changes. Regular integrated terminals opened after the extension activates also receive `SIF_VSCODE_CONTEXT_FILE`.
-
-## Chat Commands
-
-During a chat session, type these commands:
-
-| Command          | Description                              |
-|------------------|------------------------------------------|
-| `/quit` or `/exit` | Exit the chat session                   |
-| `/clear`             | Clear conversation history (keeps system prompt) |
-| `/sys <prompt>`     | Change the system prompt                 |
-| `/context`           | Show current chat history and stored context summary |
-| `/context list`      | List stored context entries for this session |
-| `/context search <query>` | Search stored context entries |
-| `/context read <id> [query]` | Read a stored entry, optionally focused by query |
-| `/context delete <id>` | Delete a stored context entry |
-| `/context drop <count>` | Remove recent non-system chat messages |
-| `/context clear` | Clear conversation history (keeps system prompt) |
-| `/context clear-history` | Clear conversation history (keeps system prompt) |
-| `/context clear-store` | Delete stored context entries for this session |
-| `/context clear all` | Clear both chat history and stored context |
-| `/vscode`            | Show detected VS Code terminal/editor context |
-| `/help`              | Show help and options                    |
-
 ## Examples
 
-### Your Local Model
+### Local Model
 
 ```bash
-# Set persistent config
 sif config --set BASE_URL=http://100.118.58.55:8020/v1
 sif config --set MODEL=qwen3.6-27b-autoround
-sif config --set TOOLS=bash,read,edit
-
-# Then just type:
+sif config --set TOOLS=bash,read,edit,write,context
 sif
 ```
 
 ### Ollama
 
 ```bash
-# One-time with arguments
-sif -u http://localhost:11434 -m llama3.2
+sif -u http://localhost:11434/v1 -m llama3.2
 
-# Or set via environment
-export AGENT_BASE_URL=http://localhost:11434
+export AGENT_BASE_URL=http://localhost:11434/v1
 export AGENT_MODEL=llama3.2
 sif
 ```
@@ -238,17 +230,18 @@ sif
 ### Thinking / Reasoning
 
 ```bash
-# Enable thinking for Qwen3.x via vLLM (enabled by default)
+# Enable thinking display for Qwen3.x via vLLM
 sif --thinking true -u http://100.118.58.55:8020/v1 -m qwen3.6-27b-autoround
 
-# Enable thinking for OpenAI o-series
+# Enable thinking display for OpenAI o-series
 sif --thinking true -m o3-mini
 
-# Persistent setting
+# Store the setting
 sif config --set THINKING_ENABLED=true
 ```
 
-**Note:** For Qwen3.x models, thinking is enabled by default on the server. The `--thinking` flag enables display of the reasoning output. When thinking is enabled on non-OpenAI models, non-streaming mode is used automatically (reasoning is a separate response field the SDK can't stream).
+For Qwen3.x models, thinking is enabled by default on the server. The `--thinking` flag enables display of the reasoning output. When thinking is enabled on non-OpenAI models, non-streaming mode is used automatically because reasoning is exposed as a separate response field that the SDK cannot stream.
+
 ## License
 
 MIT
