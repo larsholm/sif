@@ -1,7 +1,7 @@
 # sif agent
 
 <p align="center">
-  <img src="assets/sif.png" alt="Sif" width="720">
+  <img src="assets/sif.jpg" alt="Sif" width="720">
 </p>
 
 `sif` is a lightweight AI agent console tool written in C#. It works with OpenAI-compatible APIs, local model servers, and a small set of built-in tools for reading, editing, searching, serving, and inspecting local context.
