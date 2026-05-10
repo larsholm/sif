@@ -147,6 +147,9 @@ sif config
 # Run the setup wizard
 sif setup
 
+# Uninstall the global tool and companion VS Code extension
+sif uninstall
+
 # Set persistent values
 sif config --set BASE_URL=http://localhost:11434/v1
 sif config --set MODEL=llama3.2

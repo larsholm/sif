@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Diagnostics;
 using Spectre.Console;
 using ConsoleMarkdownRenderer;
 
@@ -65,6 +66,8 @@ internal class AgentApp
                 return await RunConfig(rest);
             case "setup":
                 return await RunSetup(rest);
+            case "uninstall":
+                return await RunUninstall(rest);
             default:
                 AnsiConsole.MarkupLine($"[yellow]Unknown command: {cmd.EscapeMarkup()}[/]");
                 ShowHelp();
@@ -82,6 +85,7 @@ internal class AgentApp
         AnsiConsole.MarkupLine("  [bold]complete[/]  Run a one-off prompt and exit");
         AnsiConsole.MarkupLine("  [bold]config[/]  Show or set configuration");
         AnsiConsole.MarkupLine("  [bold]setup[/]  Run the first-launch setup wizard");
+        AnsiConsole.MarkupLine("  [bold]uninstall[/]  Remove the global tool and VS Code extension");
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine("Options (all commands):");
         AnsiConsole.WriteLine("  -m, --model <name>     Model to use");
@@ -1071,6 +1075,110 @@ internal class AgentApp
 
         AnsiConsole.Write(table);
         return 0;
+    }
+
+    private static async Task<int> RunUninstall(string[] args)
+    {
+        var force = args.Any(arg => arg is "-y" or "--yes" or "--force");
+        var removeConfig = args.Any(arg => arg is "--config" or "--remove-config");
+
+        if (!force)
+        {
+            AnsiConsole.MarkupLine("[yellow]This will uninstall the sif global tool and remove the companion VS Code extension.[/]");
+            if (removeConfig)
+                AnsiConsole.MarkupLine($"[yellow]It will also delete {AgentConfig.ConfigPath.EscapeMarkup()}.[/]");
+
+            if (!AnsiConsole.Confirm("Continue?", false))
+            {
+                AnsiConsole.MarkupLine("[dim]Uninstall cancelled.[/]");
+                return 1;
+            }
+        }
+
+        RemoveVscodeExtension();
+
+        if (removeConfig)
+            RemoveConfigFile();
+
+        AnsiConsole.MarkupLine("[dim]Removing .NET global tool package sif.agent...[/]");
+        var result = await RunProcessAsync("dotnet", ["tool", "uninstall", "--global", "sif.agent"]);
+        if (result.ExitCode == 0)
+        {
+            if (!string.IsNullOrWhiteSpace(result.Output))
+                AnsiConsole.WriteLine(result.Output.Trim());
+            AnsiConsole.MarkupLine("[green]sif uninstalled.[/]");
+            return 0;
+        }
+
+        var combined = string.Join('\n', new[] { result.Output, result.Error }.Where(text => !string.IsNullOrWhiteSpace(text))).Trim();
+        AnsiConsole.MarkupLine("[red]Failed to uninstall sif.agent.[/]");
+        if (!string.IsNullOrWhiteSpace(combined))
+            AnsiConsole.WriteLine(combined);
+        return result.ExitCode == 0 ? 1 : result.ExitCode;
+    }
+
+    private static void RemoveVscodeExtension()
+    {
+        const string extensionPrefix = "sif.sif-vscode-";
+        var extensionsRoot = Environment.GetEnvironmentVariable("VSCODE_EXTENSIONS");
+        if (string.IsNullOrWhiteSpace(extensionsRoot))
+            extensionsRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".vscode", "extensions");
+
+        if (!Directory.Exists(extensionsRoot))
+            return;
+
+        foreach (var dir in Directory.EnumerateDirectories(extensionsRoot, extensionPrefix + "*"))
+        {
+            try
+            {
+                Directory.Delete(dir, recursive: true);
+                AnsiConsole.MarkupLine($"[dim]Removed VS Code extension: {dir.EscapeMarkup()}[/]");
+            }
+            catch (Exception ex)
+            {
+                AnsiConsole.MarkupLine($"[yellow]Warning:[/] Could not remove VS Code extension {dir.EscapeMarkup()}: {ex.Message.EscapeMarkup()}");
+            }
+        }
+    }
+
+    private static void RemoveConfigFile()
+    {
+        try
+        {
+            if (File.Exists(AgentConfig.ConfigPath))
+            {
+                File.Delete(AgentConfig.ConfigPath);
+                AnsiConsole.MarkupLine($"[dim]Removed config: {AgentConfig.ConfigPath.EscapeMarkup()}[/]");
+            }
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[yellow]Warning:[/] Could not remove config: {ex.Message.EscapeMarkup()}");
+        }
+    }
+
+    private static async Task<(int ExitCode, string Output, string Error)> RunProcessAsync(string fileName, string[] arguments)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = fileName,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        foreach (var argument in arguments)
+            psi.ArgumentList.Add(argument);
+
+        using var process = Process.Start(psi);
+        if (process == null)
+            return (1, "", $"Failed to start {fileName}.");
+
+        var outputTask = process.StandardOutput.ReadToEndAsync();
+        var errorTask = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        return (process.ExitCode, await outputTask, await errorTask);
     }
 
     private async Task<string?> ReadChatInputAsync(Lazy<List<string>> files, List<string> inputHistory)
