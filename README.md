@@ -82,7 +82,7 @@ Available tools:
 
 | Tool | Description |
 |------|-------------|
-| `bash` | Execute allowed shell commands. Uses Bash on Unix-like systems and PowerShell on Windows, with aliases such as `ls`, `cat`, `grep`/`Select-String`, `find`/`Get-ChildItem`, `dir`, and `type` |
+| `bash` | Execute allowed shell commands. Uses Bash on Unix-like systems and PowerShell on Windows. Unknown commands ask for interactive approval and can be allowed once, for the session, or always |
 | `read` | Read file contents |
 | `edit` | Edit files by replacing exact text |
 | `write` | Create or overwrite files |

@@ -13,6 +13,7 @@ internal class AgentConfig
     public int? MaxTokens { get; set; }
     public float? Temperature { get; set; }
     public string[]? Tools { get; set; }
+    public string[]? ShellAllowedCommands { get; set; }
     public bool? ThinkingEnabled { get; set; } = true;
     public Dictionary<string, McpServerConfig> McpServers { get; set; } = new();
     public Dictionary<string, string> Values { get; set; } = new();
@@ -78,6 +79,7 @@ internal class AgentConfig
                     config.MaxTokens = loaded.MaxTokens;
                     config.Temperature = loaded.Temperature;
                     config.Tools = loaded.Tools;
+                    config.ShellAllowedCommands = loaded.ShellAllowedCommands;
                     config.ThinkingEnabled = loaded.ThinkingEnabled;
                     config.McpServers = loaded.McpServers ?? new();
                     config.Values = loaded.Values ?? new();
@@ -155,6 +157,10 @@ internal class AgentConfig
             case "TOOLS":
             case "AGENT_TOOLS":
                 config.Tools = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                break;
+            case "SHELL_ALLOWED_COMMANDS":
+            case "AGENT_SHELL_ALLOWED_COMMANDS":
+                config.ShellAllowedCommands = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
                 break;
         }
     }

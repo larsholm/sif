@@ -14,6 +14,9 @@ namespace sif.agent;
 /// </summary>
 internal static class ToolRegistry
 {
+    private static readonly HashSet<string> SessionAllowedShellCommands = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly object SessionAllowedShellCommandsLock = new();
+
     public static List<OpenAI.Chat.ChatTool> GetTools(string[] enabled)
     {
         var tools = new List<OpenAI.Chat.ChatTool>();
@@ -482,7 +485,7 @@ internal static class ToolRegistry
 
         var firstWord = GetFirstCommandWord(command);
         var allowed = GetAllowedShellCommands();
-        if (!allowed.Contains(firstWord) && !allowed.Contains(Path.GetFileNameWithoutExtension(firstWord)))
+        if (!IsShellCommandAllowed(firstWord, allowed) && !PromptToAllowShellCommand(firstWord, command))
             return $"Error: Command '{firstWord}' not allowed.";
 
         try
@@ -583,7 +586,7 @@ internal static class ToolRegistry
         {
             foreach (var command in new[]
             {
-                "dir", "type", "findstr", "where", "cls", "ver", "vol", "path", "setx",
+                "dir", "type", "systeminfo", "findstr", "where", "cls", "ver", "vol", "path", "setx",
                 "copy", "xcopy", "robocopy", "move", "del", "erase", "ren", "rename", "rmdir",
                 "md", "rd", "attrib", "icacls", "takeown", "fc", "comp", "certutil",
                 "tasklist", "taskkill", "sc", "net", "netsh", "ipconfig", "arp", "route",
@@ -605,6 +608,91 @@ internal static class ToolRegistry
         }
 
         return allowed;
+    }
+
+    private static bool IsShellCommandAllowed(string firstWord, HashSet<string> builtInAllowed)
+    {
+        if (string.IsNullOrWhiteSpace(firstWord))
+            return false;
+
+        var extensionless = Path.GetFileNameWithoutExtension(firstWord);
+        if (builtInAllowed.Contains(firstWord) || builtInAllowed.Contains(extensionless))
+            return true;
+
+        lock (SessionAllowedShellCommandsLock)
+        {
+            if (SessionAllowedShellCommands.Contains(firstWord) ||
+                SessionAllowedShellCommands.Contains(extensionless))
+            {
+                return true;
+            }
+        }
+
+        var config = AgentConfig.Load();
+        return config.ShellAllowedCommands?.Any(command =>
+            string.Equals(command, firstWord, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(command, extensionless, StringComparison.OrdinalIgnoreCase)) == true;
+    }
+
+    private static bool PromptToAllowShellCommand(string firstWord, string command)
+    {
+        if (Console.IsInputRedirected || Console.IsOutputRedirected)
+            return false;
+
+        var displayCommand = command.Length > 500 ? command[..500] + "..." : command;
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine($"[yellow]Command '{firstWord.EscapeMarkup()}' is not in the built-in allowlist.[/]");
+        AnsiConsole.MarkupLine("[dim]Full command:[/]");
+        AnsiConsole.MarkupLine(displayCommand.EscapeMarkup());
+
+        var choice = AnsiConsole.Prompt(
+            new SelectionPrompt<string>()
+                .Title("Allow this command?")
+                .AddChoices("Allow once", "Allow for this session", "Allow always", "Deny"));
+
+        if (choice == "Deny")
+            return false;
+
+        if (choice == "Allow for this session")
+            AddSessionAllowedShellCommand(firstWord);
+
+        if (choice == "Allow always")
+        {
+            AddSessionAllowedShellCommand(firstWord);
+            AddPersistedAllowedShellCommand(firstWord);
+        }
+
+        return true;
+    }
+
+    private static void AddSessionAllowedShellCommand(string command)
+    {
+        lock (SessionAllowedShellCommandsLock)
+        {
+            SessionAllowedShellCommands.Add(command);
+            var extensionless = Path.GetFileNameWithoutExtension(command);
+            if (!string.IsNullOrWhiteSpace(extensionless))
+                SessionAllowedShellCommands.Add(extensionless);
+        }
+    }
+
+    private static void AddPersistedAllowedShellCommand(string command)
+    {
+        var config = AgentConfig.Load();
+        var commands = new HashSet<string>(config.ShellAllowedCommands ?? [], StringComparer.OrdinalIgnoreCase)
+        {
+            command
+        };
+
+        var extensionless = Path.GetFileNameWithoutExtension(command);
+        if (!string.IsNullOrWhiteSpace(extensionless))
+            commands.Add(extensionless);
+
+        config.ShellAllowedCommands = commands
+            .OrderBy(item => item, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        config.Values["SHELL_ALLOWED_COMMANDS"] = string.Join(",", config.ShellAllowedCommands);
+        config.Save();
     }
 
     private static string CreateShellScript(string command, out ProcessStartInfo psi)

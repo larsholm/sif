@@ -1058,6 +1058,7 @@ internal class AgentApp
             ("AGENT_TEMPERATURE", "Temperature", config.Temperature?.ToString() ?? "default"),
             ("AGENT_THINKING_ENABLED", "Thinking", config.ThinkingEnabled?.ToString() ?? "default"),
             ("AGENT_TOOLS", "Tools", config.Tools is { Length: > 0 } ? string.Join(",", config.Tools) : "default"),
+            ("AGENT_SHELL_ALLOWED_COMMANDS", "Shell allowed commands", config.ShellAllowedCommands is { Length: > 0 } ? string.Join(",", config.ShellAllowedCommands) : "default"),
         };
 
         foreach (var (key, label, value) in sources)
