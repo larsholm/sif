@@ -7,7 +7,7 @@ namespace sif.agent;
 /// </summary>
 internal class AgentConfig
 {
-    public string BaseUrl { get; set; } = "http://100.118.58.55:8020/v1";
+    public string BaseUrl { get; set; } = "http://localhost:1234/v1";
     public string? ApiKey { get; set; }
     public string Model { get; set; } = "qwen3.6-27b-autoround";
     public int? MaxTokens { get; set; }
@@ -29,6 +29,8 @@ internal class AgentConfig
             return Path.Combine(configDir, ConfigFileName);
         }
     }
+
+    internal static bool ConfigFileExists => File.Exists(ConfigPath);
 
     /// <summary>
     /// Build config from optional overrides (command-line takes priority).

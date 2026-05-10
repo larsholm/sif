@@ -33,6 +33,8 @@ This downloads the latest `main` archive, builds the agent, and installs it as a
 
 The installer also installs the companion VS Code extension into `~/.vscode/extensions`. Set `VSCODE_EXTENSIONS=/path/to/extensions` before running the installer to target another VS Code-compatible extensions directory.
 
+On first launch, `sif` opens a setup wizard for the API base URL, optional API key, model, tools, and thinking/reasoning display. The wizard fetches available models from the configured endpoint when possible and falls back to manual model entry if the endpoint cannot be queried. Run `sif setup` any time to update those values.
+
 For local development from a checked-out repository:
 
 ```bash
@@ -130,6 +132,9 @@ Supported `Type` values are `stdio`, `http`, `streamableHttp`, `streamable-http`
 ```bash
 # Show current configuration
 sif config
+
+# Run the setup wizard
+sif setup
 
 # Set persistent values
 sif config --set BASE_URL=http://localhost:11434/v1

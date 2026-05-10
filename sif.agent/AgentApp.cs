@@ -63,6 +63,8 @@ internal class AgentApp
                 return await RunComplete(rest);
             case "config":
                 return await RunConfig(rest);
+            case "setup":
+                return await RunSetup(rest);
             default:
                 AnsiConsole.MarkupLine($"[yellow]Unknown command: {cmd.EscapeMarkup()}[/]");
                 ShowHelp();
@@ -79,6 +81,7 @@ internal class AgentApp
         AnsiConsole.MarkupLine("  (no args)     Start an interactive chat session");
         AnsiConsole.MarkupLine("  [bold]complete[/]  Run a one-off prompt and exit");
         AnsiConsole.MarkupLine("  [bold]config[/]  Show or set configuration");
+        AnsiConsole.MarkupLine("  [bold]setup[/]  Run the first-launch setup wizard");
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine("Options (all commands):");
         AnsiConsole.WriteLine("  -m, --model <name>     Model to use");
@@ -183,6 +186,9 @@ internal class AgentApp
     private async Task<int> RunChat(string[] args)
     {
         var opts = ParseArgs(args);
+        if (ShouldRunFirstLaunchSetup(opts))
+            await RunSetupWizard(firstLaunch: true);
+
         var config = AgentConfig.Build(opts.BaseUrl, opts.ApiKey, opts.Model, opts.Temperature, opts.MaxTokens);
         if (opts.Thinking.HasValue)
             config.ThinkingEnabled = opts.Thinking;
@@ -787,23 +793,254 @@ internal class AgentApp
         return 0;
     }
 
+    private static async Task<int> RunSetup(string[] args)
+    {
+        try
+        {
+            await RunSetupWizard(firstLaunch: false);
+            return 0;
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("non-interactive", StringComparison.OrdinalIgnoreCase))
+        {
+            AnsiConsole.MarkupLine("[yellow]Error:[/] The setup wizard requires an interactive terminal.");
+            AnsiConsole.MarkupLine("[dim]Use `sif config --set KEY=value` to configure sif from a script.[/]");
+            return 1;
+        }
+    }
+
+    private static bool ShouldRunFirstLaunchSetup(CliArgs opts)
+    {
+        if (AgentConfig.ConfigFileExists)
+            return false;
+
+        if (Console.IsInputRedirected)
+            return false;
+
+        if (!string.IsNullOrWhiteSpace(opts.BaseUrl) ||
+            !string.IsNullOrWhiteSpace(opts.Model) ||
+            !string.IsNullOrWhiteSpace(opts.ApiKey) ||
+            opts.Tools is { Length: > 0 } ||
+            opts.Thinking.HasValue ||
+            opts.Temperature.HasValue ||
+            opts.MaxTokens.HasValue)
+        {
+            return false;
+        }
+
+        return !HasAgentEnvironmentOverrides();
+    }
+
+    private static bool HasAgentEnvironmentOverrides()
+    {
+        string[] keys =
+        [
+            "AGENT_BASE_URL",
+            "AGENT_API_KEY",
+            "AGENT_MODEL",
+            "AGENT_TOOLS",
+            "AGENT_MAX_TOKENS",
+            "AGENT_TEMPERATURE",
+            "AGENT_THINKING_ENABLED"
+        ];
+
+        return keys.Any(key => !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(key)));
+    }
+
+    private static async Task RunSetupWizard(bool firstLaunch)
+    {
+        var config = AgentConfig.Load();
+
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine(firstLaunch
+            ? "[green]Welcome to sif.[/] Let's set up your model connection."
+            : "[green]sif setup[/]");
+        AnsiConsole.MarkupLine($"[dim]Configuration will be saved to {AgentConfig.ConfigPath.EscapeMarkup()}[/]\n");
+
+        var baseUrl = AnsiConsole.Prompt(
+            new TextPrompt<string>("API base URL")
+                .DefaultValue(config.BaseUrl)
+                .Validate(value =>
+                {
+                    if (Uri.TryCreate(value.Trim(), UriKind.Absolute, out var uri) &&
+                        (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+                    {
+                        return ValidationResult.Success();
+                    }
+
+                    return ValidationResult.Error("[red]Enter an absolute http or https URL.[/]");
+                }));
+
+        var apiKey = AnsiConsole.Prompt(
+            new TextPrompt<string>("API key [dim](leave blank for local models)[/]")
+                .AllowEmpty()
+                .Secret());
+
+        var model = await PromptForModelAsync(baseUrl, apiKey, config.Model);
+
+        var tools = AnsiConsole.Prompt(
+            new TextPrompt<string>("Tools")
+                .DefaultValue(config.Tools is { Length: > 0 }
+                    ? string.Join(",", config.Tools)
+                    : "bash,read,edit,write,sleep,serve,context")
+                .Validate(value => string.IsNullOrWhiteSpace(value)
+                    ? ValidationResult.Error("[red]Enter at least one tool, or rerun with --tools for a custom set.[/]")
+                    : ValidationResult.Success()));
+
+        var thinking = AnsiConsole.Confirm("Show model thinking/reasoning when the backend exposes it?", config.ThinkingEnabled ?? true);
+
+        config.BaseUrl = baseUrl.Trim().TrimEnd('/');
+        config.Model = model.Trim();
+        config.ApiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey;
+        config.Tools = tools.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        config.ThinkingEnabled = thinking;
+
+        config.Values["BASE_URL"] = config.BaseUrl;
+        config.Values["MODEL"] = config.Model;
+        config.Values["TOOLS"] = string.Join(",", config.Tools);
+        config.Values["THINKING_ENABLED"] = thinking.ToString().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(config.ApiKey))
+            config.Values.Remove("API_KEY");
+        else
+            config.Values["API_KEY"] = config.ApiKey;
+
+        config.Save();
+
+        AnsiConsole.MarkupLine("\n[green]Configuration saved.[/]");
+        AnsiConsole.MarkupLine("[dim]Run `sif config` to review or `sif setup` to change these values later.[/]\n");
+    }
+
+    private static async Task<string> PromptForModelAsync(string baseUrl, string apiKey, string currentModel)
+    {
+        var models = await FetchModelIdsAsync(baseUrl, apiKey);
+        if (models.Count == 0)
+        {
+            AnsiConsole.MarkupLine("[yellow]Could not fetch models from the endpoint; enter the model name manually.[/]");
+            return PromptForManualModel(currentModel);
+        }
+
+        const string manualChoice = "Enter manually...";
+        var choices = models
+            .OrderBy(model => string.Equals(model, currentModel, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .ThenBy(model => model, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        choices.Add(manualChoice);
+
+        var selected = AnsiConsole.Prompt(
+            new SelectionPrompt<string>()
+                .Title("Model")
+                .PageSize(12)
+                .AddChoices(choices));
+
+        return selected == manualChoice
+            ? PromptForManualModel(currentModel)
+            : selected;
+    }
+
+    private static string PromptForManualModel(string currentModel)
+    {
+        return AnsiConsole.Prompt(
+            new TextPrompt<string>("Model name")
+                .DefaultValue(currentModel)
+                .Validate(value => string.IsNullOrWhiteSpace(value)
+                    ? ValidationResult.Error("[red]Model name is required.[/]")
+                    : ValidationResult.Success()));
+    }
+
+    private static async Task<List<string>> FetchModelIdsAsync(string baseUrl, string apiKey)
+    {
+        using var http = new HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(8)
+        };
+
+        if (!string.IsNullOrWhiteSpace(apiKey))
+            http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
+
+        foreach (var url in GetModelEndpointCandidates(baseUrl))
+        {
+            try
+            {
+                using var response = await http.GetAsync(url);
+                if (!response.IsSuccessStatusCode)
+                    continue;
+
+                await using var stream = await response.Content.ReadAsStreamAsync();
+                using var doc = await JsonDocument.ParseAsync(stream);
+                if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+                    continue;
+
+                var models = data.EnumerateArray()
+                    .Select(item => item.TryGetProperty("id", out var id) ? id.GetString() : null)
+                    .Where(id => !string.IsNullOrWhiteSpace(id))
+                    .Select(id => id!)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (models.Count > 0)
+                    return models;
+            }
+            catch
+            {
+                // Ignore endpoint probe failures; the wizard falls back to manual entry.
+            }
+        }
+
+        return new List<string>();
+    }
+
+    private static IEnumerable<string> GetModelEndpointCandidates(string baseUrl)
+    {
+        var trimmed = baseUrl.Trim().TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(trimmed))
+            yield break;
+
+        yield return $"{trimmed}/models";
+
+        if (Uri.TryCreate(trimmed, UriKind.Absolute, out var uri))
+        {
+            var path = uri.AbsolutePath.TrimEnd('/');
+            if (!path.EndsWith("/v1", StringComparison.OrdinalIgnoreCase))
+            {
+                var builder = new UriBuilder(uri)
+                {
+                    Path = string.IsNullOrWhiteSpace(path) || path == "/"
+                        ? "/v1/models"
+                        : $"{path}/v1/models",
+                    Query = ""
+                };
+                yield return builder.Uri.ToString();
+            }
+        }
+    }
+
     private async Task<int> RunConfig(string[] args)
     {
         var config = AgentConfig.Load();
 
-        foreach (var arg in args)
+        for (var i = 0; i < args.Length; i++)
         {
+            var arg = args[i];
+            string? value = null;
+
             if (arg.StartsWith("-s=") || arg.StartsWith("--set="))
             {
-                var value = arg[(arg.StartsWith("-s=") ? 3 : 6)..];
-                var parts = value.Split('=', 2);
-                if (parts.Length == 2)
-                {
-                    config.Values[parts[0].Trim().ToUpperInvariant()] = parts[1];
-                    config.ApplyValue(parts[0], parts[1]);
-                    config.Save();
-                    AnsiConsole.MarkupLine("[green]Configuration updated.[/]\n");
-                }
+                value = arg[(arg.StartsWith("-s=") ? 3 : 6)..];
+            }
+            else if ((arg == "-s" || arg == "--set") && i + 1 < args.Length)
+            {
+                value = args[++i];
+            }
+
+            if (value == null)
+                continue;
+
+            var parts = value.Split('=', 2);
+            if (parts.Length == 2)
+            {
+                config.Values[parts[0].Trim().ToUpperInvariant()] = parts[1];
+                config.ApplyValue(parts[0], parts[1]);
+                config.Save();
+                AnsiConsole.MarkupLine("[green]Configuration updated.[/]\n");
             }
         }
 
