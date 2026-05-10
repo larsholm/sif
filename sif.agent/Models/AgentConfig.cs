@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace picoNET.agent;
+namespace sif.agent;
 
 /// <summary>
 /// Agent configuration loaded from environment variables, config file, or command-line overrides.
@@ -17,8 +17,8 @@ internal class AgentConfig
     public Dictionary<string, McpServerConfig> McpServers { get; set; } = new();
     public Dictionary<string, string> Values { get; set; } = new();
 
-    private const string ConfigFileName = "pico-agent.json";
-    private const string ConfigDirName = ".pico";
+    private const string ConfigFileName = "sif-agent.json";
+    private const string ConfigDirName = ".sif";
 
     internal static string ConfigPath
     {

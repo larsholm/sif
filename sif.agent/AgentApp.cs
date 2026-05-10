@@ -2,7 +2,7 @@ using System.Text;
 using Spectre.Console;
 using ConsoleMarkdownRenderer;
 
-namespace picoNET.agent;
+namespace sif.agent;
 
 /// <summary>
 /// Application entry point. Parses CLI arguments and dispatches to the right action.
@@ -71,9 +71,9 @@ internal class AgentApp
 
     private static void ShowHelp()
     {
-        AnsiConsole.MarkupLine("[green]pico[/] - AI agent for local OpenAI-compatible models");
+        AnsiConsole.MarkupLine("[green]sif[/] - AI agent for local OpenAI-compatible models");
         AnsiConsole.WriteLine();
-        AnsiConsole.WriteLine("Usage: pico [--tools bash,edit,read,write,sleep,serve,context,diagnostics] [--model name] [--base-url url]");
+        AnsiConsole.WriteLine("Usage: sif [--tools bash,edit,read,write,sleep,serve,context,diagnostics] [--model name] [--base-url url]");
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine("  (no args)     Start an interactive chat session");
         AnsiConsole.MarkupLine("  [bold]complete[/]  Run a one-off prompt and exit");
@@ -197,7 +197,7 @@ internal class AgentApp
         var client = new AgentClient(config, tools, mcpService);
         var skills = SkillStore.Load();
 
-        var header = $"[green]pico[/] - [dim]{config.Model} @ {config.BaseUrl}[/]";
+        var header = $"[green]sif[/] - [dim]{config.Model} @ {config.BaseUrl}[/]";
         if (tools?.Length > 0)
             header += $" [dim]tools: {string.Join(", ", tools)}[/]";
         if (skills.Count > 0)
@@ -642,8 +642,8 @@ internal class AgentApp
             { "serve", "Start a local static HTTP server for a directory" },
             { "context", "Store and search large tool results out-of-band" },
             { "ctx", "Store and search large tool results out-of-band" },
-            { "diagnostics", "Inspect pico agent configuration, environment, and chat history" },
-            { "debug", "Legacy alias for pico agent diagnostics; not a debugger" }
+            { "diagnostics", "Inspect sif agent configuration, environment, and chat history" },
+            { "debug", "Legacy alias for sif agent diagnostics; not a debugger" }
         };
 
         var toolList = tools.Select(t => descriptions.TryGetValue(t, out var d) ? d : t)
@@ -810,6 +810,8 @@ internal class AgentApp
 
     private async Task<string?> ReadChatInputAsync(Lazy<List<string>> files, List<string> inputHistory)
     {
+        const string PromptText = "> ";
+        const string PromptMarkup = "[blue]>[/] ";
         var sb = new StringBuilder();
         int cursor = 0;
         int historyIndex = inputHistory.Count;
@@ -822,12 +824,12 @@ internal class AgentApp
             
             // This is a simplified redraw that doesn't handle multi-line wrapping perfectly
             // but handles explicit newlines.
-            AnsiConsole.Write(new Markup("[blue]user>[/] "));
+            AnsiConsole.Write(new Markup(PromptMarkup));
             var lines = sb.ToString().Split('\n');
             for (int i = 0; i < lines.Length; i++)
             {
                 Console.Write(lines[i]);
-                if (i < lines.Length - 1) Console.Write("\n         "); // Offset for prompt
+                if (i < lines.Length - 1) Console.Write("\n" + new string(' ', PromptText.Length));
             }
 
             // Move cursor back to the correct position
@@ -844,7 +846,7 @@ internal class AgentApp
                 AnsiConsole.Cursor.MoveUp(totalLines - cursorLine);
             }
             Console.Write("\r");
-            for (int i = 0; i < cursorCol + 7; i++) Console.Write("\x1b[C"); // Move right (prompt is 7 chars "user> ")
+            for (int i = 0; i < cursorCol + PromptText.Length; i++) Console.Write("\x1b[C");
         }
 
         void SetInput(string text)
@@ -905,7 +907,7 @@ internal class AgentApp
         Console.Write("\u001b[?2004h");
         try
         {
-            AnsiConsole.Write(new Markup("[blue]user>[/] "));
+            AnsiConsole.Write(new Markup(PromptMarkup));
 
             while (true)
             {
@@ -933,7 +935,7 @@ internal class AgentApp
                         sb.Insert(cursor, '\n');
                         cursor++;
                         Console.WriteLine();
-                        Console.Write("        "); // Prompt indent
+                        Console.Write(new string(' ', PromptText.Length));
                         Redraw();
                         continue;
                     }
@@ -945,24 +947,9 @@ internal class AgentApp
                 {
                     if (cursor > 0)
                     {
-                        bool isNewline = sb[cursor - 1] == '\n';
                         sb.Remove(cursor - 1, 1);
                         cursor--;
-                        if (isNewline)
-                        {
-                            AnsiConsole.Cursor.MoveUp(1);
-                            Redraw();
-                        }
-                        else
-                        {
-                            Console.Write("\b \b");
-                            if (cursor < sb.Length)
-                            {
-                                var remaining = sb.ToString()[cursor..];
-                                Console.Write(remaining + " ");
-                                for (int i = 0; i <= remaining.Length; i++) Console.Write("\b");
-                            }
-                        }
+                        Redraw();
                     }
                     continue;
                 }
@@ -1088,20 +1075,7 @@ internal class AgentApp
                 {
                     sb.Insert(cursor, key.KeyChar);
                     cursor++;
-                    if (sb.ToString().Contains('\n'))
-                    {
-                        Redraw();
-                    }
-                    else
-                    {
-                        Console.Write(key.KeyChar);
-                        if (cursor < sb.Length)
-                        {
-                            var remaining = sb.ToString()[cursor..];
-                            Console.Write(remaining);
-                            for (int i = 0; i < remaining.Length; i++) Console.Write("\b");
-                        }
-                    }
+                    Redraw();
                 }
             }
         }

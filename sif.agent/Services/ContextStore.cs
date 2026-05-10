@@ -1,7 +1,7 @@
 using System.Text;
 using System.Text.Json;
 
-namespace picoNET.agent;
+namespace sif.agent;
 
 internal sealed record ContextEntry(
     string Id,
@@ -34,7 +34,7 @@ internal static class ContextStore
         get
         {
             var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            return Path.Combine(home, ".pico", "context", SessionId);
+            return Path.Combine(home, ".sif", "context", SessionId);
         }
     }
 

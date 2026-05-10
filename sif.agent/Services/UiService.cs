@@ -2,7 +2,7 @@ using ConsoleMarkdownRenderer;
 using ConsoleMarkdownRenderer.Styling;
 using Spectre.Console;
 
-namespace picoNET.agent;
+namespace sif.agent;
 
 internal static class UiService
 {

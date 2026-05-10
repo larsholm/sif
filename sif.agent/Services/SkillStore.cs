@@ -1,13 +1,13 @@
 using System.Text;
 
-namespace picoNET.agent;
+namespace sif.agent;
 
 internal sealed record SkillFile(string Name, string Path, string Content);
 
 internal static class SkillStore
 {
     private const string SkillsDirName = "skills";
-    private const string PicoDirName = ".pico";
+    private const string sifDirName = ".sif";
     private const string SkillFileName = "SKILL.md";
 
     public static IReadOnlyList<SkillFile> Load()
@@ -78,7 +78,7 @@ internal static class SkillStore
 
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         if (!string.IsNullOrWhiteSpace(home))
-            yield return Path.Combine(home, PicoDirName, SkillsDirName);
+            yield return Path.Combine(home, sifDirName, SkillsDirName);
     }
 
     private static IEnumerable<string> GetProjectSkillRoots(string startDirectory)
@@ -86,7 +86,7 @@ internal static class SkillStore
         var current = new DirectoryInfo(startDirectory);
         while (current != null)
         {
-            yield return Path.Combine(current.FullName, PicoDirName, SkillsDirName);
+            yield return Path.Combine(current.FullName, sifDirName, SkillsDirName);
             current = current.Parent;
         }
     }

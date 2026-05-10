@@ -6,7 +6,7 @@ using OpenAI;
 using Spectre.Console;
 using ConsoleMarkdownRenderer;
 
-namespace picoNET.agent;
+namespace sif.agent;
 
 /// <summary>
 /// Client wrapping the OpenAI SDK for chat completions.
@@ -402,7 +402,7 @@ internal class AgentClient
             "serve" => "start a local static HTTP server",
             "ctx_index" => "store large generated/pasted text",
             "ctx_stats" => "show context-store stats",
-            "diagnostics" => "inspect pico config/env/history",
+            "diagnostics" => "inspect sif config/env/history",
             "debug" => "legacy diagnostics alias",
             _ => "native tool"
         };

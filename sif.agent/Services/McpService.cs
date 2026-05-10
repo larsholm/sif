@@ -5,7 +5,7 @@ using ModelContextProtocol.Protocol;
 using OpenAI.Chat;
 using Spectre.Console;
 
-namespace picoNET.agent;
+namespace sif.agent;
 
 /// <summary>
 /// Manages connections to MCP (Model Context Protocol) servers.
@@ -68,7 +68,7 @@ internal class McpService : IDisposable, IAsyncDisposable
                 var transport = CreateTransport(name, config);
                 var client = await McpClient.CreateAsync(transport, new McpClientOptions
                 {
-                    ClientInfo = new Implementation { Name = "picoNET.agent", Version = "1.0.0" }
+                    ClientInfo = new Implementation { Name = "sif.agent", Version = "1.0.0" }
                 }, cancellationToken: cts.Token);
 
                 _clients[name] = client;

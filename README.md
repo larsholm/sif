@@ -1,18 +1,18 @@
-# picoNET agent
+# sif agent
 
 A lightweight AI agent console tool supporting local models via OpenAI-compatible APIs.
 
 ## Features
 
-- **Chat by default** — `pico` launches into interactive chat immediately
+- **Chat by default** — `sif` launches into interactive chat immediately
 - **Tool calling** — Enable tools for bash, file read/edit/write, sleep, and local static serving via `--tools`
 - **Context mode** — Large tool outputs are stored out-of-band and can be searched or read back by handle
-- **One-off completion** — Quick prompts from CLI or stdin with `pico complete`
+- **One-off completion** — Quick prompts from CLI or stdin with `sif complete`
 - **Local model support** — Works with any OpenAI-compatible endpoint (vLLM, Ollama, LM Studio, LiteLLM, etc.)
 - **Streaming output** — See responses as they're generated
 - **System prompts** — Set custom system instructions for your agent
-- **Skill files** — Add reusable markdown instructions under `.pico/skills` or `~/.pico/skills`
-- **Config management** — Persist settings in `~/.piconet/piconet-agent.json`
+- **Skill files** — Add reusable markdown instructions under `.sif/skills` or `~/.sif/skills`
+- **Config management** — Persist settings in `~/.sif/sif-agent.json`
 
 ## Prerequisites
 
@@ -22,11 +22,11 @@ A lightweight AI agent console tool supporting local models via OpenAI-compatibl
 ## Installation
 
 ```bash
-cd picoNET.agent
+cd sif.agent
 ./build.sh install
 ```
 
-This builds the project and installs it as a global .NET tool. The `pico` command will be available in your PATH.
+This builds the project and installs it as a global .NET tool. The `sif` command will be available in your PATH.
 
 ## Tools
 
@@ -41,23 +41,23 @@ Enable tool calling with `--tools` (comma-separated):
 | `sleep` | Pause briefly before continuing or retrying              |
 | `serve` | Start a local static HTTP server for a directory         |
 | `context` | Add `ctx_index`, `ctx_search`, `ctx_read`, and `ctx_stats` tools for large context |
-| `diagnostics` | Inspect pico agent configuration, AGENT_ environment variables, and chat history |
+| `diagnostics` | Inspect sif agent configuration, AGENT_ environment variables, and chat history |
 
 ```bash
 # Use the default tool set explicitly
-pico --tools bash,read,edit,write,context
+sif --tools bash,read,edit,write,context
 
-# Add pico runtime diagnostics when needed
-pico --tools bash,read,edit,write,context,diagnostics
+# Add sif runtime diagnostics when needed
+sif --tools bash,read,edit,write,context,diagnostics
 
 # Or set persistently
-pico config --set TOOLS=bash,read,edit,write,context
-pico
+sif config --set TOOLS=bash,read,edit,write,context
+sif
 ```
 
-When `context` is enabled, large local and MCP tool results are automatically stored under `~/.pico/context/` and replaced in the model context with a compact handle such as `ctx_abc123`. The model can then call `ctx_search` for focused snippets or `ctx_read` for a specific stored result.
+When `context` is enabled, large local and MCP tool results are automatically stored under `~/.sif/context/` and replaced in the model context with a compact handle such as `ctx_abc123`. The model can then call `ctx_search` for focused snippets or `ctx_read` for a specific stored result.
 
-The `diagnostics` tool is for inspecting pico's own runtime state. It is not a debugger and does not launch, attach to, or manage .NET debug adapter sessions.
+The `diagnostics` tool is for inspecting sif's own runtime state. It is not a debugger and does not launch, attach to, or manage .NET debug adapter sessions.
 
 **Note:** Tool calling is non-streaming (the model decides whether to use tools, then returns the final response). Thinking/reasoning display works for OpenAI o-series models and Qwen3.x models via vLLM.
 
@@ -67,62 +67,62 @@ The `diagnostics` tool is for inspecting pico's own runtime state. It is not a d
 
 ```bash
 # Start chat (default behavior)
-pico
+sif
 
 # With custom endpoint and model
-pico -u http://100.118.58.55:8020/v1 -m qwen3.6-27b-autoround
+sif -u http://100.118.58.55:8020/v1 -m qwen3.6-27b-autoround
 
 # With a system prompt
-pico -s "You are a helpful C# coding assistant."
+sif -s "You are a helpful C# coding assistant."
 
 # Without streaming (shows full response at once)
-pico --no-stream
+sif --no-stream
 ```
 
 ### One-off Completion
 
 ```bash
 # From command line
-pico complete "Explain async/await in C#"
+sif complete "Explain async/await in C#"
 
 # With custom endpoint and model
-pico complete "Write a Fibonacci function" -u http://100.118.58.55:8020/v1 -m qwen3.6-27b-autoround
+sif complete "Write a Fibonacci function" -u http://100.118.58.55:8020/v1 -m qwen3.6-27b-autoround
 
 # With system prompt
-pico complete "Explain closures" -s "Respond concisely in 2 sentences."
+sif complete "Explain closures" -s "Respond concisely in 2 sentences."
 
 # From stdin
-cat prompt.txt | pico complete -
+cat prompt.txt | sif complete -
 ```
 
 ### Configuration
 
 ```bash
 # Show current configuration
-pico config
+sif config
 
 # Set persistent config values
-pico config --set MODEL=qwen3.6-27b-autoround
-pico config --set BASE_URL=http://100.118.58.55:8020/v1
+sif config --set MODEL=qwen3.6-27b-autoround
+sif config --set BASE_URL=http://100.118.58.55:8020/v1
 ```
 
 ### Skills
 
-pico loads skill files at startup and appends them to the system prompt. Use skills for reusable instructions that should apply when a request matches the skill description.
+sif loads skill files at startup and appends them to the system prompt. Use skills for reusable instructions that should apply when a request matches the skill description.
 
 Supported locations:
 
 ```text
-./.pico/skills/
-../.pico/skills/        # parent directories are checked up to filesystem root
-~/.pico/skills/
+./.sif/skills/
+../.sif/skills/        # parent directories are checked up to filesystem root
+~/.sif/skills/
 ```
 
 Supported file layouts:
 
 ```text
-.pico/skills/my-skill.md
-.pico/skills/my-skill/SKILL.md
+.sif/skills/my-skill.md
+.sif/skills/my-skill/SKILL.md
 ```
 
 Skill files are plain markdown. Frontmatter such as `name` and `description` is allowed and is passed through to the model as part of the skill content.
@@ -178,24 +178,24 @@ During a chat session, type these commands:
 
 ```bash
 # Set persistent config
-pico config --set BASE_URL=http://100.118.58.55:8020/v1
-pico config --set MODEL=qwen3.6-27b-autoround
-pico config --set TOOLS=bash,read,edit
+sif config --set BASE_URL=http://100.118.58.55:8020/v1
+sif config --set MODEL=qwen3.6-27b-autoround
+sif config --set TOOLS=bash,read,edit
 
 # Then just type:
-pico
+sif
 ```
 
 ### Ollama
 
 ```bash
 # One-time with arguments
-pico -u http://localhost:11434 -m llama3.2
+sif -u http://localhost:11434 -m llama3.2
 
 # Or set via environment
 export AGENT_BASE_URL=http://localhost:11434
 export AGENT_MODEL=llama3.2
-pico
+sif
 ```
 
 ### LM Studio
@@ -203,7 +203,7 @@ pico
 ```bash
 export AGENT_BASE_URL=http://localhost:1234/v1
 export AGENT_MODEL=local-model
-pico
+sif
 ```
 
 ### LiteLLM Proxy
@@ -212,20 +212,20 @@ pico
 export AGENT_BASE_URL=http://localhost:4000
 export AGENT_API_KEY=your-key
 export AGENT_MODEL=gpt-4o
-pico
+sif
 ```
 
 ### Thinking / Reasoning
 
 ```bash
 # Enable thinking for Qwen3.x via vLLM (enabled by default)
-pico --thinking true -u http://100.118.58.55:8020/v1 -m qwen3.6-27b-autoround
+sif --thinking true -u http://100.118.58.55:8020/v1 -m qwen3.6-27b-autoround
 
 # Enable thinking for OpenAI o-series
-pico --thinking true -m o3-mini
+sif --thinking true -m o3-mini
 
 # Persistent setting
-pico config --set THINKING_ENABLED=true
+sif config --set THINKING_ENABLED=true
 ```
 
 **Note:** For Qwen3.x models, thinking is enabled by default on the server. The `--thinking` flag enables display of the reasoning output. When thinking is enabled on non-OpenAI models, non-streaming mode is used automatically (reasoning is a separate response field the SDK can't stream).

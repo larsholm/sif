@@ -13,18 +13,18 @@ primary
 lastDtbSucceeded
 
 [properties]
-AssemblyName=piconet-agent
+AssemblyName=sif-agent
 CommandLineArgsForDesignTimeEvaluation=-langversion:14.0 -define:TRACE
 CompilerGeneratedFilesOutputPath=
 MaxSupportedLangVersion=14.0
 ProjectAssetsFile=<PATH>obj/project.assets.json
-RootNamespace=picoNET.agent
+RootNamespace=sif.agent
 RunAnalyzers=
 RunAnalyzersDuringLiveAnalysis=
 SolutionPath=*Undefined*
 TargetFrameworkIdentifier=.NETCoreApp
-TargetPath=<PATH>bin/Debug/net10.0/piconet-agent.dll
-TargetRefPath=<PATH>obj/Debug/net10.0/ref/piconet-agent.dll
+TargetPath=<PATH>bin/Debug/net10.0/sif-agent.dll
+TargetRefPath=<PATH>obj/Debug/net10.0/ref/sif-agent.dll
 TemporaryDependencyNodeTargetIdentifier=net10.0
 
 [commandLineArguments]
@@ -44,8 +44,8 @@ TemporaryDependencyNodeTargetIdentifier=net10.0
 /debug:portable
 /filealign:512
 /optimize-
-/out:obj/Debug/net10.0/piconet-agent.dll
-/refout:obj/Debug/net10.0/refint/piconet-agent.dll
+/out:obj/Debug/net10.0/sif-agent.dll
+/refout:obj/Debug/net10.0/refint/sif-agent.dll
 /target:exe
 /warnaserror-
 /utf8output
@@ -60,8 +60,8 @@ Models/
  ChatMessage.cs
 obj/Debug/net10.0/
  .NETCoreApp,Version=v10.0.AssemblyAttributes.cs
- picoNET.agent.AssemblyInfo.cs
- picoNET.agent.GlobalUsings.g.cs
+ sif.agent.AssemblyInfo.cs
+ sif.agent.GlobalUsings.g.cs
 Program.cs
 Services/
  AgentClient.cs
@@ -294,4 +294,4 @@ Services/
 
 [analyzerConfigFiles]
 <DOTNET>/sdk/10.0.104/Sdks/Microsoft.NET.Sdk/analyzers/build/config/analysislevel_10_default.globalconfig
-obj/Debug/net10.0/picoNET.agent.GeneratedMSBuildEditorConfig.editorconfig
+obj/Debug/net10.0/sif.agent.GeneratedMSBuildEditorConfig.editorconfig

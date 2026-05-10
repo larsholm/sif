@@ -6,7 +6,7 @@ using System.Text.Json;
 using OpenAI;
 using Spectre.Console;
 
-namespace picoNET.agent;
+namespace sif.agent;
 
 /// <summary>
 /// Defines and executes tools available to the agent.
@@ -205,7 +205,7 @@ internal static class ToolRegistry
         {
             tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
                 "ctx_stats",
-                "Show local context store statistics for this pico session.",
+                "Show local context store statistics for this sif session.",
                 BinaryData.FromString("""
                     {
                         "type": "object",
@@ -232,7 +232,7 @@ internal static class ToolRegistry
     {
         return OpenAI.Chat.ChatTool.CreateFunctionTool(
             name,
-            "Get pico agent diagnostics only: configuration, AGENT_ environment variables, or current chat history. This is not a debugger and cannot launch, attach to, or manage .NET debug adapter sessions.",
+            "Get sif agent diagnostics only: configuration, AGENT_ environment variables, or current chat history. This is not a debugger and cannot launch, attach to, or manage .NET debug adapter sessions.",
             BinaryData.FromString("""
                 {
                     "type": "object",
@@ -372,8 +372,8 @@ internal static class ToolRegistry
         if (port == 0)
             port = GetFreeTcpPort(IPAddress.Loopback);
 
-        var logPath = Path.Combine(Path.GetTempPath(), $"pico_http_{port}_{Guid.NewGuid():N}.log");
-        var scriptPath = Path.Combine(Path.GetTempPath(), $"pico_http_{Guid.NewGuid():N}.sh");
+        var logPath = Path.Combine(Path.GetTempPath(), $"sif_http_{port}_{Guid.NewGuid():N}.log");
+        var scriptPath = Path.Combine(Path.GetTempPath(), $"sif_http_{Guid.NewGuid():N}.sh");
         var escapedPath = path.Replace("'", "'\"'\"'");
         var escapedLog = logPath.Replace("'", "'\"'\"'");
         var escapedBind = bind.Replace("'", "'\"'\"'");
@@ -459,7 +459,7 @@ internal static class ToolRegistry
 
         try
         {
-            var scriptPath = Path.Combine(Path.GetTempPath(), $"pico_bash_{Guid.NewGuid():N}.sh");
+            var scriptPath = Path.Combine(Path.GetTempPath(), $"sif_bash_{Guid.NewGuid():N}.sh");
             File.WriteAllText(scriptPath, "#!/bin/bash\n" + command);
             var chmod = Process.Start(new ProcessStartInfo("chmod", $"+x \"{scriptPath}\"") { UseShellExecute = false });
             if (chmod != null) chmod.WaitForExit();

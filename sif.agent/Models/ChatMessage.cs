@@ -1,4 +1,4 @@
-namespace picoNET.agent;
+namespace sif.agent;
 
 /// <summary>
 /// Represents a chat message in the conversation.
