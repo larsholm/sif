@@ -265,7 +265,7 @@ internal class AgentApp
                 }
                 else if (trimmed == "/context" || trimmed.StartsWith("/context "))
                 {
-                    HandleContextCommand(trimmed, history);
+                    HandleContextCommand(trimmed, history, tools);
                 }
                 else if (trimmed == "/vscode")
                 {
@@ -432,6 +432,7 @@ internal class AgentApp
         table.AddRow("[bold]/clear[/]", "Clear conversation history and keep the system prompt");
         table.AddRow("[bold]/sys <prompt>[/]", "Change the system prompt");
         table.AddRow("[bold]/context[/]", "Show chat history and stored context summary");
+        table.AddRow("[bold]/context full[/]", "Show full stored message contents sent before the next user message");
         table.AddRow("[bold]/context list[/]", "List stored context entries");
         table.AddRow("[bold]/context search <query>[/]", "Search stored context");
         table.AddRow("[bold]/context read <id> [[query]][/]", "Read a stored entry, optionally focused by query");
@@ -462,12 +463,12 @@ internal class AgentApp
         AnsiConsole.MarkupLine("[dim]Editor context is read from SIF_VSCODE_CONTEXT_FILE or SIF_VSCODE_FILE, SIF_VSCODE_LINE, SIF_VSCODE_COLUMN, SIF_VSCODE_SELECTED_TEXT, and SIF_VSCODE_SELECTED_TEXT_B64.[/]\n");
     }
 
-    private static void HandleContextCommand(string command, List<ChatMessage> history)
+    private static void HandleContextCommand(string command, List<ChatMessage> history, string[]? tools)
     {
         var rest = command.Length == "/context".Length ? "" : command["/context".Length..].Trim();
         if (string.IsNullOrWhiteSpace(rest) || rest.Equals("stats", StringComparison.OrdinalIgnoreCase))
         {
-            ShowContextSummary(history);
+            ShowContextSummary(history, tools);
             return;
         }
 
@@ -482,6 +483,10 @@ internal class AgentApp
                 break;
             case "list":
                 ShowContextEntries();
+                break;
+            case "messages":
+            case "full":
+                ShowModelMessages(history, full: true);
                 break;
             case "search":
                 if (string.IsNullOrWhiteSpace(arg))
@@ -525,7 +530,7 @@ internal class AgentApp
         }
     }
 
-    private static void ShowContextSummary(List<ChatMessage> history)
+    private static void ShowContextSummary(List<ChatMessage> history, string[]? tools)
     {
         var nonSystemMessages = history.Count(m => m.Role != "system");
         var chars = history.Sum(m => m.Content.Length);
@@ -539,10 +544,51 @@ internal class AgentApp
         table.AddColumn("Size");
         table.AddRow("Chat messages", history.Count.ToString("N0"), $"~{chars / 4:N0} tokens / {chars:N0} chars");
         table.AddRow("Non-system messages", nonSystemMessages.ToString("N0"), "");
+        table.AddRow("Configured tools", tools is { Length: > 0 } ? string.Join(", ", tools).EscapeMarkup() : "[dim]none[/]", "");
         table.AddRow("Stored context", entries.Count.ToString("N0"), $"{storedChars:N0} chars");
         table.AddRow("Store path", "", $"[dim]{ContextStore.GetRootPath().EscapeMarkup()}[/]");
         AnsiConsole.Write(table);
+        ShowModelMessages(history, full: false);
+        if (VscodeContext.IsRunningInVscodeTerminal())
+            AnsiConsole.MarkupLine("[dim]Note: current VS Code editor context is appended to the next user message when you send it. Use /vscode to inspect it.[/]");
+        AnsiConsole.MarkupLine("[dim]Use /context full to show full stored message contents. Tool schemas are also sent when tools are enabled.[/]");
         AnsiConsole.MarkupLine("[dim]Use /context help for management commands.[/]\n");
+    }
+
+    private static void ShowModelMessages(List<ChatMessage> history, bool full)
+    {
+        if (history.Count == 0)
+        {
+            AnsiConsole.MarkupLine("[dim]No chat messages are currently stored.[/]\n");
+            return;
+        }
+
+        var table = new Table();
+        table.Title(full ? "[green]Stored Model Messages[/]" : "[green]Stored Messages Sent Before Next User Message[/]");
+        table.AddColumn("#");
+        table.AddColumn("Role");
+        table.AddColumn("Chars");
+        table.AddColumn(full ? "Content" : "Preview");
+
+        for (var i = 0; i < history.Count; i++)
+        {
+            var message = history[i];
+            var content = full ? message.Content : Preview(message.Content, 220);
+            table.AddRow(
+                (i + 1).ToString("N0"),
+                message.Role.EscapeMarkup(),
+                message.Content.Length.ToString("N0"),
+                content.EscapeMarkup());
+        }
+
+        AnsiConsole.Write(table);
+        AnsiConsole.WriteLine();
+    }
+
+    private static string Preview(string text, int maxChars)
+    {
+        var normalized = text.Replace("\r\n", "\n").Replace('\r', '\n').Replace('\n', ' ');
+        return normalized.Length <= maxChars ? normalized : normalized[..maxChars] + "...";
     }
 
     private static void ShowContextEntries()

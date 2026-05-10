@@ -191,6 +191,7 @@ During an interactive chat session:
 | `/clear` | Clear conversation history, keeping the system prompt |
 | `/sys <prompt>` | Change the system prompt |
 | `/context` | Show chat history and stored context summary |
+| `/context full` | Show full stored message contents sent before the next user message |
 | `/context list` | List stored context entries |
 | `/context search <query>` | Search stored context entries |
 | `/context read <id> [query]` | Read a stored entry, optionally focused by query |
