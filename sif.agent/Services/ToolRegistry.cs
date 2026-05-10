@@ -579,7 +579,7 @@ internal static class ToolRegistry
             "touch", "tee", "split", "join", "paste", "comm", "fold",
             "fmt", "pr", "xargs", "md5sum", "sha1sum", "sha256sum",
             "base64", "xxd", "od", "hexdump", "dd", "jq", "patch",
-            "cmp", "diff3", "sdiff"
+            "cmp", "diff3", "sdiff", "uname"
         };
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
@@ -601,6 +601,23 @@ internal static class ToolRegistry
                 "Expand-Archive", "Compress-Archive", "Invoke-WebRequest", "Invoke-RestMethod",
                 "iwr", "irm", "gc", "sc", "gci", "gi", "gp", "pwd", "sls", "sort",
                 "measure", "ft", "fl", "rvpa", "sp", "ni", "ri", "mi", "ren", "cp", "mv", "rm"
+            })
+            {
+                allowed.Add(command);
+            }
+        }
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        {
+            foreach (var command in new[]
+            {
+                "sw_vers", "system_profiler", "sysctl", "scutil", "networksetup",
+                "ifconfig", "route", "netstat", "lsof", "launchctl", "defaults",
+                "plutil", "osascript", "open", "say", "mdfind", "mdls", "diskutil",
+                "hdiutil", "ioreg", "pmset", "softwareupdate", "xcode-select",
+                "xcrun", "clang", "clang++", "codesign", "security", "dscl",
+                "dscacheutil", "spctl", "csrutil", "pbcopy", "pbpaste", "screencapture",
+                "caffeinate", "brew"
             })
             {
                 allowed.Add(command);
