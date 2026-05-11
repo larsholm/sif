@@ -51,7 +51,7 @@ internal static class ToolRegistry
                         "type": "object",
                         "properties": {
                             "command": { "type": "string", "description": "The shell command to execute" },
-                            "limit": { "type": "integer", "description": "Max output characters (default 8000)" }
+                            "limit": { "type": "integer", "description": "Max output characters (default 24000, max 120000)" }
                         },
                         "required": ["command"]
                     }
@@ -70,7 +70,7 @@ internal static class ToolRegistry
                         "properties": {
                             "path": { "type": "string", "description": "Path to the file to read" },
                             "skiplines": { "type": "integer", "description": "Number of lines to skip from the start (default 0)" },
-                            "limit": { "type": "integer", "description": "Max lines to read (default 200)" }
+                            "limit": { "type": "integer", "description": "Max lines to read (default 1000, max 5000)" }
                         },
                         "required": ["path"]
                     }
@@ -197,7 +197,7 @@ internal static class ToolRegistry
                         "properties": {
                             "id": { "type": "string", "description": "Context id returned by ctx_index or automatic context storage" },
                             "query": { "type": "string", "description": "Optional search focus within this context blob" },
-                            "maxChars": { "type": "integer", "description": "Maximum characters to return (default 6000)" }
+                            "maxChars": { "type": "integer", "description": "Maximum characters to return (default 32000, max 160000)" }
                         },
                         "required": ["id"]
                     }
@@ -282,7 +282,7 @@ internal static class ToolRegistry
         var root = doc.RootElement;
         var id = root.GetProperty("id").GetString() ?? "";
         var query = root.TryGetProperty("query", out var q) ? q.GetString() : null;
-        var maxChars = root.TryGetProperty("maxChars", out var m) ? m.GetInt32() : 6000;
+        var maxChars = root.TryGetProperty("maxChars", out var m) ? m.GetInt32() : 32000;
         return ContextStore.Read(id, query, maxChars);
     }
 
@@ -427,7 +427,8 @@ internal static class ToolRegistry
         using var doc = JsonDocument.Parse(argsJson);
         var root = doc.RootElement;
         var command = root.GetProperty("command").GetString() ?? "";
-        var limit = root.TryGetProperty("limit", out var l) ? l.GetInt32() : 8000;
+        var limit = root.TryGetProperty("limit", out var l) ? l.GetInt32() : 24000;
+        limit = Math.Clamp(limit, 1000, 120000);
 
         var firstWord = GetFirstCommandWord(command);
         var allowed = GetAllowedShellCommands();
@@ -707,7 +708,8 @@ internal static class ToolRegistry
         var root = doc.RootElement;
         var path = ResolvePath(root.GetProperty("path").GetString() ?? "");
         var skiplines = root.TryGetProperty("skiplines", out var s) ? s.GetInt32() : 0;
-        var limit = root.TryGetProperty("limit", out var l) ? l.GetInt32() : 200;
+        var limit = root.TryGetProperty("limit", out var l) ? l.GetInt32() : 1000;
+        limit = Math.Clamp(limit, 1, 5000);
 
         if (!File.Exists(path))
             return $"Error: File not found: {path}";

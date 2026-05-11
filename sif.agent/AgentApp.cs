@@ -1987,8 +1987,8 @@ internal class CliArgs
 
 internal static class VscodeContext
 {
-    private const int MaxInlineTextChars = 6000;
-    private const int MaxLineChars = 1000;
+    private const int MaxInlineTextChars = 24000;
+    private const int MaxLineChars = 4000;
 
     private static string? _lastEditorContext = null;
 

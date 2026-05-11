@@ -108,7 +108,7 @@ sif config --set TOOLS=bash,read,edit,write,context,diagnostics
 sif
 ```
 
-When `context` is enabled, large local and MCP tool results are stored under `~/.sif/context/` and replaced in model context with a compact handle such as `ctx_abc123`. The model can then call `ctx_search` for focused snippets or `ctx_read` for a specific stored result.
+When `context` is enabled, large local and MCP tool results are stored under `~/.sif/context/` and replaced in model context with a compact handle such as `ctx_abc123`. The model can then call `ctx_search` for focused snippets or `ctx_read` for a specific stored result. Defaults are sized for large local-model contexts: `read` returns up to 1,000 lines by default, shell output returns up to 24,000 characters, `ctx_read` returns up to 32,000 characters, and automatic context storage starts above 60,000 characters.
 
 When chat history grows past the compaction threshold, `sif` summarizes older messages, stores the raw compacted history and summary in the context store, and keeps the system prompt plus the most recent messages in active history. On startup, `sif` probes the configured `/models` endpoint for context-window metadata such as `context_length`, `context_window`, `max_model_len`, or `n_ctx`. If the provider reports a context window and the threshold is still the built-in default, compaction starts at about 60% of that window. Set `AGENT_COMPACTION_THRESHOLD` or `sif config --set COMPACTION_THRESHOLD=<tokens>` to override it, or set it to `0` to disable compaction.
 

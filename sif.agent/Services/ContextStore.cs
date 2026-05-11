@@ -23,7 +23,7 @@ internal sealed record ContextSearchHit(
 /// </summary>
 internal static class ContextStore
 {
-    public const int AutoStoreThreshold = 12000;
+    public const int AutoStoreThreshold = 60000;
     private const int PreviewLength = 800;
     private static readonly object Lock = new();
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = false };
@@ -104,7 +104,7 @@ internal static class ContextStore
         return sb.ToString().TrimEnd();
     }
 
-    public static string Read(string id, string? query = null, int maxChars = 6000)
+    public static string Read(string id, string? query = null, int maxChars = 32000)
     {
         var entry = LoadEntries().FirstOrDefault(e => e.Id == id);
         if (entry == null)
@@ -113,7 +113,7 @@ internal static class ContextStore
             return $"Error: context blob missing for {id}: {entry.Path}";
 
         var content = File.ReadAllText(entry.Path);
-        maxChars = Math.Clamp(maxChars, 500, 50000);
+        maxChars = Math.Clamp(maxChars, 500, 160000);
 
         if (!string.IsNullOrWhiteSpace(query))
         {
@@ -238,7 +238,7 @@ internal static class ContextStore
             }
         }
 
-        var snippet = score > 0 ? MakeSnippet(content, terms, 900) : "";
+        var snippet = score > 0 ? MakeSnippet(content, terms, 1800) : "";
         return new ContextSearchHit(entry.Id, entry.Source, entry.Length, score, snippet);
     }
 

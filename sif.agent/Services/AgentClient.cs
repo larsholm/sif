@@ -116,15 +116,15 @@ internal class AgentClient
 
     /// <summary>
     /// Generate a focused summary of arbitrary content using the LLM.
-    /// Capped at 2000 characters.
+    /// Capped at 4000 characters.
     /// </summary>
     public async Task<string> SummarizeAsync(string content, string focus)
     {
-        var systemPrompt = $"Summarize the following content, focusing on {focus}. Be concise but thorough. Limit your response to 2000 characters.";
-        var prompt = content.Length > 40000 ? content[..40000] : content;
+        var systemPrompt = $"Summarize the following content, focusing on {focus}. Be concise but thorough. Limit your response to 4000 characters.";
+        var prompt = content.Length > 80000 ? content[..80000] : content;
 
         var (response, _) = await CompleteAsync(prompt, systemPrompt);
-        return response.Length > 2000 ? response[..2000] : response;
+        return response.Length > 4000 ? response[..4000] : response;
     }
 
     /// <summary>
@@ -256,14 +256,14 @@ internal class AgentClient
                         }
 
                         // Display tool result
-                        if (toolResult.Length > 4000)
-                            AnsiConsole.MarkupLine($"[dim]Result: {toolResult.Substring(0, 4000).EscapeMarkup()}... (truncated)[/]");
+                        if (toolResult.Length > 8000)
+                            AnsiConsole.MarkupLine($"[dim]Result: {toolResult.Substring(0, 8000).EscapeMarkup()}... (truncated)[/]");
                         else
                             AnsiConsole.MarkupLine($"[dim]Result: {toolResult.EscapeMarkup()}[/]");
 
                         // Truncate long results for the model
-                        if (toolResult.Length > 16000)
-                            toolResult = toolResult.Substring(0, 16000) + "\n... (truncated)";
+                        if (toolResult.Length > 120000)
+                            toolResult = toolResult.Substring(0, 120000) + "\n... (truncated)";
 
                         messages.Add(OpenAI.Chat.ChatMessage.CreateToolMessage(toolCall.Id, toolResult));
                     }
