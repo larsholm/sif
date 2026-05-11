@@ -79,7 +79,7 @@ internal class AgentApp
     {
         AnsiConsole.MarkupLine("[green]sif[/] - AI agent for local OpenAI-compatible models");
         AnsiConsole.WriteLine();
-        AnsiConsole.WriteLine("Usage: sif [--tools bash,edit,read,write,sleep,serve,context,diagnostics] [--model name] [--base-url url]");
+        AnsiConsole.WriteLine("Usage: sif [--tools bash,edit,read,write,sleep,serve,context] [--model name] [--base-url url]");
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine("  (no args)     Start an interactive chat session");
         AnsiConsole.MarkupLine("  [bold]complete[/]  Run a one-off prompt and exit");
@@ -95,7 +95,7 @@ internal class AgentApp
         AnsiConsole.WriteLine("  -t, --temperature <v>  Sampling temperature");
         AnsiConsole.WriteLine("  -max, --max-tokens <v> Max tokens to generate");
         AnsiConsole.WriteLine("  -n, --no-stream        Disable streaming output");
-        AnsiConsole.WriteLine("  --tools <list>         Enable tools: bash,edit,read,write,sleep,serve,context,diagnostics (comma-separated)");
+        AnsiConsole.WriteLine("  --tools <list>         Enable tools: bash,edit,read,write,sleep,serve,context (comma-separated)");
         AnsiConsole.WriteLine("  --thinking <true|false> Enable model thinking/reasoning");
         AnsiConsole.WriteLine();
         AnsiConsole.WriteLine("Environment variables:");
@@ -724,8 +724,6 @@ internal class AgentApp
             { "serve", "Start a local static HTTP server for a directory" },
             { "context", "Store and search large tool results out-of-band" },
             { "ctx", "Store and search large tool results out-of-band" },
-            { "diagnostics", "Inspect sif agent configuration, environment, and chat history" },
-            { "debug", "Legacy alias for sif agent diagnostics; not a debugger" }
         };
 
         var toolList = tools.Select(t => descriptions.TryGetValue(t, out var d) ? d : t)

@@ -219,37 +219,8 @@ internal static class ToolRegistry
             ));
         }
 
-        if (enabled.Contains("diagnostics"))
-        {
-            tools.Add(CreateDiagnosticsTool("diagnostics"));
-        }
-
-        if (enabled.Contains("debug"))
-        {
-            tools.Add(CreateDiagnosticsTool("debug"));
-        }
-
         return tools;
     }
-
-    private static OpenAI.Chat.ChatTool CreateDiagnosticsTool(string name)
-    {
-        return OpenAI.Chat.ChatTool.CreateFunctionTool(
-            name,
-            "Get sif agent diagnostics only: configuration, AGENT_ environment variables, or current chat history. This is not a debugger and cannot launch, attach to, or manage .NET debug adapter sessions.",
-            BinaryData.FromString("""
-                {
-                    "type": "object",
-                    "properties": {
-                        "item": { "type": "string", "enum": ["config", "env", "history"], "description": "Diagnostic item: 'config' for configuration content, 'env' for AGENT_ environment variables, 'history' for current conversation history." }
-                    },
-                    "required": ["item"]
-                }
-                """)
-        );
-    }
-
-    public static Func<string, Task<string>>? DiagnosticsHandler { get; set; }
 
     public static async Task<string> ExecuteAsync(string toolName, string argumentsJson, CancellationToken cancellationToken = default)
     {
@@ -261,8 +232,6 @@ internal static class ToolRegistry
             "write" => RunWrite(argumentsJson),
             "sleep" => await RunSleepAsync(argumentsJson, cancellationToken),
             "serve" => RunServe(argumentsJson),
-            "debug" => await RunDiagnosticsAsync(argumentsJson),
-            "diagnostics" => await RunDiagnosticsAsync(argumentsJson),
             "ctx_index" => RunContextIndex(argumentsJson),
             "ctx_search" => RunContextSearch(argumentsJson),
             "ctx_read" => RunContextRead(argumentsJson),
@@ -297,47 +266,6 @@ internal static class ToolRegistry
         var query = root.TryGetProperty("query", out var q) ? q.GetString() : null;
         var maxChars = root.TryGetProperty("maxChars", out var m) ? m.GetInt32() : 6000;
         return ContextStore.Read(id, query, maxChars);
-    }
-
-    private static async Task<string> RunDiagnosticsAsync(string argsJson)
-    {
-        using var doc = JsonDocument.Parse(argsJson);
-        var root = doc.RootElement;
-        var item = root.GetProperty("item").GetString() ?? "";
-
-        if (item == "history")
-        {
-            if (DiagnosticsHandler == null) return "Error: Diagnostics handler not registered.";
-            return await DiagnosticsHandler(item);
-        }
-
-        if (item == "config")
-        {
-            var path = AgentConfig.ConfigPath;
-            if (File.Exists(path))
-            {
-                return $"Content of {path}:\n\n" + File.ReadAllText(path);
-            }
-            return $"Config file not found at: {path}";
-        }
-        else if (item == "env")
-        {
-            var sb = new StringBuilder();
-            sb.AppendLine("AGENT_ environment variables:");
-            foreach (System.Collections.DictionaryEntry de in Environment.GetEnvironmentVariables())
-            {
-                var key = de.Key.ToString() ?? "";
-                if (key.StartsWith("AGENT_"))
-                {
-                    var val = de.Value?.ToString() ?? "";
-                    if (key.Contains("KEY")) val = "****";
-                    sb.AppendLine($"{key}={val}");
-                }
-            }
-            return sb.ToString();
-        }
-
-        return $"Error: Unknown diagnostics item '{item}'";
     }
 
     private static async Task<string> RunSleepAsync(string argsJson, CancellationToken cancellationToken)

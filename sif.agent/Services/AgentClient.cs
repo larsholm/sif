@@ -10,7 +10,7 @@ namespace sif.agent;
 
 /// <summary>
 /// Client wrapping the OpenAI SDK for chat completions.
-/// Supports lazy tool calling for native tools, MCP tools, and diagnostics.
+/// Supports lazy tool calling for native tools and MCP tools.
 /// </summary>
 internal class AgentClient
 {
@@ -149,20 +149,7 @@ internal class AgentClient
         var messages = history.Select(m => ToRequestMessage(m)).ToList();
         int totalTokens = 0;
 
-        // Register diagnostics handler
-        ToolRegistry.DiagnosticsHandler = async (item) =>
-        {
-            if (item == "history")
-            {
-                var json = JsonSerializer.Serialize(messages, new JsonSerializerOptions { WriteIndented = true });
-                return $"Current conversation history (OpenAI Format):\n\n{json}";
-            }
-            return $"Error: Unknown diagnostics item '{item}'";
-        };
-
-        try
-        {
-            while (true)
+        while (true)
             {
                 AnsiConsole.Write(new Markup("[dim]Thinking...[/]"));
                 var opts = new OpenAI.Chat.ChatCompletionOptions();
@@ -255,11 +242,6 @@ internal class AgentClient
 
                 return (cleanContent, totalTokens);
             }
-        }
-        finally
-        {
-            ToolRegistry.DiagnosticsHandler = null;
-        }
     }
 
     /// <summary>
@@ -402,15 +384,13 @@ internal class AgentClient
             "serve" => "start a local static HTTP server",
             "ctx_index" => "store large generated/pasted text",
             "ctx_stats" => "show context-store stats",
-            "diagnostics" => "inspect sif config/env/history",
-            "debug" => "legacy diagnostics alias",
             _ => "native tool"
         };
     }
 
     private static bool IsLocalTool(string toolName)
     {
-        return toolName is "bash" or "read" or "edit" or "write" or "sleep" or "serve" or "debug" or "diagnostics" or "tool_catalog"
+        return toolName is "bash" or "read" or "edit" or "write" or "sleep" or "serve" or "tool_catalog"
             or "ctx_index" or "ctx_search" or "ctx_read" or "ctx_stats";
     }
 
