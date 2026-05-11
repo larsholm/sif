@@ -13,9 +13,10 @@
 - **Tool calling** - enable shell, file, context, sleep, static server, and diagnostics tools.
 - **MCP servers** - connect to Model Context Protocol servers over stdio, HTTP, streamable HTTP, or SSE.
 - **Context store** - large tool outputs are stored out-of-band and can be searched or read back by handle.
+- **History compaction** - long chats are summarized automatically using the model's advertised context window when available.
 - **VS Code context** - the companion extension exposes active editor, cursor, and selection context to `sif`.
 - **Skills** - reusable markdown instructions can be loaded from project or user skill folders.
-- **Persistent config** - store model, endpoint, tool, and reasoning settings in `~/.sif/sif-agent.json`.
+- **Persistent config** - store model, endpoint, tool, reasoning, and compaction settings in `~/.sif/sif-agent.json`.
 
 ## Requirements
 
@@ -88,7 +89,7 @@ Available tools:
 | `write` | Create or overwrite files |
 | `sleep` | Pause briefly before continuing or retrying |
 | `serve` | Start a local static HTTP server for a directory |
-| `context` | Enable `ctx_index`, `ctx_search`, `ctx_read`, and `ctx_stats` |
+| `context` | Enable `ctx_index`, `ctx_search`, `ctx_read`, `ctx_summarize`, and `ctx_stats` |
 | `diagnostics` | Inspect sif configuration, `AGENT_` environment variables, and chat history |
 
 ```bash
@@ -108,6 +109,8 @@ sif
 ```
 
 When `context` is enabled, large local and MCP tool results are stored under `~/.sif/context/` and replaced in model context with a compact handle such as `ctx_abc123`. The model can then call `ctx_search` for focused snippets or `ctx_read` for a specific stored result.
+
+When chat history grows past the compaction threshold, `sif` summarizes older messages, stores the raw compacted history and summary in the context store, and keeps the system prompt plus the most recent messages in active history. On startup, `sif` probes the configured `/models` endpoint for context-window metadata such as `context_length`, `context_window`, `max_model_len`, or `n_ctx`. If the provider reports a context window and the threshold is still the built-in default, compaction starts at about 60% of that window. Set `AGENT_COMPACTION_THRESHOLD` or `sif config --set COMPACTION_THRESHOLD=<tokens>` to override it, or set it to `0` to disable compaction.
 
 The `diagnostics` tool is for inspecting sif's runtime state only. It is not a debugger and does not launch, attach to, or manage .NET debug adapter sessions. There is also a legacy `debug` tool alias for the same diagnostics behavior.
 
@@ -155,19 +158,23 @@ sif config --set BASE_URL=http://localhost:11434/v1
 sif config --set MODEL=llama3.2
 sif config --set TOOLS=bash,read,edit,write,context
 sif config --set THINKING_ENABLED=true
+sif config --set COMPACTION_THRESHOLD=60000
 ```
 
 Configuration is loaded from `~/.sif/sif-agent.json`, then overridden by environment variables, then overridden by CLI flags.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `AGENT_BASE_URL` | OpenAI-compatible API base URL | `https://api.openai.com` |
+| `AGENT_BASE_URL` | OpenAI-compatible API base URL | `http://localhost:1234/v1` |
 | `AGENT_API_KEY` | API key, optional for local models | - |
-| `AGENT_MODEL` | Model name | `gpt-4o` |
+| `AGENT_MODEL` | Model name | `qwen3.6-27b-autoround` |
 | `AGENT_TOOLS` | Comma-separated list of tools | default tool set |
 | `AGENT_MAX_TOKENS` | Maximum output tokens | model default |
 | `AGENT_TEMPERATURE` | Sampling temperature | model default |
-| `AGENT_THINKING_ENABLED` | Enable model thinking or reasoning display | `false` |
+| `AGENT_THINKING_ENABLED` | Enable model thinking or reasoning display | `true` |
+| `AGENT_COMPACTION_THRESHOLD` | Chat-history token threshold for automatic compaction; `0` disables it | auto from model context window when available, otherwise `60000` |
+
+`AGENT_COMPACT_THRESHOLD` is accepted as a backwards-compatible alias for `AGENT_COMPACTION_THRESHOLD`.
 
 ## CLI Reference
 
@@ -177,6 +184,8 @@ Configuration is loaded from `~/.sif/sif-agent.json`, then overridden by environ
 | `-u, --base-url` | API base URL |
 | `-k, --api-key` | API key |
 | `-s, --system` | System prompt |
+| `-t, --temperature` | Sampling temperature |
+| `-max, --max-tokens` | Maximum output tokens |
 | `-n, --no-stream` | Disable streaming output |
 | `--tools` | Enable tools, comma-separated |
 | `--thinking` | Enable model thinking or reasoning display |
@@ -202,6 +211,8 @@ During an interactive chat session:
 | `/context clear all` | Clear both chat history and stored context |
 | `/vscode` | Show detected VS Code terminal/editor context |
 | `/help` | Show help and options |
+
+In chat input, press `Alt+Enter` to insert a newline. Long input lines wrap in place and can be edited with the arrow, Home, End, Backspace, and Delete keys.
 
 ## VS Code Context
 
