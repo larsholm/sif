@@ -1302,6 +1302,8 @@ internal class AgentApp
         int cursor = 0;
         int historyIndex = inputHistory.Count;
         string? historyDraft = null;
+        int renderedRowCount = 1;
+        int renderedCursorRow = 0;
 
         void Redraw()
         {
@@ -1311,52 +1313,78 @@ internal class AgentApp
             var text = sb.ToString();
             var lines = text.Split('\n');
 
-            // Calculate how many visible terminal lines we occupy (accounting for wrapping)
-            int visibleLines = 0;
-            foreach (var line in lines)
+            int RowsForLine(string line) => Math.Max((line.Length + effectiveWidth - 1) / effectiveWidth, 1);
+
+            (int Row, int Column) CursorPosition()
             {
-                visibleLines += Math.Max((int)Math.Ceiling((double)line.Length / effectiveWidth), 1);
+                var textUpToCursor = text.Substring(0, Math.Min(cursor, text.Length));
+                var cursorLine = textUpToCursor.Count(c => c == '\n');
+                var lastNewline = textUpToCursor.LastIndexOf('\n');
+                var colOnLine = lastNewline == -1
+                    ? textUpToCursor.Length
+                    : textUpToCursor.Length - lastNewline - 1;
+                var currentLineLength = lines[Math.Min(cursorLine, lines.Length - 1)].Length;
+
+                var row = 0;
+                for (int i = 0; i < cursorLine; i++)
+                    row += RowsForLine(lines[i]);
+
+                if (colOnLine == 0)
+                    return (row, indent);
+
+                if (colOnLine < currentLineLength && colOnLine % effectiveWidth == 0)
+                    return (row + (colOnLine / effectiveWidth), indent);
+
+                return (row + ((colOnLine - 1) / effectiveWidth), indent + ((colOnLine - 1) % effectiveWidth) + 1);
             }
 
-            // Move up to the first line we rendered
-            for (int i = 0; i < visibleLines - 1; i++)
+            var visibleLines = lines.Sum(RowsForLine);
+            var cursorPosition = CursorPosition();
+
+            // Move from the old cursor position back to the top of the previous render.
+            for (int i = 0; i < renderedCursorRow; i++)
                 Console.Write("\x1b[A");
 
-            // Clear all visible lines
-            for (int i = 0; i < visibleLines; i++)
+            // Clear the whole previous render, including rows left behind after deletions.
+            Console.Write("\r");
+            for (int i = 0; i < renderedRowCount; i++)
             {
-                Console.Write("\r" + new string(' ', width) + "\r");
-                if (i < visibleLines - 1) Console.Write("\x1b[B");
+                Console.Write("\x1b[2K");
+                if (i < renderedRowCount - 1)
+                    Console.Write("\x1b[B");
             }
 
-            // Re-render from scratch
+            for (int i = 0; i < renderedRowCount - 1; i++)
+                Console.Write("\x1b[A");
+
+            // Re-render from scratch and wrap manually so long input lines have stable rows.
             AnsiConsole.Write(new Markup(PromptMarkup));
             for (int i = 0; i < lines.Length; i++)
             {
-                Console.Write(lines[i]);
+                var line = lines[i];
+                if (line.Length > 0)
+                {
+                    for (int offset = 0; offset < line.Length; offset += effectiveWidth)
+                    {
+                        if (offset > 0)
+                            Console.Write("\n" + new string(' ', indent));
+
+                        Console.Write(line.Substring(offset, Math.Min(effectiveWidth, line.Length - offset)));
+                    }
+                }
+
                 if (i < lines.Length - 1) Console.Write("\n" + new string(' ', indent));
             }
 
-            // Position cursor (accounting for terminal wrapping)
-            var textUpToCursor = text.Substring(0, Math.Min(cursor, text.Length));
-            int explicitLine = textUpToCursor.Count(c => c == '\n');
-            int colOnLine = textUpToCursor.LastIndexOf('\n') == -1
-                ? textUpToCursor.Length
-                : textUpToCursor.Length - textUpToCursor.LastIndexOf('\n') - 1;
+            for (int i = 0; i < visibleLines - cursorPosition.Row - 1; i++)
+                Console.Write("\x1b[A");
 
-            int wrappedLines = colOnLine > 0 ? (colOnLine - 1) / effectiveWidth : 0;
-            int actualCol = colOnLine > 0 ? (colOnLine - 1) % effectiveWidth + 1 : 0;
-
-            int totalExplicit = text.Count(c => c == '\n');
-            int linesToMoveUp = (totalExplicit - explicitLine) + wrappedLines;
-            if (linesToMoveUp > 0)
-            {
-                for (int i = 0; i < linesToMoveUp; i++)
-                    AnsiConsole.Cursor.MoveUp(1);
-            }
             Console.Write("\r");
-            for (int i = 0; i < actualCol + indent; i++)
+            for (int i = 0; i < cursorPosition.Column; i++)
                 Console.Write("\x1b[C");
+
+            renderedRowCount = visibleLines;
+            renderedCursorRow = cursorPosition.Row;
         }
 
         void SetInput(string text)
@@ -1365,6 +1393,14 @@ internal class AgentApp
             sb.Append(text);
             cursor = sb.Length;
             Redraw();
+        }
+
+        void MoveCursorToRenderedBottom()
+        {
+            for (int i = 0; i < renderedRowCount - renderedCursorRow - 1; i++)
+                Console.Write("\x1b[B");
+
+            Console.Write("\r");
         }
 
         bool TryReadEscapeSequence(string sequence)
@@ -1444,11 +1480,10 @@ internal class AgentApp
                     {
                         sb.Insert(cursor, '\n');
                         cursor++;
-                        Console.WriteLine();
-                        Console.Write(new string(' ', PromptText.Length));
                         Redraw();
                         continue;
                     }
+                    MoveCursorToRenderedBottom();
                     Console.WriteLine();
                     return sb.ToString();
                 }
