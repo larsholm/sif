@@ -452,29 +452,36 @@ internal static class ToolRegistry
                 {
                     if (await Task.WhenAny(waitTask, Task.Delay(TimeSpan.FromSeconds(30))) != waitTask)
                     {
-                        try { process.Kill(true); } catch { }
-                        return "Error: Command timed out after 30s.";
+                        await TerminateProcessTreeAsync(process);
+                        await Task.WhenAny(Task.WhenAll(outputTask, errorTask), Task.Delay(TimeSpan.FromSeconds(1)));
+                        var output = ReadCompletedOrEmpty(outputTask);
+                        var errors = ReadCompletedOrEmpty(errorTask);
+                        var partial = FormatCommandResult(output, errors, limit);
+                        return string.IsNullOrEmpty(partial)
+                            ? "Error: Command timed out after 30s."
+                            : $"Error: Command timed out after 30s. Partial output:\n{partial}";
                     }
 
-                    await Task.WhenAll(outputTask, errorTask, waitTask);
+                    await waitTask;
+                    var streamsTask = Task.WhenAll(outputTask, errorTask);
+                    if (await Task.WhenAny(streamsTask, Task.Delay(TimeSpan.FromSeconds(1))) != streamsTask)
+                    {
+                        var output = ReadCompletedOrEmpty(outputTask);
+                        var errors = ReadCompletedOrEmpty(errorTask);
+                        var partial = FormatCommandResult(output, errors, limit);
+                        return string.IsNullOrEmpty(partial)
+                            ? "Command exited, but output streams stayed open. A background process may still be running."
+                            : partial + "\n... (command exited, but output streams stayed open; a background process may still be running)";
+                    }
                 }
                 catch (OperationCanceledException)
                 {
-                    try { process.Kill(true); } catch { }
+                    await TerminateProcessTreeAsync(process);
                     throw;
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();
-                var output = outputTask.Result;
-                var errors = errorTask.Result;
-
-                var result = output.Trim();
-                if (!string.IsNullOrEmpty(errors))
-                    result += (result.Length > 0 ? "\n" : "") + errors.Trim();
-
-                if (result.Length > limit)
-                    result = result.Substring(0, limit) + $"\n... (truncated, {result.Length - limit} more chars)";
-
+                var result = FormatCommandResult(outputTask.Result, errorTask.Result, limit);
                 return string.IsNullOrEmpty(result) ? "(no output)" : result;
             }
             finally
@@ -486,6 +493,170 @@ internal static class ToolRegistry
         {
             return $"Error executing command: {ex.Message}";
         }
+    }
+
+    private static async Task TerminateProcessTreeAsync(Process process)
+    {
+        try
+        {
+            if (process.HasExited)
+                return;
+        }
+        catch
+        {
+            return;
+        }
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            try { process.Kill(true); } catch { }
+            return;
+        }
+
+        var pids = GetUnixDescendantPids(process.Id)
+            .Append(process.Id)
+            .Distinct()
+            .Reverse()
+            .ToList();
+
+        SignalUnixProcesses(pids, "TERM");
+        await Task.Delay(750);
+
+        try
+        {
+            if (process.HasExited)
+                return;
+        }
+        catch
+        {
+            return;
+        }
+
+        SignalUnixProcesses(pids, "KILL");
+
+        try
+        {
+            if (!process.HasExited)
+                process.Kill();
+        }
+        catch
+        {
+            // Best-effort cleanup; callers still return timeout/cancel promptly.
+        }
+    }
+
+    private static List<int> GetUnixDescendantPids(int rootPid)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = "ps",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            psi.ArgumentList.Add("-axo");
+            psi.ArgumentList.Add("pid=,ppid=");
+            using var ps = Process.Start(psi);
+
+            if (ps == null)
+                return [];
+
+            var output = ps.StandardOutput.ReadToEnd();
+            ps.WaitForExit(1000);
+
+            var childrenByParent = new Dictionary<int, List<int>>();
+            foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                if (parts.Length < 2 || !int.TryParse(parts[0], out var pid) || !int.TryParse(parts[1], out var parentPid))
+                    continue;
+
+                if (!childrenByParent.TryGetValue(parentPid, out var children))
+                {
+                    children = [];
+                    childrenByParent[parentPid] = children;
+                }
+                children.Add(pid);
+            }
+
+            var descendants = new List<int>();
+            var stack = new Stack<int>();
+            stack.Push(rootPid);
+            while (stack.Count > 0)
+            {
+                var parent = stack.Pop();
+                if (!childrenByParent.TryGetValue(parent, out var children))
+                    continue;
+
+                foreach (var child in children)
+                {
+                    descendants.Add(child);
+                    stack.Push(child);
+                }
+            }
+
+            return descendants;
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private static void SignalUnixProcesses(IEnumerable<int> pids, string signal)
+    {
+        foreach (var pid in pids)
+        {
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = "kill",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                psi.ArgumentList.Add($"-{signal}");
+                psi.ArgumentList.Add(pid.ToString());
+                using var kill = Process.Start(psi);
+                kill?.WaitForExit(1000);
+            }
+            catch
+            {
+                // Best-effort process cleanup.
+            }
+        }
+    }
+
+    private static string ReadCompletedOrEmpty(Task<string> task)
+    {
+        if (!task.IsCompleted)
+            return "";
+
+        try
+        {
+            return task.Result;
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
+    private static string FormatCommandResult(string output, string errors, int limit)
+    {
+        var result = output.Trim();
+        if (!string.IsNullOrEmpty(errors))
+            result += (result.Length > 0 ? "\n" : "") + errors.Trim();
+
+        if (result.Length > limit)
+            result = result.Substring(0, limit) + $"\n... (truncated, {result.Length - limit} more chars)";
+
+        return result;
     }
 
     private static string GetFirstCommandWord(string command)
