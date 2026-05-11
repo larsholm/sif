@@ -205,25 +205,44 @@ internal class AgentClient
                         AnsiConsole.MarkupLine($"\n[dim]Tool: {toolName.EscapeMarkup()} ({preview.EscapeMarkup()})[/]");
 
                         string toolResult;
-                        if (toolName == "tool_catalog")
+                        try
                         {
-                            toolResult = RunToolCatalog(argsJson);
+                            if (toolName == "tool_catalog")
+                            {
+                                toolResult = RunToolCatalog(argsJson);
+                            }
+                            else if (toolName == "ctx_summarize")
+                            {
+                                toolResult = await RunContextSummarize(argsJson);
+                            }
+                            else if (IsLocalTool(toolName))
+                            {
+                                toolResult = await ToolRegistry.ExecuteAsync(toolName, argsJson, cancellationToken);
+                            }
+                            else if (_mcpService != null)
+                            {
+                                toolResult = await _mcpService.ExecuteToolAsync(toolName, argsJson);
+                            }
+                            else
+                            {
+                                toolResult = $"Error: Tool '{toolName}' not found.";
+                            }
                         }
-                        else if (toolName == "ctx_summarize")
+                        catch (Exception ex)
                         {
-                            toolResult = await RunContextSummarize(argsJson);
-                        }
-                        else if (IsLocalTool(toolName))
-                        {
-                            toolResult = await ToolRegistry.ExecuteAsync(toolName, argsJson, cancellationToken);
-                        }
-                        else if (_mcpService != null)
-                        {
-                            toolResult = await _mcpService.ExecuteToolAsync(toolName, argsJson);
-                        }
-                        else
-                        {
-                            toolResult = $"Error: Tool '{toolName}' not found.";
+                            var msgChars = messages.Sum(m => m.GetType().GetProperty("Content")?.GetValue(m)?.ToString()?.Length ?? 0);
+                            var ctxEntries = ContextStore.ListEntries();
+                            var storedChars = ctxEntries.Sum(e => e.Length);
+                            var contextInfo = $"messages: ~{msgChars / 4:N0} tokens ({msgChars:N0} chars), stored: {ctxEntries.Count:N0} entries ({storedChars:N0} chars)";
+
+                            var debugPath = DebugLog.Save(
+                                $"tool:{toolName}", ex,
+                                $"args: {preview}\n{contextInfo}");
+
+                            toolResult = $"Error in tool '{toolName}': {ex.Message}";
+                            toolResult += $"\n\nFull debug info saved to: {debugPath}";
+                            AnsiConsole.MarkupLine($"[red]Exception in {toolName}:[/] {ex.Message.EscapeMarkup()}");
+                            AnsiConsole.MarkupLine($"[dim]Debug saved to {debugPath.EscapeMarkup()}[/]");
                         }
 
                         if (!IsContextTool(toolName) && toolResult.Length > ContextStore.AutoStoreThreshold)

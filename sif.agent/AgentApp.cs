@@ -267,6 +267,10 @@ internal class AgentApp
                 {
                     HandleContextCommand(trimmed, history, tools);
                 }
+                else if (trimmed == "/debug" || trimmed.StartsWith("/debug "))
+                {
+                    HandleDebugCommand(trimmed);
+                }
                 else if (trimmed == "/vscode")
                 {
                     ShowVscodeContext();
@@ -291,7 +295,8 @@ internal class AgentApp
                 {
                     AnsiConsole.Write(new Markup("[green]agent>[/] "));
                     var (response, tokenCount) = await RunWithEscapeCancel(ct => client.ChatWithToolsAsync(history, ct));
-                    AnsiConsole.MarkupLine($"[dim]\n({tokenCount} tokens)[/]\n");
+                    var ctxEstimate = EstimateContextSize(history);
+                    AnsiConsole.MarkupLine($"[dim]\n({tokenCount} tokens, {ctxEstimate} context)[/]\n");
                 }
                 else if (opts.NoStream || (config.ThinkingEnabled ?? false) && !IsOModel(config.Model))
                 {
@@ -319,7 +324,8 @@ internal class AgentApp
                     AnsiConsole.Write(new Markup("[green]agent>[/] "));
                     var (response, tokenCount) = await RunWithEscapeCancel(ct => client.ChatStreamingAsync(history, ct));
                     history.Add(new ChatMessage("assistant", response));
-                    AnsiConsole.MarkupLine($"[dim]\n({tokenCount} tokens)[/]\n");
+                    var ctxEstimate = EstimateContextSize(history);
+                    AnsiConsole.MarkupLine($"[dim]\n({tokenCount} tokens, {ctxEstimate} context)[/]\n");
                 }
             }
             catch (OperationCanceledException)
@@ -330,7 +336,9 @@ internal class AgentApp
             }
             catch (Exception ex)
             {
-                AnsiConsole.MarkupLine($"[red]Error:[/] {ex.Message.EscapeMarkup()}\n");
+                var debugPath = DebugLog.Save("chat-loop", ex, "during conversation");
+                AnsiConsole.MarkupLine($"[red]Error:[/] {ex.Message.EscapeMarkup()}");
+                AnsiConsole.MarkupLine($"[dim]Debug saved to {debugPath.EscapeMarkup()}[/]\n");
                 if (history.Count > 0 && history[^1].Role == "user")
                     history.RemoveAt(history.Count - 1);
             }
@@ -443,8 +451,54 @@ internal class AgentApp
         table.AddRow("[bold]/context clear-store[/]", "Delete stored context entries for this session");
         table.AddRow("[bold]/context clear all[/]", "Clear chat history and stored context");
         table.AddRow("[bold]/vscode[/]", "Show detected VS Code terminal/editor context");
+        table.AddRow("[bold]/debug[/]", "Show recent errors (saved to log, survives /clear)");
+        table.AddRow("[bold]/debug latest[/]", "Show full details of the most recent error");
+        table.AddRow("[bold]/debug list[/]", "Show recent error entries");
         AnsiConsole.Write(table);
         AnsiConsole.WriteLine();
+    }
+
+    private static void HandleDebugCommand(string command)
+    {
+        var rest = command.Length == "/debug".Length ? "" : command["/debug".Length..].Trim();
+        if (string.IsNullOrWhiteSpace(rest))
+        {
+            // Default: show recent errors summary
+            AnsiConsole.WriteLine(DebugLog.Recent(5));
+            AnsiConsole.MarkupLine($"\n[dim]Log file: {DebugLog.LogPath.EscapeMarkup()}[/]");
+            AnsiConsole.MarkupLine("[dim]Use /debug latest for full details of the most recent error.[/]\n");
+        }
+        else
+        {
+            var parts = rest.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var subcommand = parts[0].ToLowerInvariant();
+
+            switch (subcommand)
+            {
+                case "latest":
+                    AnsiConsole.WriteLine(DebugLog.Latest());
+                    AnsiConsole.MarkupLine($"\n[dim]Log file: {DebugLog.LogPath.EscapeMarkup()}[/]\n");
+                    break;
+                case "list":
+                case "recent":
+                    var count = parts.Length > 1 && int.TryParse(parts[1], out var c) ? c : 10;
+                    AnsiConsole.WriteLine(DebugLog.Recent(count));
+                    AnsiConsole.MarkupLine($"\n[dim]Log file: {DebugLog.LogPath.EscapeMarkup()}[/]\n");
+                    break;
+                case "path":
+                    AnsiConsole.MarkupLine($"[dim]Log file:[/] {DebugLog.LogPath.EscapeMarkup()}\n");
+                    break;
+                case "help":
+                    AnsiConsole.MarkupLine("[bold]/debug[/]          Show recent 5 errors");
+                    AnsiConsole.MarkupLine("[bold]/debug latest[/]   Show full details of most recent error");
+                    AnsiConsole.MarkupLine("[bold]/debug list [n][/]  Show n recent errors (default 10)");
+                    AnsiConsole.MarkupLine("[bold]/debug path[/]      Show log file path\n");
+                    break;
+                default:
+                    AnsiConsole.MarkupLine($"[yellow]Unknown /debug command:[/] {subcommand.EscapeMarkup()}\n");
+                    break;
+            }
+        }
     }
 
     private static void ShowVscodeContext()
@@ -528,6 +582,18 @@ internal class AgentApp
                 AnsiConsole.MarkupLine("[dim]Use /context help for available commands.[/]\n");
                 break;
         }
+    }
+
+    private static string EstimateContextSize(List<ChatMessage> history)
+    {
+        var chars = history.Sum(m => m.Content.Length);
+        var entries = ContextStore.ListEntries();
+        var storedChars = entries.Sum(e => e.Length);
+        var totalChars = chars + storedChars;
+        var tokens = totalChars / 4;
+        if (tokens < 1000)
+            return $"~{tokens} tokens";
+        return $"~{tokens / 1000:0.0}k tokens";
     }
 
     private static void ShowContextSummary(List<ChatMessage> history, string[]? tools)
@@ -810,7 +876,8 @@ internal class AgentApp
                     history.Add(new ChatMessage("system", systemPrompt));
                 history.Add(new ChatMessage("user", promptWithEditorContext));
                 var (response, tokenCount) = await RunWithEscapeCancel(ct => client.ChatWithToolsAsync(history, ct));
-                AnsiConsole.MarkupLine($"\n[dim]({tokenCount} tokens)[/]");
+                var ctxEstimate = EstimateContextSize(history);
+                AnsiConsole.MarkupLine($"\n[dim]({tokenCount} tokens, {ctxEstimate} context)[/]");
             }
             else
             {
@@ -834,7 +901,9 @@ internal class AgentApp
         }
         catch (Exception ex)
         {
+            var debugPath = DebugLog.Save("complete", ex, prompt?.Trim().Take(100).ToString() ?? "no prompt");
             AnsiConsole.MarkupLine($"[red]Error:[/] {ex.Message.EscapeMarkup()}");
+            AnsiConsole.MarkupLine($"[dim]Debug saved to {debugPath.EscapeMarkup()}[/]");
             return 1;
         }
 
@@ -1236,34 +1305,58 @@ internal class AgentApp
 
         void Redraw()
         {
-            // Clear current line and move to start
-            Console.Write("\r" + new string(' ', Math.Max(0, Console.WindowWidth - 1)) + "\r");
-            
-            // This is a simplified redraw that doesn't handle multi-line wrapping perfectly
-            // but handles explicit newlines.
+            var width = Math.Max(Console.WindowWidth - 1, 1);
+            var indent = PromptText.Length; // visible characters in "> "
+            var effectiveWidth = Math.Max(width - indent, 1);
+            var text = sb.ToString();
+            var lines = text.Split('\n');
+
+            // Calculate how many visible terminal lines we occupy (accounting for wrapping)
+            int visibleLines = 0;
+            foreach (var line in lines)
+            {
+                visibleLines += Math.Max((int)Math.Ceiling((double)line.Length / effectiveWidth), 1);
+            }
+
+            // Move up to the first line we rendered
+            for (int i = 0; i < visibleLines - 1; i++)
+                Console.Write("\x1b[A");
+
+            // Clear all visible lines
+            for (int i = 0; i < visibleLines; i++)
+            {
+                Console.Write("\r" + new string(' ', width) + "\r");
+                if (i < visibleLines - 1) Console.Write("\x1b[B");
+            }
+
+            // Re-render from scratch
             AnsiConsole.Write(new Markup(PromptMarkup));
-            var lines = sb.ToString().Split('\n');
             for (int i = 0; i < lines.Length; i++)
             {
                 Console.Write(lines[i]);
-                if (i < lines.Length - 1) Console.Write("\n" + new string(' ', PromptText.Length));
+                if (i < lines.Length - 1) Console.Write("\n" + new string(' ', indent));
             }
 
-            // Move cursor back to the correct position
-            // This is complex for multi-line. For now, we'll just put it at the end 
-            // if we've done a full redraw, or handle single-line movements.
-            var textUpToCursor = sb.ToString().Substring(0, cursor);
-            int cursorLine = textUpToCursor.Count(c => c == '\n');
-            int cursorCol = cursor - textUpToCursor.LastIndexOf('\n') - 1;
-            if (textUpToCursor.LastIndexOf('\n') == -1) cursorCol = cursor;
+            // Position cursor (accounting for terminal wrapping)
+            var textUpToCursor = text.Substring(0, Math.Min(cursor, text.Length));
+            int explicitLine = textUpToCursor.Count(c => c == '\n');
+            int colOnLine = textUpToCursor.LastIndexOf('\n') == -1
+                ? textUpToCursor.Length
+                : textUpToCursor.Length - textUpToCursor.LastIndexOf('\n') - 1;
 
-            int totalLines = sb.ToString().Count(c => c == '\n');
-            if (totalLines > cursorLine)
+            int wrappedLines = colOnLine > 0 ? (colOnLine - 1) / effectiveWidth : 0;
+            int actualCol = colOnLine > 0 ? (colOnLine - 1) % effectiveWidth + 1 : 0;
+
+            int totalExplicit = text.Count(c => c == '\n');
+            int linesToMoveUp = (totalExplicit - explicitLine) + wrappedLines;
+            if (linesToMoveUp > 0)
             {
-                AnsiConsole.Cursor.MoveUp(totalLines - cursorLine);
+                for (int i = 0; i < linesToMoveUp; i++)
+                    AnsiConsole.Cursor.MoveUp(1);
             }
             Console.Write("\r");
-            for (int i = 0; i < cursorCol + PromptText.Length; i++) Console.Write("\x1b[C");
+            for (int i = 0; i < actualCol + indent; i++)
+                Console.Write("\x1b[C");
         }
 
         void SetInput(string text)
