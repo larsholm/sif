@@ -23,7 +23,7 @@
 - [.NET 10 SDK](https://dotnet.microsoft.com/download)
 - An OpenAI-compatible API endpoint
 - Unix-like shells: `curl`, `tar`, and `zip`
-- Windows PowerShell: no external archive tool required
+- Windows PowerShell
 
 ## Install
 
