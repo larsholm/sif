@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace sif.agent;
 
@@ -23,6 +24,8 @@ internal class AgentConfig
     /// Set to 0 to disable compaction.
     /// </summary>
     public int CompactionThreshold { get; set; } = DefaultCompactionThreshold;
+    [JsonIgnore]
+    public bool CompactionThresholdConfigured { get; private set; }
     public Dictionary<string, McpServerConfig> McpServers { get; set; } = new();
     public Dictionary<string, string> Values { get; set; } = new();
 
@@ -90,6 +93,7 @@ internal class AgentConfig
                     config.ShellAllowedCommands = loaded.ShellAllowedCommands;
                     config.ThinkingEnabled = loaded.ThinkingEnabled;
                     config.CompactionThreshold = loaded.CompactionThreshold;
+                    config.CompactionThresholdConfigured = loaded.CompactionThreshold != DefaultCompactionThreshold;
                     config.McpServers = loaded.McpServers ?? new();
                     config.Values = loaded.Values ?? new();
                 }
@@ -121,7 +125,10 @@ internal class AgentConfig
             Environment.GetEnvironmentVariable("AGENT_COMPACTION_THRESHOLD") ??
             Environment.GetEnvironmentVariable("AGENT_COMPACT_THRESHOLD");
         if (int.TryParse(envCompactionThreshold, out var envCompact))
+        {
             config.CompactionThreshold = envCompact;
+            config.CompactionThresholdConfigured = true;
+        }
 
         return config;
     }
@@ -173,7 +180,10 @@ internal class AgentConfig
             case "COMPACTION_THRESHOLD":
             case "AGENT_COMPACTION_THRESHOLD":
                 if (int.TryParse(value, out var compactThreshold))
+                {
                     config.CompactionThreshold = compactThreshold;
+                    config.CompactionThresholdConfigured = true;
+                }
                 break;
             case "TOOLS":
             case "AGENT_TOOLS":

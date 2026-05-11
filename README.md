@@ -43,7 +43,7 @@ This downloads the latest `main` archive, builds the agent, and installs it as a
 
 The installer also installs the companion VS Code extension into `~/.vscode/extensions`. Set `VSCODE_EXTENSIONS=/path/to/extensions` before running the installer to target another VS Code-compatible extensions directory.
 
-On first launch, `sif` opens a setup wizard for the API base URL, optional API key, model, tools, and thinking/reasoning display. The wizard fetches available models from the configured endpoint when possible and falls back to manual model entry if the endpoint cannot be queried. Run `sif setup` any time to update those values.
+On first launch, `sif` opens a setup wizard for the API base URL, optional API key, model, tools, and thinking/reasoning display. The wizard fetches available models from the configured endpoint when possible and falls back to manual model entry if the endpoint cannot be queried. Run `sif setup` any time to update those values. Chat startup also probes model metadata for context-window size when the endpoint exposes it.
 
 For local development from a checked-out repository:
 
@@ -196,7 +196,7 @@ During an interactive chat session:
 
 | Command | Description |
 |---------|-------------|
-| `/quit`, `/exit` | Exit the chat session |
+| `/q`, `/quit`, `/exit` | Exit the chat session |
 | `/clear` | Clear conversation history, keeping the system prompt |
 | `/sys <prompt>` | Change the system prompt |
 | `/context` | Show chat history and stored context summary |
@@ -206,6 +206,7 @@ During an interactive chat session:
 | `/context read <id> [query]` | Read a stored entry, optionally focused by query |
 | `/context delete <id>` | Delete a stored context entry |
 | `/context drop <count>` | Remove recent non-system chat messages |
+| `/context clear`, `/context clear history` | Clear conversation history, keeping the system prompt |
 | `/context clear-history` | Clear conversation history, keeping the system prompt |
 | `/context clear-store` | Delete stored context entries for this session |
 | `/context clear all` | Clear both chat history and stored context |

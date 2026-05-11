@@ -31,7 +31,11 @@ internal class AgentApp
             if (arg.StartsWith("--system=")) continue;
             if (arg == "--thinking") { skipNext = true; continue; }
             if (arg.StartsWith("--thinking=")) continue;
-            if (arg == "-m" || arg == "-u" || arg == "-k" || arg == "-s") { skipNext = true; continue; }
+            if (arg == "--temperature") { skipNext = true; continue; }
+            if (arg.StartsWith("--temperature=")) continue;
+            if (arg == "--max-tokens") { skipNext = true; continue; }
+            if (arg.StartsWith("--max-tokens=")) continue;
+            if (arg == "-m" || arg == "-u" || arg == "-k" || arg == "-s" || arg == "-t" || arg == "-max") { skipNext = true; continue; }
             if (arg == "-n" || arg == "--no-stream") continue;
             if (arg == "--help" || arg == "-h")
             {
@@ -42,6 +46,8 @@ internal class AgentApp
             if (arg.StartsWith("-u=")) continue;
             if (arg.StartsWith("-k=")) continue;
             if (arg.StartsWith("-s=")) continue;
+            if (arg.StartsWith("-t=")) continue;
+            if (arg.StartsWith("-max=")) continue;
             if (!arg.StartsWith("-"))
             {
                 firstNonFlag = arg;
@@ -391,7 +397,12 @@ internal class AgentApp
     private static bool HasContextTool(string[]? tools)
     {
         return tools?.Any(t => t.Equals("context", StringComparison.OrdinalIgnoreCase) ||
-                               t.Equals("ctx", StringComparison.OrdinalIgnoreCase)) == true;
+                               t.Equals("ctx", StringComparison.OrdinalIgnoreCase) ||
+                               t.Equals("ctx_index", StringComparison.OrdinalIgnoreCase) ||
+                               t.Equals("ctx_search", StringComparison.OrdinalIgnoreCase) ||
+                               t.Equals("ctx_read", StringComparison.OrdinalIgnoreCase) ||
+                               t.Equals("ctx_summarize", StringComparison.OrdinalIgnoreCase) ||
+                               t.Equals("ctx_stats", StringComparison.OrdinalIgnoreCase)) == true;
     }
 
     /// <summary>
@@ -1307,8 +1318,9 @@ Conversation:
         if (!contextLength.HasValue)
             return null;
 
-        // Treat the built-in value as "auto". Custom configured thresholds stay explicit.
-        if (config.CompactionThreshold == AgentConfig.DefaultCompactionThreshold)
+        // Treat the built-in value as "auto". Custom configured thresholds stay explicit,
+        // even when the custom value happens to equal the built-in default.
+        if (!config.CompactionThresholdConfigured)
             config.CompactionThreshold = Math.Max(1000, (int)Math.Floor(contextLength.Value * 0.60));
 
         return contextLength;
@@ -1346,7 +1358,9 @@ Conversation:
                     if (!string.Equals(id, modelId, StringComparison.OrdinalIgnoreCase))
                         continue;
 
-                    return TryReadContextLength(item);
+                    var contextLength = TryReadContextLength(item);
+                    if (contextLength.HasValue)
+                        return contextLength;
                 }
             }
             catch

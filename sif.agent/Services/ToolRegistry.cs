@@ -223,24 +223,6 @@ internal static class ToolRegistry
             ));
         }
 
-        if (enabled.Contains("context") || enabled.Contains("ctx") || enabled.Contains("ctx_summarize"))
-        {
-            tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
-                "ctx_summarize",
-                "Generate a focused summary of stored context using the LLM. Use when you need to understand what's in a large stored blob but don't know the right search terms.",
-                BinaryData.FromString("""
-                    {
-                        "type": "object",
-                        "properties": {
-                            "id": { "type": "string", "description": "Context id to summarize" },
-                            "focus": { "type": "string", "description": "What to focus the summary on (e.g. 'error messages', 'configuration values', 'API endpoints'). Defaults to most important information if omitted." }
-                        },
-                        "required": ["id"]
-                    }
-                    """)
-            ));
-        }
-
         if (enabled.Contains("context") || enabled.Contains("ctx") || enabled.Contains("ctx_stats"))
         {
             tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
