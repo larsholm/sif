@@ -7,6 +7,8 @@ namespace sif.agent;
 /// </summary>
 internal class AgentConfig
 {
+    public const int DefaultCompactionThreshold = 60000;
+
     public string BaseUrl { get; set; } = "http://localhost:1234/v1";
     public string? ApiKey { get; set; }
     public string Model { get; set; } = "qwen3.6-27b-autoround";
@@ -15,6 +17,12 @@ internal class AgentConfig
     public string[]? Tools { get; set; }
     public string[]? ShellAllowedCommands { get; set; }
     public bool? ThinkingEnabled { get; set; } = true;
+    /// <summary>
+    /// Token threshold at which the chat history is compacted (summarized) via the LLM.
+    /// Default is 60000 tokens (~240k chars), roughly 60% of a 100k context window.
+    /// Set to 0 to disable compaction.
+    /// </summary>
+    public int CompactionThreshold { get; set; } = DefaultCompactionThreshold;
     public Dictionary<string, McpServerConfig> McpServers { get; set; } = new();
     public Dictionary<string, string> Values { get; set; } = new();
 
@@ -81,6 +89,7 @@ internal class AgentConfig
                     config.Tools = loaded.Tools;
                     config.ShellAllowedCommands = loaded.ShellAllowedCommands;
                     config.ThinkingEnabled = loaded.ThinkingEnabled;
+                    config.CompactionThreshold = loaded.CompactionThreshold;
                     config.McpServers = loaded.McpServers ?? new();
                     config.Values = loaded.Values ?? new();
                 }
@@ -108,6 +117,11 @@ internal class AgentConfig
             config.Tools = envTools.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (bool.TryParse(Environment.GetEnvironmentVariable("AGENT_THINKING_ENABLED"), out var envThinking))
             config.ThinkingEnabled = envThinking;
+        var envCompactionThreshold =
+            Environment.GetEnvironmentVariable("AGENT_COMPACTION_THRESHOLD") ??
+            Environment.GetEnvironmentVariable("AGENT_COMPACT_THRESHOLD");
+        if (int.TryParse(envCompactionThreshold, out var envCompact))
+            config.CompactionThreshold = envCompact;
 
         return config;
     }
@@ -153,6 +167,13 @@ internal class AgentConfig
             case "AGENT_THINKING_ENABLED":
                 if (bool.TryParse(value, out var thinkingEnabled))
                     config.ThinkingEnabled = thinkingEnabled;
+                break;
+            case "COMPACT_THRESHOLD":
+            case "AGENT_COMPACT_THRESHOLD":
+            case "COMPACTION_THRESHOLD":
+            case "AGENT_COMPACTION_THRESHOLD":
+                if (int.TryParse(value, out var compactThreshold))
+                    config.CompactionThreshold = compactThreshold;
                 break;
             case "TOOLS":
             case "AGENT_TOOLS":
