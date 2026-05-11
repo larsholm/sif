@@ -115,6 +115,19 @@ internal class AgentClient
     }
 
     /// <summary>
+    /// Generate a focused summary of arbitrary content using the LLM.
+    /// Capped at 2000 characters.
+    /// </summary>
+    public async Task<string> SummarizeAsync(string content, string focus)
+    {
+        var systemPrompt = $"Summarize the following content, focusing on {focus}. Be concise but thorough. Limit your response to 2000 characters.";
+        var prompt = content.Length > 40000 ? content[..40000] : content;
+
+        var (response, _) = await CompleteAsync(prompt, systemPrompt);
+        return response.Length > 2000 ? response[..2000] : response;
+    }
+
+    /// <summary>
     /// Send a single prompt (no conversation history, no tools).
     /// Returns (responseText, reasoningText).
     /// </summary>
@@ -196,6 +209,10 @@ internal class AgentClient
                         {
                             toolResult = RunToolCatalog(argsJson);
                         }
+                        else if (toolName == "ctx_summarize")
+                        {
+                            toolResult = await RunContextSummarize(argsJson);
+                        }
                         else if (IsLocalTool(toolName))
                         {
                             toolResult = await ToolRegistry.ExecuteAsync(toolName, argsJson, cancellationToken);
@@ -211,7 +228,12 @@ internal class AgentClient
 
                         if (!IsContextTool(toolName) && toolResult.Length > ContextStore.AutoStoreThreshold)
                         {
+                            var originalResult = toolResult;
                             toolResult = ContextStore.StoreAndDescribe($"{toolName} {preview}", toolResult);
+                            // Also generate a summary automatically to help the LLM understand the stored content
+                            AnsiConsole.MarkupLine("[dim]Summarizing stored content...[/]");
+                            var summary = await SummarizeAsync(originalResult, "the most important facts, values, and structure");
+                            toolResult += $"\n\nSummary:\n{summary}";
                         }
 
                         // Display tool result
@@ -347,6 +369,31 @@ internal class AgentClient
         return sb.ToString().TrimEnd();
     }
 
+    private async Task<string> RunContextSummarize(string argsJson)
+    {
+        using var doc = JsonDocument.Parse(argsJson);
+        var root = doc.RootElement;
+        var id = root.GetProperty("id").GetString() ?? "";
+        var focus = root.TryGetProperty("focus", out var f) && f.ValueKind == JsonValueKind.String ? f.GetString() : null;
+
+        if (string.IsNullOrEmpty(id))
+            return "Error: id is required.";
+
+        var entry = ContextStore.ListEntries().FirstOrDefault(e => e.Id == id);
+        if (entry == null)
+            return $"Error: context id not found: {id}";
+        if (!File.Exists(entry.Path))
+            return $"Error: context blob missing for {id}.";
+
+        var content = File.ReadAllText(entry.Path);
+        var defaultFocus = string.IsNullOrEmpty(focus) ? "the most important information" : focus;
+
+        AnsiConsole.MarkupLine($"[dim]Summarizing {id} (focus: {defaultFocus})...[/]");
+        var summary = await SummarizeAsync(content, defaultFocus);
+
+        return $"Summary of [{entry.Id}] {entry.Source} (focus: {defaultFocus}):\n\n{summary}";
+    }
+
     private static IEnumerable<string> ExpandToolNames(IEnumerable<string> tools)
     {
         foreach (var tool in tools.Select(t => t.Trim()).Where(t => t.Length > 0))
@@ -357,6 +404,7 @@ internal class AgentClient
                 yield return "ctx_index";
                 yield return "ctx_search";
                 yield return "ctx_read";
+                yield return "ctx_summarize";
                 yield return "ctx_stats";
             }
             else
@@ -368,7 +416,7 @@ internal class AgentClient
 
     private static IEnumerable<string> SelectInitialTools(HashSet<string> available)
     {
-        var initial = new[] { "bash", "read", "edit", "write", "ctx_search", "ctx_read" };
+        var initial = new[] { "bash", "read", "edit", "write", "ctx_search", "ctx_read", "ctx_summarize" };
         foreach (var tool in initial)
         {
             if (available.Contains(tool))
@@ -383,6 +431,7 @@ internal class AgentClient
             "sleep" => "pause briefly before retrying",
             "serve" => "start a local static HTTP server",
             "ctx_index" => "store large generated/pasted text",
+            "ctx_summarize" => "summarize stored context with focus",
             "ctx_stats" => "show context-store stats",
             _ => "native tool"
         };
@@ -391,12 +440,12 @@ internal class AgentClient
     private static bool IsLocalTool(string toolName)
     {
         return toolName is "bash" or "read" or "edit" or "write" or "sleep" or "serve" or "tool_catalog"
-            or "ctx_index" or "ctx_search" or "ctx_read" or "ctx_stats";
+            or "ctx_index" or "ctx_search" or "ctx_read" or "ctx_summarize" or "ctx_stats";
     }
 
     private static bool IsContextTool(string toolName)
     {
-        return toolName is "ctx_index" or "ctx_search" or "ctx_read" or "ctx_stats";
+        return toolName is "ctx_index" or "ctx_search" or "ctx_read" or "ctx_summarize" or "ctx_stats";
     }
 
     private static OpenAI.Chat.ChatMessage ToRequestMessage(ChatMessage msg)

@@ -245,7 +245,8 @@ internal static class ContextStore
     private static string FormatStoredResult(ContextEntry entry)
     {
         return $"Stored large context as {entry.Id} from {entry.Source} ({entry.Length:N0} chars).\n" +
-               "Use ctx_search to find relevant snippets or ctx_read with this id to retrieve focused content.\n\n" +
+               "Use ctx_search to find relevant snippets, ctx_read with this id to retrieve focused content,\n" +
+               "or ctx_summarize with this id and a focus description to get an LLM-generated summary.\n\n" +
                $"Preview:\n{entry.Preview}";
     }
 

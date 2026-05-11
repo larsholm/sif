@@ -729,9 +729,8 @@ internal class AgentApp
         var toolList = tools.Select(t => descriptions.TryGetValue(t, out var d) ? d : t)
             .Aggregate((a, b) => $"{a}, {b}");
 
-        return $"You are a helpful assistant with access to these tools: {toolList}. " +
-               $"Current working directory: {Environment.CurrentDirectory}. " +
-               "Always use absolute paths when referring to files." +
+        return $"You are Sif, a helpful assistant, with access to these tools: {toolList}. " +
+               $"Current working directory: {Environment.CurrentDirectory}. " +               
                "\n\nUse tools proactively: " +
                "\n- Use 'bash' with platform-appropriate commands: ls/grep/find on Unix-like systems, or dir/Select-String/Get-ChildItem on Windows" +
                "\n- Use 'read' to view file contents" +
