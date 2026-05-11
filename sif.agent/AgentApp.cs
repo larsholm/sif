@@ -741,7 +741,8 @@ internal class AgentApp
                "\n- Use 'serve' to start a local static HTTP server; do not start long-running servers with 'bash'" +
                "\n- Use 'ctx_search' and 'ctx_read' when a tool result says large context was stored" +
                "\n- Use 'ctx_index' for large pasted text or generated data that should be searchable later" +
-               "\nThink before acting — explain your plan first.";
+               "\nThink before acting — explain your plan first." +
+               "\nAfter using tools, summarize your key findings in your final answer. Important details from tool results should be restated in natural language so they persist in the conversation history.";
     }
 
     private async Task<int> RunComplete(string[] args)
@@ -1543,6 +1544,8 @@ internal static class VscodeContext
     private const int MaxInlineTextChars = 6000;
     private const int MaxLineChars = 1000;
 
+    private static string? _lastEditorContext = null;
+
     public static string? FilePath => ReadSnapshot().FilePath ?? NormalizePath(GetFirstEnv("SIF_VSCODE_FILE", "VSCODE_ACTIVE_FILE"));
     public static string? Line => ReadSnapshot().Line ?? GetFirstEnv("SIF_VSCODE_LINE", "SIF_VSCODE_SELECTION_START_LINE", "VSCODE_ACTIVE_LINE");
     public static string? Column => ReadSnapshot().Column ?? GetFirstEnv("SIF_VSCODE_COLUMN", "SIF_VSCODE_SELECTION_START_COLUMN", "VSCODE_ACTIVE_COLUMN");
@@ -1567,6 +1570,14 @@ internal static class VscodeContext
         if (string.IsNullOrWhiteSpace(block))
             return message;
 
+        // Only include editor context if it changed since the last turn
+        if (block == _lastEditorContext)
+        {
+            _lastEditorContext = null;
+            return message;
+        }
+
+        _lastEditorContext = block;
         return block + "\n\nUser message:\n" + message;
     }
 
