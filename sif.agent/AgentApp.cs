@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Diagnostics;
 using Spectre.Console;
 using ConsoleMarkdownRenderer;
+using sif.agent.Services;
 
 namespace sif.agent;
 
@@ -79,6 +80,8 @@ internal class AgentApp
                 return await RunUninstall(rest);
             case "models":
                 return RunModels(rest);
+            case "secure":
+                return await RunSecure(rest);
             default:
                 AnsiConsole.MarkupLine($"[yellow]Unknown command: {cmd.EscapeMarkup()}[/]");
                 ShowHelp();
@@ -96,6 +99,7 @@ internal class AgentApp
         AnsiConsole.MarkupLine("  [bold]complete[/]  Run a one-off prompt and exit");
         AnsiConsole.MarkupLine("  [bold]config[/]  Show or set configuration");
         AnsiConsole.MarkupLine("  [bold]models[/]  List, add, switch, or remove model profiles");
+        AnsiConsole.MarkupLine("  [bold]secure[/]  Manage secure API key storage");
         AnsiConsole.MarkupLine("  [bold]setup[/]  Run the first-launch setup wizard");
         AnsiConsole.MarkupLine("  [bold]uninstall[/]  Remove the global tool and VS Code extension");
         AnsiConsole.WriteLine();
@@ -1666,6 +1670,137 @@ Conversation:
 
         AnsiConsole.Write(table);
         return 0;
+    }
+
+    private static async Task<int> RunSecure(string[] args)
+    {
+        var credentialStore = SecureCredentialStoreFactory.Create();
+        var config = AgentConfig.Load();
+
+        if (args.Length == 0)
+        {
+            // Show current secure storage status
+            AnsiConsole.MarkupLine($"[bold]Secure Credential Storage[/] [dim]({credentialStore.StorageType})[/]");
+            AnsiConsole.WriteLine();
+
+            var table = new Table();
+            table.AddColumn("Setting");
+            table.AddColumn("Value");
+            table.AddColumn("Status");
+
+            var secureEnabled = config.UseSecureApiKeyStorage;
+            table.AddRow("Secure storage enabled", secureEnabled.ToString(), secureEnabled ? "[green]✓[/]" : "[yellow]✗[/]");
+
+            var keyExists = await credentialStore.ExistsAsync("default-api-key");
+            table.AddRow("API key stored securely", keyExists.ToString(), keyExists ? "[green]✓[/]" : "[dim]none[/]");
+
+            // Check if there's a plaintext API key in the config file (top-level, not in profiles)
+            var configHasPlaintextKey = false;
+            if (AgentConfig.ConfigFileExists)
+            {
+                var json = File.ReadAllText(AgentConfig.ConfigPath);
+                // Parse the JSON to check top-level ApiKey only
+                try
+                {
+                    var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                    var loaded = JsonSerializer.Deserialize<AgentConfig>(json, options);
+                    configHasPlaintextKey = loaded != null && !string.IsNullOrEmpty(loaded.ApiKey);
+                }
+                catch
+                {
+                    // If we can't parse, assume no plaintext key at top level
+                    configHasPlaintextKey = false;
+                }
+            }
+            table.AddRow("API key in config file", configHasPlaintextKey.ToString(), configHasPlaintextKey ? "[yellow]⚠ (plaintext)[/]" : "[dim]none[/]");
+
+            AnsiConsole.Write(table);
+            AnsiConsole.WriteLine();
+            AnsiConsole.MarkupLine("[dim]Commands: migrate, restore, clear, status[/]");
+            return 0;
+        }
+
+        var subcommand = args[0].ToLowerInvariant();
+
+        switch (subcommand)
+        {
+            case "migrate":
+                // Migrate API key from config to secure storage
+                if (string.IsNullOrEmpty(config.ApiKey))
+                {
+                    // Try to load from config file directly
+                    if (AgentConfig.ConfigFileExists)
+                    {
+                        var json = File.ReadAllText(AgentConfig.ConfigPath);
+                        var loaded = JsonSerializer.Deserialize<AgentConfig>(json);
+                        if (loaded != null && !string.IsNullOrEmpty(loaded.ApiKey))
+                        {
+                            config.ApiKey = loaded.ApiKey;
+                        }
+                    }
+                }
+
+                if (string.IsNullOrEmpty(config.ApiKey))
+                {
+                    AnsiConsole.MarkupLine("[yellow]No API key found in config. Nothing to migrate.[/]");
+                    AnsiConsole.MarkupLine("[dim]Set an API key first with: sif config -s=AGENT_API_KEY=your-key[/]");
+                    return 1;
+                }
+
+                var success = await config.MigrateApiKeyToSecureStore(credentialStore);
+                if (success)
+                {
+                    config.Save();
+                    AnsiConsole.MarkupLine("[green]✓ API key migrated to secure storage.[/]");
+                    AnsiConsole.MarkupLine("[dim]The key has been removed from the config file.[/]");
+                    return 0;
+                }
+                else
+                {
+                    AnsiConsole.MarkupLine("[red]✗ Failed to migrate API key to secure storage.[/]");
+                    return 1;
+                }
+
+            case "restore":
+                // Restore API key from secure storage to config (for troubleshooting)
+                var secureKey = await credentialStore.RetrieveAsync("default-api-key");
+                if (string.IsNullOrEmpty(secureKey))
+                {
+                    AnsiConsole.MarkupLine("[yellow]No API key found in secure storage.[/]");
+                    return 1;
+                }
+
+                config.ApiKey = secureKey;
+                config.UseSecureApiKeyStorage = false;
+                config.Save();
+                AnsiConsole.MarkupLine("[green]✓ API key restored to config file (plaintext).[/]");
+                AnsiConsole.MarkupLine("[yellow]⚠ The key is now stored in plaintext in the config file.[/]");
+                return 0;
+
+            case "clear":
+                // Clear API key from secure storage
+                var cleared = await credentialStore.DeleteAsync("default-api-key");
+                if (cleared)
+                {
+                    config.UseSecureApiKeyStorage = false;
+                    config.Save();
+                    AnsiConsole.MarkupLine("[green]✓ API key cleared from secure storage.[/]");
+                }
+                else
+                {
+                    AnsiConsole.MarkupLine("[yellow]No API key found in secure storage.[/]");
+                }
+                return 0;
+
+            case "status":
+                // Already shown above (default behavior)
+                return 0;
+
+            default:
+                AnsiConsole.MarkupLine($"[yellow]Unknown subcommand: {subcommand.EscapeMarkup()}[/]");
+                AnsiConsole.MarkupLine("[dim]Available commands: migrate, restore, clear, status[/]");
+                return 1;
+        }
     }
 
     private static int RunModels(string[] args)

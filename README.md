@@ -17,6 +17,7 @@
 - **VS Code context** - the companion extension exposes active editor, cursor, and selection context to `sif`.
 - **Skills** - reusable markdown instructions can be loaded from project or user skill folders.
 - **Persistent config** - store model, endpoint, tool, reasoning, and compaction settings in `~/.sif/sif-agent.json`.
+- **Secure API key storage** - API keys can be stored in OS credential stores (Windows Credential Manager, macOS Keychain, Linux libsecret) instead of plaintext config files. Use `sif secure migrate` to move keys to secure storage.
 
 ## Requirements
 
@@ -115,6 +116,34 @@ When chat history grows past the compaction threshold, `sif` summarizes older me
 The `diagnostics` tool is for inspecting sif's runtime state only. It is not a debugger and does not launch, attach to, or manage .NET debug adapter sessions. There is also a legacy `debug` tool alias for the same diagnostics behavior.
 
 Tool calling is non-streaming: the model decides whether to call tools, then returns the final response. Thinking and reasoning display works for OpenAI o-series models and Qwen3.x models via vLLM.
+
+## Secure API Key Storage
+
+By default, API keys are stored in plaintext in `~/.sif/sif-agent.json`. For better security, `sif` supports storing API keys in OS-native credential stores:
+
+- **Windows**: Windows Credential Manager (DPAPI)
+- **macOS**: Keychain (via `security` command)
+- **Linux**: libsecret (via `secret-tool`) with encrypted file fallback
+
+### Commands
+
+```bash
+# Check secure storage status
+sif secure
+
+# Migrate API key from plaintext config to secure storage
+sif secure migrate
+
+# Restore API key from secure storage back to plaintext config (for troubleshooting)
+sif secure restore
+
+# Clear API key from secure storage
+sif secure clear
+```
+
+After running `sif secure migrate`, the API key is removed from the plaintext config file and stored securely. The `UseSecureApiKeyStorage: true` setting is added to your config to indicate that the key should be loaded from secure storage.
+
+Note: The current implementation secures the default API key. API keys stored in model profiles are not yet migrated to secure storage.
 
 ## MCP Servers
 

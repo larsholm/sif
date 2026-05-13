@@ -69,6 +69,7 @@ Services/
  ContextStore.cs
  DebugLog.cs
  McpService.cs
+ SecureCredentialStore.cs
  SkillStore.cs
  ToolRegistry.cs
  UiService.cs
@@ -276,6 +277,7 @@ Services/
  spectre.console/0.55.2/lib/net10.0/Spectre.Console.dll
  system.clientmodel/1.10.0/lib/net10.0/System.ClientModel.dll
  system.memory.data/10.0.3/lib/net10.0/System.Memory.Data.dll
+ system.security.cryptography.protecteddata/10.0.7/lib/net10.0/System.Security.Cryptography.ProtectedData.dll
 
 [analyzerReferences]
 <DOTNET>/packs/Microsoft.NETCore.App.Ref/10.0.4/analyzers/dotnet/cs/

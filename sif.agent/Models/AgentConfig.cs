@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using sif.agent.Services;
 
 namespace sif.agent;
 
@@ -18,6 +19,11 @@ internal class AgentConfig
     public string[]? Tools { get; set; }
     public string[]? ShellAllowedCommands { get; set; }
     public bool? ThinkingEnabled { get; set; } = true;
+    /// <summary>
+    /// If true, the API key is stored in the OS secure credential store
+    /// instead of plaintext in the config file.
+    /// </summary>
+    public bool UseSecureApiKeyStorage { get; set; }
     /// <summary>
     /// Named model profiles for easy switching between local/cloud backends.
     /// If populated, <see cref="CurrentProfile"/> determines which profile's
@@ -105,6 +111,7 @@ internal class AgentConfig
                     config.ThinkingEnabled = loaded.ThinkingEnabled;
                     config.CompactionThreshold = loaded.CompactionThreshold;
                     config.CompactionThresholdConfigured = loaded.CompactionThreshold != DefaultCompactionThreshold;
+                    config.UseSecureApiKeyStorage = loaded.UseSecureApiKeyStorage;
                     config.McpServers = loaded.McpServers ?? new();
                     config.Values = loaded.Values ?? new();
                     config.Profiles = loaded.Profiles ?? new();
@@ -161,6 +168,17 @@ internal class AgentConfig
         {
             config.CompactionThreshold = envCompact;
             config.CompactionThresholdConfigured = true;
+        }
+
+        // Load API key from secure storage if configured
+        if (config.UseSecureApiKeyStorage && string.IsNullOrEmpty(config.ApiKey))
+        {
+            var credentialStore = SecureCredentialStoreFactory.Create();
+            var secureKey = credentialStore.RetrieveAsync("default-api-key").GetAwaiter().GetResult();
+            if (!string.IsNullOrEmpty(secureKey))
+            {
+                config.ApiKey = secureKey;
+            }
         }
 
         return config;
@@ -284,6 +302,19 @@ internal class AgentConfig
         if (!Directory.Exists(dir))
             Directory.CreateDirectory(dir);
 
+        // If using secure storage, don't save API key in plaintext
+        var apiKeyBackup = ApiKey;
+        if (UseSecureApiKeyStorage && !string.IsNullOrEmpty(ApiKey))
+        {
+            // Save to secure store and remove from config
+            var credentialStore = SecureCredentialStoreFactory.Create();
+            var success = credentialStore.StoreAsync("default-api-key", ApiKey).GetAwaiter().GetResult();
+            if (success)
+            {
+                ApiKey = null; // Remove from plaintext config
+            }
+        }
+
         var json = JsonSerializer.Serialize(this, new JsonSerializerOptions
         {
             WriteIndented = true,
@@ -291,6 +322,12 @@ internal class AgentConfig
         });
 
         File.WriteAllText(ConfigPath, json);
+
+        // Restore API key in memory if it was backed up
+        if (apiKeyBackup != null)
+        {
+            ApiKey = apiKeyBackup;
+        }
     }
 }
 
