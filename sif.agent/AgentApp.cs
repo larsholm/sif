@@ -23,6 +23,9 @@ internal class AgentApp
             if (arg.StartsWith("--tools=")) continue;
             if (arg == "--model") { skipNext = true; continue; }
             if (arg.StartsWith("--model=")) continue;
+            if (arg == "--profile") { skipNext = true; continue; }
+            if (arg.StartsWith("--profile=")) continue;
+            if (arg == "-p" && !arg.StartsWith("-p-")) { skipNext = true; continue; }
             if (arg == "--base-url") { skipNext = true; continue; }
             if (arg.StartsWith("--base-url=")) continue;
             if (arg == "--api-key") { skipNext = true; continue; }
@@ -74,6 +77,8 @@ internal class AgentApp
                 return await RunSetup(rest);
             case "uninstall":
                 return await RunUninstall(rest);
+            case "models":
+                return RunModels(rest);
             default:
                 AnsiConsole.MarkupLine($"[yellow]Unknown command: {cmd.EscapeMarkup()}[/]");
                 ShowHelp();
@@ -90,11 +95,13 @@ internal class AgentApp
         AnsiConsole.MarkupLine("  (no args)     Start an interactive chat session");
         AnsiConsole.MarkupLine("  [bold]complete[/]  Run a one-off prompt and exit");
         AnsiConsole.MarkupLine("  [bold]config[/]  Show or set configuration");
+        AnsiConsole.MarkupLine("  [bold]models[/]  List, add, switch, or remove model profiles");
         AnsiConsole.MarkupLine("  [bold]setup[/]  Run the first-launch setup wizard");
         AnsiConsole.MarkupLine("  [bold]uninstall[/]  Remove the global tool and VS Code extension");
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine("Options (all commands):");
         AnsiConsole.WriteLine("  -m, --model <name>     Model to use");
+        AnsiConsole.WriteLine("  -p, --profile <name>   Use a named model profile");
         AnsiConsole.WriteLine("  -u, --base-url <url>   API base URL");
         AnsiConsole.WriteLine("  -k, --api-key <key>    API key");
         AnsiConsole.WriteLine("  -s, --system <text>    System prompt");
@@ -134,11 +141,12 @@ internal class AgentApp
                 else if (pendingFlag == "-max" || pendingFlag == "--max-tokens") opts.MaxTokens = int.TryParse(arg, out var m) ? m : null;
                 else if (pendingFlag == "--tools") opts.Tools = arg.Split(',').Select(s => s.Trim()).ToArray();
                 else if (pendingFlag == "--thinking") opts.Thinking = ParseThinkingArg(arg);
+                else if (pendingFlag == "-p" || pendingFlag == "--profile") opts.Profile = arg;
                 pendingFlag = null;
                 continue;
             }
 
-            if (arg is "-s" or "--system" or "-m" or "--model" or "-u" or "--base-url" or "-k" or "--api-key" or "--tools" or "--thinking" or "-t" or "--temperature" or "-max" or "--max-tokens")
+            if (arg is "-s" or "--system" or "-m" or "--model" or "-u" or "--base-url" or "-k" or "--api-key" or "--tools" or "--thinking" or "-t" or "--temperature" or "-max" or "--max-tokens" or "-p" or "--profile")
             {
                 nextIsValue = true;
                 pendingFlag = arg;
@@ -153,6 +161,8 @@ internal class AgentApp
                 opts.BaseUrl = arg[(arg.StartsWith("-u ") ? 3 : 11)..].Trim();
             else if (arg.StartsWith("-k ") || arg.StartsWith("--api-key "))
                 opts.ApiKey = arg[(arg.StartsWith("-k ") ? 3 : 11)..].Trim();
+            else if (arg.StartsWith("-p ") || arg.StartsWith("--profile "))
+                opts.Profile = arg[(arg.StartsWith("-p ") ? 3 : 10)..].Trim();
             else if (arg.StartsWith("--thinking "))
                 opts.Thinking = ParseThinkingArg(arg["--thinking ".Length..].Trim());
             else if (arg is "-n" or "--no-stream")
@@ -171,6 +181,10 @@ internal class AgentApp
                 opts.BaseUrl = arg[11..];
             else if (arg.StartsWith("-k="))
                 opts.ApiKey = arg[3..];
+            else if (arg.StartsWith("-p="))
+                opts.Profile = arg[3..];
+            else if (arg.StartsWith("--profile="))
+                opts.Profile = arg[10..];
             else if (arg.StartsWith("--api-key="))
                 opts.ApiKey = arg[11..];
             else if (arg.StartsWith("-t="))
@@ -201,6 +215,27 @@ internal class AgentApp
             await RunSetupWizard(firstLaunch: true);
 
         var config = AgentConfig.Build(opts.BaseUrl, opts.ApiKey, opts.Model, opts.Temperature, opts.MaxTokens);
+
+        // Apply profile overrides if a profile is specified or active
+        if (!string.IsNullOrEmpty(opts.Profile))
+        {
+            if (config.SwitchProfile(opts.Profile))
+            {
+                config.Save();
+                // CLI overrides still apply on top of the profile
+                if (!string.IsNullOrEmpty(opts.BaseUrl)) config.BaseUrl = opts.BaseUrl.TrimEnd('/');
+                if (!string.IsNullOrEmpty(opts.ApiKey)) config.ApiKey = opts.ApiKey;
+                if (!string.IsNullOrEmpty(opts.Model)) config.Model = opts.Model;
+                if (opts.Temperature.HasValue) config.Temperature = opts.Temperature;
+                if (opts.MaxTokens.HasValue) config.MaxTokens = opts.MaxTokens;
+            }
+            else
+            {
+                AnsiConsole.MarkupLine($"[red]Profile '{opts.Profile.EscapeMarkup()}' not found. Use 'sif models list' to see available profiles.[/]");
+                return 1;
+            }
+        }
+
         if (opts.Thinking.HasValue)
             config.ThinkingEnabled = opts.Thinking;
         var modelContextLength = await TryApplyModelCompactionThresholdAsync(config);
@@ -285,9 +320,26 @@ internal class AgentApp
                 {
                     ShowVscodeContext();
                 }
-                else if (trimmed == "/help")
+            else if (trimmed == "/help")
                 {
                     ShowChatHelp();
+                }
+                else if (trimmed == "/model" || trimmed.StartsWith("/model "))
+                {
+                    var rest = trimmed.Length == "/model".Length ? "" : trimmed["/model".Length..].Trim();
+                    HandleModelCommandInline(rest, config, tools, mcpService, out var newClient, out var shouldRestart);
+                    if (newClient != null)
+                    {
+                        if (client is IDisposable disp) disp.Dispose();
+                        client = newClient;
+                        if (shouldRestart)
+                        {
+                            ClearChatHistory(history);
+                            var initialSys = BuildInitialSystemPrompt(null, tools, skills);
+                            if (!string.IsNullOrWhiteSpace(initialSys))
+                                history.Add(new ChatMessage("system", initialSys));
+                        }
+                    }
                 }
                 else
                 {
@@ -635,6 +687,112 @@ Conversation:
                model.StartsWith("o3", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static void HandleModelCommandInline(string rest, AgentConfig config, string[]? tools, McpService? mcpService, out AgentClient? newClient, out bool shouldRestart)
+    {
+        newClient = null;
+        shouldRestart = false;
+
+        if (string.IsNullOrWhiteSpace(rest))
+        {
+            // List profiles
+            ShowModelProfiles(config);
+            return;
+        }
+
+        var parts = rest.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var subcommand = parts[0].ToLowerInvariant();
+
+        switch (subcommand)
+        {
+            case "list":
+                ShowModelProfiles(config);
+                break;
+            case "switch":
+            case "use":
+                var name = parts.Length > 1 ? parts[1].Trim() : null;
+                if (string.IsNullOrEmpty(name))
+                {
+                    AnsiConsole.MarkupLine("[yellow]Usage: /model switch <name>[/]\n");
+                    return;
+                }
+                if (config.SwitchProfile(name))
+                {
+                    config.Save();
+                    shouldRestart = true;
+                    var profile = config.Profiles[name];
+                    // Create new client with the profile's settings
+                    newClient = new AgentClient(config, tools, mcpService);
+                    AnsiConsole.MarkupLine($"[green]Switched to profile '{name.EscapeMarkup()}': {profile.Model.EscapeMarkup()} @ {profile.BaseUrl.EscapeMarkup()}[/]");
+                    AnsiConsole.MarkupLine("[dim]Conversation cleared. Start a new message to continue.[/]\n");
+                }
+                else
+                {
+                    AnsiConsole.MarkupLine($"[red]Profile '{name.EscapeMarkup()}' not found. Use 'sif models list' to see profiles.[/]");
+                }
+                break;
+            case "help":
+                AnsiConsole.MarkupLine("[bold]/model[/]             List model profiles and show current one");
+                AnsiConsole.MarkupLine("[bold]/model list[/]        Same as /model");
+                AnsiConsole.MarkupLine("[bold]/model switch <n>[/]  Switch to profile <name> (clears conversation)\n");
+                break;
+            default:
+                // Treat unknown subcommand as a profile name to switch to
+                if (config.SwitchProfile(subcommand))
+                {
+                    config.Save();
+                    shouldRestart = true;
+                    var profile = config.Profiles[subcommand];
+                    newClient = new AgentClient(config, tools, mcpService);
+                    AnsiConsole.MarkupLine($"[green]Switched to profile '{subcommand.EscapeMarkup()}': {profile.Model.EscapeMarkup()} @ {profile.BaseUrl.EscapeMarkup()}[/]");
+                    AnsiConsole.MarkupLine("[dim]Conversation cleared. Start a new message to continue.[/]\n");
+                }
+                else
+                {
+                    AnsiConsole.MarkupLine($"[red]Profile '{subcommand.EscapeMarkup()}' not found. Use '/model list' to see profiles.[/]");
+                }
+                break;
+        }
+    }
+
+    private static void ShowModelProfiles(AgentConfig config)
+    {
+        var profiles = config.Profiles;
+        if (profiles.Count == 0)
+        {
+            AnsiConsole.MarkupLine("[dim]No profiles configured. Use 'sif models add' or 'sif setup'.[/]\n");
+            return;
+        }
+
+        var current = config.CurrentProfile ?? "default";
+        AnsiConsole.MarkupLine($"[bold]Model Profiles[/] [dim](current: {current.EscapeMarkup()})[/]");
+        AnsiConsole.WriteLine();
+
+        var table = new Table();
+        table.AddColumn("Name");
+        table.AddColumn("Model");
+        table.AddColumn("Base URL");
+        table.AddColumn("Compact");
+        table.AddColumn("Active");
+
+        foreach (var (name, profile) in profiles.OrderBy(p => p.Key))
+        {
+            var isActive = name == current;
+            var compactLabel = profile.CompactionThreshold.HasValue
+                ? $"{profile.CompactionThreshold.Value / 1000:0.0}k"
+                : "global";
+            table.AddRow(
+                isActive ? $"[bold]{name.EscapeMarkup()}[/]" : name.EscapeMarkup(),
+                profile.Model.EscapeMarkup(),
+                profile.BaseUrl.EscapeMarkup(),
+                compactLabel.EscapeMarkup(),
+                isActive ? "[green]✓[/]" : "");
+        }
+
+        AnsiConsole.Write(table);
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine("[dim]/model switch <name> to change the active profile[/]\n");
+    }
+
     private static void ShowChatHelp()
     {
         var table = new Table();
@@ -643,6 +801,8 @@ Conversation:
         table.AddRow("[bold]/quit[/] or [bold]/exit[/]", "Exit the chat session");
         table.AddRow("[bold]/clear[/]", "Clear conversation history and keep the system prompt");
         table.AddRow("[bold]/sys <prompt>[/]", "Change the system prompt");
+        table.AddRow("[bold]/model[/]", "List model profiles and show current one");
+        table.AddRow("[bold]/model switch <name>[/]", "Switch to a model profile (clears conversation)");
         table.AddRow("[bold]/context[/]", "Show chat history and stored context summary");
         table.AddRow("[bold]/context full[/]", "Show full stored message contents sent before the next user message");
         table.AddRow("[bold]/context list[/]", "List stored context entries");
@@ -1508,6 +1668,234 @@ Conversation:
         return 0;
     }
 
+    private static int RunModels(string[] args)
+    {
+        var config = AgentConfig.Load();
+
+        if (args.Length == 0)
+        {
+            ShowModelsList(config);
+            return 0;
+        }
+
+        var subcommand = args[0];
+
+        return subcommand switch
+        {
+            "add" => AddProfile(config, args.Skip(1).ToArray()),
+            "switch" => SwitchProfile(config, args.Skip(1).ToArray()),
+            "remove" => RemoveProfile(config, args.Skip(1).ToArray()),
+            "list" => 0, // already shown above
+            _ => ShowHelpAndExit("Unknown subcommand. Use: add, switch, remove, list"),
+        };
+    }
+
+    private static void ShowModelsList(AgentConfig config)
+    {
+        var profiles = config.Profiles;
+        if (profiles.Count == 0)
+        {
+            AnsiConsole.MarkupLine("[dim]No profiles configured. Use 'sif models add <name> --url <url> --model <model>' to add one.[/]");
+            AnsiConsole.MarkupLine("[dim]Or use 'sif setup' for interactive setup.[/]");
+            return;
+        }
+
+        AnsiConsole.MarkupLine($"[bold]Model Profiles[/] [dim](current: {config.CurrentProfile ?? "default"})[/]");
+        AnsiConsole.WriteLine();
+
+        var table = new Table();
+        table.AddColumn("Name");
+        table.AddColumn("Model");
+        table.AddColumn("Base URL");
+        table.AddColumn("API Key");
+        table.AddColumn("Compact");
+        table.AddColumn("Active");
+
+        foreach (var (name, profile) in profiles.OrderBy(p => p.Key))
+        {
+            var isActive = (config.CurrentProfile ?? "default") == name;
+            var maskedKey = string.IsNullOrEmpty(profile.ApiKey)
+                ? "[dim](none)[/]"
+                : new string('*', Math.Min(profile.ApiKey.Length, 8));
+            var compactLabel = profile.CompactionThreshold.HasValue
+                ? $"{profile.CompactionThreshold.Value / 1000:0.0}k"
+                : "[dim]global[/]";
+
+            table.AddRow(
+                isActive ? $"[bold]{name.EscapeMarkup()}[/]" : name.EscapeMarkup(),
+                profile.Model.EscapeMarkup(),
+                profile.BaseUrl.EscapeMarkup(),
+                maskedKey,
+                compactLabel,
+                isActive ? "[green]✓[/]" : "");
+        }
+
+        AnsiConsole.Write(table);
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine("[dim]Use 'sif models switch <name>' to change the active profile.[/]");
+        AnsiConsole.MarkupLine("[dim]Use 'sif models add <name> --url <url> --model <model> [--compact <tokens>]' to add a profile.[/]");
+        AnsiConsole.MarkupLine("[dim]Use 'sif models remove <name>' to delete a profile.[/]");
+    }
+
+    private static int AddProfile(AgentConfig config, string[] args)
+    {
+        if (args.Length == 0)
+        {
+            AnsiConsole.MarkupLine("[yellow]Usage: sif models add <name> --url <url> --model <model> [--key <key>] [--compact <threshold>][/]");
+            return 1;
+        }
+
+        var name = args[0];
+        string? baseUrl = null, apiKey = null, model = null;
+        int? compactThreshold = null;
+        bool nextIsValue = false;
+        string? pendingFlag = null;
+
+        for (var i = 1; i < args.Length; i++)
+        {
+            if (nextIsValue)
+            {
+                nextIsValue = false;
+                if (pendingFlag == "--url" || pendingFlag == "-u") baseUrl = args[i];
+                else if (pendingFlag == "--key" || pendingFlag == "-k") apiKey = args[i];
+                else if (pendingFlag == "--model" || pendingFlag == "-m") model = args[i];
+                else if (pendingFlag == "--compact" || pendingFlag == "--compact-threshold")
+                {
+                    if (int.TryParse(args[i], out var compact)) compactThreshold = compact;
+                }
+                pendingFlag = null;
+                continue;
+            }
+
+            if (args[i] is "--url" or "-u" or "--key" or "-k" or "--model" or "-m" or "--compact" or "--compact-threshold")
+            {
+                nextIsValue = true;
+                pendingFlag = args[i];
+                continue;
+            }
+
+            if (args[i].StartsWith("--url=")) baseUrl = args[i]["--url=".Length..];
+            else if (args[i].StartsWith("-u=")) baseUrl = args[i][3..];
+            else if (args[i].StartsWith("--key=")) apiKey = args[i]["--key=".Length..];
+            else if (args[i].StartsWith("-k=")) apiKey = args[i][3..];
+            else if (args[i].StartsWith("--model=")) model = args[i]["--model=".Length..];
+            else if (args[i].StartsWith("-m=")) model = args[i][3..];
+            else if (args[i].StartsWith("--compact="))
+            {
+                var val = args[i]["--compact=".Length..];
+                if (int.TryParse(val, out var compact)) compactThreshold = compact;
+            }
+            else if (args[i].StartsWith("--compact-threshold="))
+            {
+                var val = args[i]["--compact-threshold=".Length..];
+                if (int.TryParse(val, out var compact)) compactThreshold = compact;
+            }
+        }
+
+        if (string.IsNullOrEmpty(baseUrl))
+        {
+            AnsiConsole.MarkupLine("[yellow]--url is required.[/]");
+            return 1;
+        }
+        if (string.IsNullOrEmpty(model))
+        {
+            AnsiConsole.MarkupLine("[yellow]--model is required.[/]");
+            return 1;
+        }
+
+        if (config.Profiles.ContainsKey(name))
+        {
+            if (!AnsiConsole.Confirm($"Profile '{name.EscapeMarkup()}' already exists. Overwrite?", false))
+                return 1;
+        }
+
+        config.Profiles[name] = new ModelProfile
+        {
+            Name = name,
+            BaseUrl = baseUrl.TrimEnd('/'),
+            ApiKey = string.IsNullOrEmpty(apiKey) ? null : apiKey,
+            Model = model,
+            Temperature = null,
+            MaxTokens = null,
+            ThinkingEnabled = true,
+            CompactionThreshold = compactThreshold
+        };
+
+        // If this is the first profile or user wants to switch to it, make it active
+        if (config.CurrentProfile == null || config.Profiles.Count == 1)
+            config.CurrentProfile = name;
+
+        config.Save();
+        AnsiConsole.MarkupLine($"[green]Profile '{name.EscapeMarkup()}' saved.[/]");
+        return 0;
+    }
+
+    private static int SwitchProfile(AgentConfig config, string[] args)
+    {
+        if (args.Length == 0)
+        {
+            AnsiConsole.MarkupLine("[yellow]Usage: sif models switch <name>[/]");
+            return 1;
+        }
+
+        var name = args[0];
+        if (config.SwitchProfile(name))
+        {
+            var profile = config.Profiles[name];
+            config.Save();
+            AnsiConsole.MarkupLine($"[green]Switched to profile '{name.EscapeMarkup()}': {profile.Model.EscapeMarkup()} @ {profile.BaseUrl.EscapeMarkup()}[/]");
+            return 0;
+        }
+
+        AnsiConsole.MarkupLine($"[red]Profile '{name.EscapeMarkup()}' not found. Use 'sif models list' to see available profiles.[/]");
+        return 1;
+    }
+
+    private static int RemoveProfile(AgentConfig config, string[] args)
+    {
+        if (args.Length == 0)
+        {
+            AnsiConsole.MarkupLine("[yellow]Usage: sif models remove <name>[/]");
+            return 1;
+        }
+
+        var name = args[0];
+        if (!config.Profiles.ContainsKey(name))
+        {
+            AnsiConsole.MarkupLine($"[red]Profile '{name.EscapeMarkup()}' not found.[/]");
+            return 1;
+        }
+
+        var force = args.Length > 1 && (args[1] is "-y" or "--yes" or "--force");
+
+        if (config.Profiles.Count == 1)
+        {
+            AnsiConsole.MarkupLine("[yellow]Cannot remove the last profile. Use 'sif config --set' to change settings instead.[/]");
+            return 1;
+        }
+
+        if (!force && !AnsiConsole.Confirm($"Remove profile '{name.EscapeMarkup()}'?", false))
+            return 1;
+
+        config.Profiles.Remove(name);
+
+        if (config.CurrentProfile == name)
+        {
+            config.CurrentProfile = config.Profiles.Keys.First();
+            AnsiConsole.MarkupLine($"[dim]Switched to profile '{config.CurrentProfile.EscapeMarkup()}' (was active).[/]");
+        }
+
+        config.Save();
+        AnsiConsole.MarkupLine($"[green]Profile '{name.EscapeMarkup()}' removed.[/]");
+        return 0;
+    }
+
+    private static int ShowHelpAndExit(string message)
+    {
+        AnsiConsole.MarkupLine($"[yellow]{message.EscapeMarkup()}[/]");
+        return 1;
+    }
+
     private static async Task<int> RunUninstall(string[] args)
     {
         var force = args.Any(arg => arg is "-y" or "--yes" or "--force");
@@ -1976,6 +2364,7 @@ internal class CliArgs
     public List<string>? Positional { get; set; }
     public string? SystemPrompt { get; set; }
     public string? Model { get; set; }
+    public string? Profile { get; set; }
     public string? BaseUrl { get; set; }
     public string? ApiKey { get; set; }
     public bool NoStream { get; set; }

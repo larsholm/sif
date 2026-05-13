@@ -58,6 +58,7 @@ AgentApp.cs
 Models/
  AgentConfig.cs
  ChatMessage.cs
+ ModelProfile.cs
 obj/Debug/net10.0/
  .NETCoreApp,Version=v10.0.AssemblyAttributes.cs
  sif.agent.AssemblyInfo.cs
