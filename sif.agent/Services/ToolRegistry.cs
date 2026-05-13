@@ -305,26 +305,41 @@ internal static class ToolRegistry
 
     private static string RunServe(string argsJson)
     {
-        using var doc = JsonDocument.Parse(argsJson);
-        var root = doc.RootElement;
-        var pathArg = root.TryGetProperty("path", out var p) ? p.GetString() : null;
-        var path = ResolvePath(pathArg ?? "");
-        var bind = root.TryGetProperty("bind", out var b) ? b.GetString() ?? "127.0.0.1" : "127.0.0.1";
-        var port = root.TryGetProperty("port", out var portElement) ? portElement.GetInt32() : 0;
-
-        if (!Directory.Exists(path))
-            return $"Error: Directory not found: {path}";
-        if (port < 0 || port > 65535)
-            return "Error: port must be between 0 and 65535.";
-        if (bind is not "127.0.0.1" and not "localhost" and not "0.0.0.0")
-            return "Error: bind must be 127.0.0.1, localhost, or 0.0.0.0.";
-
-        if (port == 0)
-            port = GetFreeTcpPort(IPAddress.Loopback);
-
-        var logPath = Path.Combine(Path.GetTempPath(), $"sif_http_{port}_{Guid.NewGuid():N}.log");
         try
         {
+            if (string.IsNullOrWhiteSpace(argsJson))
+                return "Error: serve tool requires a JSON arguments object.";
+
+            using var doc = JsonDocument.Parse(argsJson);
+            var root = doc.RootElement;
+            var pathArg = root.TryGetProperty("path", out var p) ? p.GetString() : null;
+            var path = ResolvePath(pathArg ?? "");
+            var bind = root.TryGetProperty("bind", out var b) ? b.GetString() ?? "127.0.0.1" : "127.0.0.1";
+
+            int port;
+            if (root.TryGetProperty("port", out var portElement))
+            {
+                if (portElement.ValueKind != JsonValueKind.Number)
+                    return "Error: port must be a number.";
+                port = portElement.GetInt32();
+            }
+            else
+            {
+                port = 0;
+            }
+
+            if (!Directory.Exists(path))
+                return $"Error: Directory not found: {path}";
+            if (port < 0 || port > 65535)
+                return "Error: port must be between 0 and 65535.";
+            if (bind is not "127.0.0.1" and not "localhost" and not "0.0.0.0")
+                return "Error: bind must be 127.0.0.1, localhost, or 0.0.0.0.";
+
+            if (port == 0)
+                port = GetFreeTcpPort(IPAddress.Loopback);
+
+            var logPath = Path.Combine(Path.GetTempPath(), $"sif_http_{port}_{Guid.NewGuid():N}.log");
+
             var python = FindExecutable(RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
                 ? ["python", "py"]
                 : ["python3", "python"]);
@@ -366,6 +381,10 @@ internal static class ToolRegistry
             }
 
             return $"Serving {path} at http://{bind}:{port}/\nPID: {process.Id}\nLog: {logPath}";
+        }
+        catch (JsonException ex)
+        {
+            return $"Error: Invalid JSON arguments: {ex.Message}";
         }
         catch (Exception ex)
         {
