@@ -45,13 +45,14 @@ internal static class ToolRegistry
         {
             tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
                 "bash",
-                "Run an allowed shell command and return output. Uses Bash on Unix-like systems and PowerShell on Windows. Times out after 30s; use serve for static HTTP servers.",
+                "Run an allowed shell command and return output. Uses Bash on Unix-like systems and PowerShell on Windows. Default timeout 30s; use the timeout parameter to override or use serve for long-running servers.",
                 BinaryData.FromString("""
                     {
                         "type": "object",
                         "properties": {
                             "command": { "type": "string", "description": "The shell command to execute" },
-                            "limit": { "type": "integer", "description": "Max output characters (default 24000, max 120000)" }
+                            "limit": { "type": "integer", "description": "Max output characters (default 24000, max 120000)" },
+                            "timeout": { "type": "number", "description": "Timeout in seconds (default 30, max 300). Overrides the default 30s timeout." }
                         },
                         "required": ["command"]
                     }
@@ -449,6 +450,27 @@ internal static class ToolRegistry
         var limit = root.TryGetProperty("limit", out var l) ? l.GetInt32() : 24000;
         limit = Math.Clamp(limit, 1000, 120000);
 
+        // Parse timeout parameter (default 30s, max 300s, min 1s)
+        var timeoutSeconds = 30.0;
+        if (root.TryGetProperty("timeout", out var t))
+        {
+            if (t.ValueKind == JsonValueKind.Number && t.TryGetDouble(out var parsedTimeout))
+            {
+                if (double.IsNaN(parsedTimeout) || double.IsInfinity(parsedTimeout))
+                    return "Error: timeout must be a finite number.";
+                if (parsedTimeout < 1)
+                    return "Error: timeout must be at least 1 second.";
+                if (parsedTimeout > 300)
+                    return "Error: timeout must be at most 300 seconds (5 minutes).";
+                timeoutSeconds = parsedTimeout;
+            }
+            else
+            {
+                return "Error: timeout must be a number.";
+            }
+        }
+        var timeout = TimeSpan.FromSeconds(timeoutSeconds);
+
         var firstWord = GetFirstCommandWord(command);
         var allowed = GetAllowedShellCommands();
         if (!IsShellCommandAllowed(firstWord, allowed) && !PromptToAllowShellCommand(firstWord, command))
@@ -469,7 +491,7 @@ internal static class ToolRegistry
 
                 try
                 {
-                    if (await Task.WhenAny(waitTask, Task.Delay(TimeSpan.FromSeconds(30))) != waitTask)
+                    if (await Task.WhenAny(waitTask, Task.Delay(timeout, cancellationToken)) != waitTask)
                     {
                         await TerminateProcessTreeAsync(process);
                         await Task.WhenAny(Task.WhenAll(outputTask, errorTask), Task.Delay(TimeSpan.FromSeconds(1)));
@@ -477,8 +499,8 @@ internal static class ToolRegistry
                         var errors = ReadCompletedOrEmpty(errorTask);
                         var partial = FormatCommandResult(output, errors, limit);
                         return string.IsNullOrEmpty(partial)
-                            ? "Error: Command timed out after 30s."
-                            : $"Error: Command timed out after 30s. Partial output:\n{partial}";
+                            ? $"Error: Command timed out after {timeoutSeconds:0.##}s."
+                            : $"Error: Command timed out after {timeoutSeconds:0.##}s. Partial output:\n{partial}";
                     }
 
                     await waitTask;
@@ -927,18 +949,67 @@ internal static class ToolRegistry
         var oldText = root.GetProperty("oldText").GetString() ?? "";
         var newText = root.GetProperty("newText").GetString() ?? "";
 
+        // Validate inputs
+        if (string.IsNullOrEmpty(path)) return "Error: path is required.";
+        if (string.IsNullOrEmpty(oldText)) return "Error: oldText is required and must not be empty. The text to replace must be specified.";
+        
         if (!File.Exists(path)) return $"Error: File not found: {path}";
 
         var content = File.ReadAllText(path);
-        if (!content.Contains(oldText))
+        
+        // Check if oldText exists in the file
+        if (!content.Contains(oldText, StringComparison.Ordinal))
         {
-            if (content.Contains(oldText, StringComparison.OrdinalIgnoreCase)) return "Error: Text not found (case mismatch). The text must match exactly including whitespace.";
-            return $"Error: Text not found in {path}";
+            // Provide helpful diagnostics
+            var fileName = Path.GetFileName(path);
+            var oldTextLength = oldText.Length;
+            var oldTextPreview = oldText.Length > 100 ? oldText[..100] + "..." : oldText;
+            
+            // Check for case mismatch
+            if (content.Contains(oldText, StringComparison.OrdinalIgnoreCase))
+                return $"Error: Text not found in {fileName} (case mismatch). The text must match exactly including case, whitespace, and line endings.\nSearched for ({oldTextLength} chars): {oldTextPreview}";
+            
+            // Check for whitespace differences (common issue)
+            var normalizedOld = NormalizeWhitespace(oldText);
+            var normalizedContent = NormalizeWhitespace(content);
+            if (normalizedContent.Contains(normalizedOld, StringComparison.Ordinal))
+                return $"Error: Text not found in {fileName} (whitespace/line ending mismatch). The text must match exactly including spaces, tabs, and line endings.\nSearched for ({oldTextLength} chars): {oldTextPreview}\nTip: Try copying the exact text from the file including whitespace.";
+            
+            return $"Error: Text not found in {fileName}. The exact text to replace was not found in the file.\nSearched for ({oldTextLength} chars): {oldTextPreview}\nTip: Use the read tool first to see the exact content and whitespace.";
         }
 
-        var newContent = content.Replace(oldText, newText, StringComparison.Ordinal);
-        File.WriteAllText(path, newContent);
-        return $"Edited {path} successfully.";
+        // Check if replacement would actually change anything
+        if (content.Contains(oldText, StringComparison.Ordinal))
+        {
+            var newContent = content.Replace(oldText, newText, StringComparison.Ordinal);
+            if (newContent == content)
+                return $"Warning: oldText and newText are identical. No changes made to {Path.GetFileName(path)}.";
+            
+            File.WriteAllText(path, newContent);
+            var occurrences = CountOccurrences(content, oldText);
+            return $"Edited {Path.GetFileName(path)} successfully. Replaced {occurrences} occurrence(s) of the specified text.";
+        }
+
+        // Should not reach here due to check above, but defensively:
+        return $"Error: Unexpected error editing {Path.GetFileName(path)}.";
+    }
+
+    private static string NormalizeWhitespace(string text)
+    {
+        return text.Replace("\r\n", "\n").Replace("\r", "\n").Replace(" ", "").Replace("\t", "");
+    }
+
+    private static int CountOccurrences(string text, string pattern)
+    {
+        if (string.IsNullOrEmpty(pattern)) return 0;
+        int count = 0;
+        int index = 0;
+        while ((index = text.IndexOf(pattern, index, StringComparison.Ordinal)) != -1)
+        {
+            count++;
+            index += pattern.Length;
+        }
+        return count;
     }
 
     private static string RunWrite(string argsJson)
