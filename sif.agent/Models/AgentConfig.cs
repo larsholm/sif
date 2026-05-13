@@ -174,7 +174,7 @@ internal class AgentConfig
         if (config.UseSecureApiKeyStorage && string.IsNullOrEmpty(config.ApiKey))
         {
             var credentialStore = SecureCredentialStoreFactory.Create();
-            var secureKey = credentialStore.RetrieveAsync("default-api-key").GetAwaiter().GetResult();
+            var secureKey = credentialStore.RetrieveAsync($"api-key-{config.CurrentProfile}").GetAwaiter().GetResult();
             if (!string.IsNullOrEmpty(secureKey))
             {
                 config.ApiKey = secureKey;
@@ -191,7 +191,19 @@ internal class AgentConfig
     public ModelProfile? GetActiveProfile()
     {
         if (!string.IsNullOrEmpty(CurrentProfile) && Profiles.TryGetValue(CurrentProfile, out var profile))
+        {
+            // If the profile uses secure storage, load it now
+            if (profile.UseSecureApiKeyStorage && string.IsNullOrEmpty(profile.ApiKey))
+            {
+                var credentialStore = SecureCredentialStoreFactory.Create();
+                var secureKey = credentialStore.RetrieveAsync($"api-key-{CurrentProfile}").GetAwaiter().GetResult();
+                if (!string.IsNullOrEmpty(secureKey))
+                {
+                    profile.ApiKey = secureKey;
+                }
+            }
             return profile;
+        }
 
         // Fall back to flat config
         return new ModelProfile
@@ -216,7 +228,8 @@ internal class AgentConfig
         {
             CurrentProfile = name;
             BaseUrl = profile.BaseUrl;
-            ApiKey = profile.ApiKey;
+            if (!string.IsNullOrEmpty(profile.ApiKey))
+                ApiKey = profile.ApiKey;
             Model = profile.Model;
             Temperature = profile.Temperature;
             MaxTokens = profile.MaxTokens;
@@ -303,6 +316,17 @@ internal class AgentConfig
             Directory.CreateDirectory(dir);
 
         // If using secure storage, don't save API key in plaintext
+        foreach (var profile in Profiles.Values.Where(p => p.UseSecureApiKeyStorage && !string.IsNullOrEmpty(p.ApiKey)))
+        {
+            var credentialStore = SecureCredentialStoreFactory.Create();
+            var success = credentialStore.StoreAsync($"api-key-{profile.Name}", profile.ApiKey!).GetAwaiter().GetResult();
+            if (success)
+            {
+                profile.ApiKey = null;
+            }
+        }
+
+        // Handle legacy global secure storage
         var apiKeyBackup = ApiKey;
         if (UseSecureApiKeyStorage && !string.IsNullOrEmpty(ApiKey))
         {

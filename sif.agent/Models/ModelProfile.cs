@@ -17,6 +17,9 @@ internal class ModelProfile
     /// <summary>API key. Leave empty for local models that don't require authentication.</summary>
     public string? ApiKey { get; set; }
 
+    /// <summary>If true, the API key for this profile is stored in the OS secure credential store.</summary>
+    public bool UseSecureApiKeyStorage { get; set; }
+
     /// <summary>Model identifier to use with this endpoint (e.g., "qwen3.6-27b-autoround", "gpt-4o", "llama3.1").</summary>
     public string Model { get; set; } = string.Empty;
 
