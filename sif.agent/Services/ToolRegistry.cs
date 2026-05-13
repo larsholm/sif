@@ -955,6 +955,13 @@ internal static class ToolRegistry
         
         if (!File.Exists(path)) return $"Error: File not found: {path}";
 
+        // Warn if file is not in a git repository
+        var gitWarning = "";
+        if (!IsPathInGitRepo(path))
+        {
+            gitWarning = GetGitWarning(path, "edit");
+        }
+
         var content = File.ReadAllText(path);
         
         // Check if oldText exists in the file
@@ -987,7 +994,8 @@ internal static class ToolRegistry
             
             File.WriteAllText(path, newContent);
             var occurrences = CountOccurrences(content, oldText);
-            return $"Edited {Path.GetFileName(path)} successfully. Replaced {occurrences} occurrence(s) of the specified text.";
+            var successMsg = $"Edited {Path.GetFileName(path)} successfully. Replaced {occurrences} occurrence(s) of the specified text.";
+            return gitWarning + successMsg;
         }
 
         // Should not reach here due to check above, but defensively:
@@ -1019,16 +1027,67 @@ internal static class ToolRegistry
         var path = ResolvePath(root.GetProperty("path").GetString() ?? "");
         var content = root.GetProperty("content").GetString() ?? "";
 
+        // Warn if file is not in a git repository
+        var gitWarning = "";
+        if (!IsPathInGitRepo(path))
+        {
+            gitWarning = GetGitWarning(path, "write");
+        }
+
         var dir = Path.GetDirectoryName(path);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
 
         File.WriteAllText(path, content);
-        return $"Wrote {path} ({content.Length} chars).";
+        var successMsg = $"Wrote {path} ({content.Length} chars).";
+        return gitWarning + successMsg;
     }
 
     private static string ResolvePath(string path)
     {
         if (string.IsNullOrEmpty(path)) return Environment.CurrentDirectory;
         return Path.IsPathRooted(path) ? path : Path.Combine(Environment.CurrentDirectory, path);
+    }
+
+    private static bool IsPathInGitRepo(string filePath)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(filePath) ?? Environment.CurrentDirectory;
+            
+            // Walk up the directory tree looking for .git folder
+            var currentDir = new DirectoryInfo(dir);
+            while (currentDir != null)
+            {
+                if (Directory.Exists(Path.Combine(currentDir.FullName, ".git")))
+                    return true;
+                currentDir = currentDir.Parent;
+            }
+            
+            return false;
+        }
+        catch
+        {
+            // If any error occurs, assume not in a git repo
+            return false;
+        }
+    }
+
+    private static string GetGitWarning(string filePath, string operation)
+    {
+        var fileName = Path.GetFileName(filePath);
+        var dir = Path.GetDirectoryName(Path.GetFullPath(filePath)) ?? Environment.CurrentDirectory;
+        
+        return $"""
+            ⚠️  Warning: {fileName} is not in a git repository.
+            
+            It's recommended to track files with git before {operation.ToLower()}ing them.
+            To create a git repo in this directory:
+              cd {dir}
+              git init
+              git add {fileName}
+              git commit -m "Initial commit"
+            
+            Continuing with {operation.ToLower()}...
+            """;
     }
 }
