@@ -8,10 +8,19 @@ namespace sif.agent.Services.Tools;
 
 public static class RoslynTools
 {
-    public static async Task<string> FindSymbolsAsync(string path, string name)
+    private static string? GetDefaultSolutionOrProject()
     {
+        var dir = Directory.GetCurrentDirectory();
+        var sln = Directory.GetFiles(dir, "*.sln").FirstOrDefault();
+        if (sln != null) return sln;
+        return Directory.GetFiles(dir, "*.csproj").FirstOrDefault();
+    }
+
+    public static async Task<string> FindSymbolsAsync(string? path, string name)
+    {
+        path = string.IsNullOrWhiteSpace(path) ? GetDefaultSolutionOrProject() : path;
         if (string.IsNullOrWhiteSpace(path))
-            return "Error: path is required.";
+            return "Error: No solution or project file found.";
 
         using var workspace = MSBuildWorkspace.Create();
         var projects = path.EndsWith(".sln")
@@ -35,8 +44,12 @@ public static class RoslynTools
         return JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true });
     }
 
-    public static async Task<string> GetDiagnosticsAsync(string projectPath)
+    public static async Task<string> GetDiagnosticsAsync(string? projectPath)
     {
+        projectPath = string.IsNullOrWhiteSpace(projectPath) ? GetDefaultSolutionOrProject() : projectPath;
+        if (string.IsNullOrWhiteSpace(projectPath))
+            return "Error: No solution or project file found.";
+
         using var workspace = MSBuildWorkspace.Create();
         var project = await workspace.OpenProjectAsync(projectPath);
         var compilation = await project.GetCompilationAsync();
