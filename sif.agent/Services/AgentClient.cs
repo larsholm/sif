@@ -440,7 +440,7 @@ internal class AgentClient
 
     private static IEnumerable<string> SelectInitialTools(HashSet<string> available)
     {
-        var initial = new[] { "bash", "read", "edit", "write", "ctx_search", "ctx_read", "ctx_summarize" };
+        var initial = new[] { "bash", "read", "edit", "write", "ctx_search", "ctx_read", "ctx_summarize", "roslyn" };
         foreach (var tool in initial)
         {
             if (available.Contains(tool))
