@@ -1131,7 +1131,7 @@ Conversation:
             return config.Tools;
 
         // Default: always enable tools
-        return new[] { "bash", "read", "edit", "write", "sleep", "serve", "context" };
+        return new[] { "bash", "read", "edit", "write", "sleep", "serve", "context", "roslyn" };
     }
 
     private static string BuildInitialSystemPrompt(string? cliSystemPrompt, string[]? tools, IReadOnlyList<SkillFile> skills)
@@ -1156,6 +1156,7 @@ Conversation:
             { "write", "Create or overwrite a file" },
             { "sleep", "Pause briefly before continuing or retrying" },
             { "serve", "Start a local static HTTP server for a directory" },
+            { "roslyn", "Analyze C# code using Roslyn (find symbols, get diagnostics)" },
             { "context", "Store and search large tool results out-of-band" },
             { "ctx", "Store and search large tool results out-of-band" },
         };
