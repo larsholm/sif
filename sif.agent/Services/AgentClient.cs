@@ -271,7 +271,7 @@ internal class AgentClient
                         // what happened on previous turns
                         var toolCallContent = $"Called tool: {toolName} with arguments: {argsJson}";
                         history.Add(new ChatMessage("assistant", toolCallContent));
-                        history.Add(new ChatMessage("user", $"Result from {toolName}:\n{toolResult}"));
+                        history.Add(new ChatMessage("tool", $"Result from {toolName}:\n{toolResult}", toolCall.Id));
                     }
 
                     // Continue the loop to get the next response
@@ -479,6 +479,7 @@ internal class AgentClient
         {
             "system" => OpenAI.Chat.ChatMessage.CreateSystemMessage(msg.Content),
             "assistant" => OpenAI.Chat.ChatMessage.CreateAssistantMessage(msg.Content),
+            "tool" => OpenAI.Chat.ChatMessage.CreateToolMessage(msg.ToolCallId ?? "unknown", msg.Content),
             _ => OpenAI.Chat.ChatMessage.CreateUserMessage(msg.Content),
         };
     }

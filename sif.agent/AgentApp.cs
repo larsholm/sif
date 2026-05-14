@@ -397,16 +397,16 @@ internal class AgentApp
             catch (OperationCanceledException)
             {
                 AnsiConsole.MarkupLine("[dim]Cancelled.[/]\n");
-                if (history.Count > 0 && history[^1].Role == "user")
-                    history.RemoveAt(history.Count - 1);
+                // Remove all messages from the last user message onward,
+                // including any partial tool calls/results that were added
+                RollbackToLastUserMessage(history);
             }
             catch (Exception ex)
             {
                 var debugPath = DebugLog.Save("chat-loop", ex, "during conversation");
                 AnsiConsole.MarkupLine($"[red]Error:[/] {ex.Message.EscapeMarkup()}");
                 AnsiConsole.MarkupLine($"[dim]Debug saved to {debugPath.EscapeMarkup()}[/]\n");
-                if (history.Count > 0 && history[^1].Role == "user")
-                    history.RemoveAt(history.Count - 1);
+                RollbackToLastUserMessage(history);
             }
 
             // Check if we should compact the conversation history
@@ -645,6 +645,17 @@ Conversation:
             AnsiConsole.MarkupLine($"[yellow]Compaction failed ({ex.Message}), continuing with existing history.[/]");
             return false;
         }
+    }
+
+    /// <summary>
+    /// Removes messages from the last user message onward, undoing
+    /// partial assistant/tool messages from an interrupted turn.
+    /// </summary>
+    private static void RollbackToLastUserMessage(List<ChatMessage> history)
+    {
+        var lastUserIdx = history.FindLastIndex(m => m.Role == "user");
+        if (lastUserIdx >= 0)
+            history.RemoveRange(lastUserIdx, history.Count - lastUserIdx);
     }
 
     private static async Task WatchEscapeForCancelAsync(CancellationTokenSource cts)
