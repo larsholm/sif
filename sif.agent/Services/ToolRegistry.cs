@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using OpenAI;
 using Spectre.Console;
+using sif.agent.Services.Tools;
 
 namespace sif.agent;
 
@@ -238,6 +239,38 @@ internal static class ToolRegistry
             ));
         }
 
+        if (enabled.Contains("roslyn"))
+        {
+            tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
+                "roslyn_find_symbols",
+                "Find symbols in a C# solution.",
+                BinaryData.FromString("""
+                    {
+                        "type": "object",
+                        "properties": {
+                            "solutionPath": { "type": "string", "description": "Path to the .sln file" },
+                            "name": { "type": "string", "description": "Symbol name to search for" }
+                        },
+                        "required": ["solutionPath", "name"]
+                    }
+                    """)
+            ));
+
+            tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
+                "roslyn_get_diagnostics",
+                "Get diagnostic issues in a C# project.",
+                BinaryData.FromString("""
+                    {
+                        "type": "object",
+                        "properties": {
+                            "projectPath": { "type": "string", "description": "Path to the .csproj or .sln file" }
+                        },
+                        "required": ["projectPath"]
+                    }
+                    """)
+            ));
+        }
+
         return tools;
     }
 
@@ -255,6 +288,8 @@ internal static class ToolRegistry
             "ctx_search" => RunContextSearch(argumentsJson),
             "ctx_read" => RunContextRead(argumentsJson),
             "ctx_stats" => ContextStore.Stats(),
+            "roslyn_find_symbols" => await RunRoslynFindSymbols(argumentsJson),
+            "roslyn_get_diagnostics" => await RunRoslynGetDiagnostics(argumentsJson),
             _ => $"Error: Unknown tool '{toolName}'"
         };
     }
@@ -285,6 +320,23 @@ internal static class ToolRegistry
         var query = root.TryGetProperty("query", out var q) ? q.GetString() : null;
         var maxChars = root.TryGetProperty("maxChars", out var m) ? m.GetInt32() : 32000;
         return ContextStore.Read(id, query, maxChars);
+    }
+
+    private static async Task<string> RunRoslynFindSymbols(string argsJson)
+    {
+        using var doc = JsonDocument.Parse(argsJson);
+        var root = doc.RootElement;
+        var solutionPath = root.GetProperty("solutionPath").GetString() ?? "";
+        var name = root.GetProperty("name").GetString() ?? "";
+        return await RoslynTools.FindSymbolsAsync(solutionPath, name);
+    }
+
+    private static async Task<string> RunRoslynGetDiagnostics(string argsJson)
+    {
+        using var doc = JsonDocument.Parse(argsJson);
+        var root = doc.RootElement;
+        var projectPath = root.GetProperty("projectPath").GetString() ?? "";
+        return await RoslynTools.GetDiagnosticsAsync(projectPath);
     }
 
     private static async Task<string> RunSleepAsync(string argsJson, CancellationToken cancellationToken)

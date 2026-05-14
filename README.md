@@ -4,13 +4,14 @@
   <img src="assets/sif.jpg" alt="Sif" width="720">
 </p>
 
-`sif` is a lightweight AI agent console tool written in C#. It works with OpenAI-compatible APIs, local model servers, and a small set of built-in tools for reading, editing, searching, serving, and inspecting local context.
+`sif` is a lightweight BYOK AI agent console tool written in C#. It works with OpenAI-compatible APIs, local model servers, and a small set of built-in tools for reading, editing, searching, serving, and inspecting local context. **C# is a first-class citizen** — the built-in Roslyn tools let the agent analyze solutions and projects directly using the .NET Compiler Platform.
 
 ## Highlights
 
-- **Interactive by default** - run `sif` to start a chat session.
+- **Interactive** - run `sif` to start a chat session.
 - **Local model friendly** - use vLLM, Ollama, LM Studio, LiteLLM, OpenAI, or any compatible endpoint.
-- **Tool calling** - enable shell, file, context, sleep, static server, and diagnostics tools.
+- **Tool calling** - enable shell, file, context, sleep, static server, diagnostics, and Roslyn tools.
+- **C# as a first-class citizen** - the built-in Roslyn tools let the agent analyze C# solutions directly — find symbols across projects, and inspect compiler diagnostics — without leaving the chat.
 - **MCP servers** - connect to Model Context Protocol servers over stdio, HTTP, streamable HTTP, or SSE.
 - **Context store** - large tool outputs are stored out-of-band and can be searched or read back by handle.
 - **History compaction** - long chats are summarized automatically using the model's advertised context window when available.
@@ -92,6 +93,7 @@ Available tools:
 | `serve` | Start a local static HTTP server for a directory |
 | `context` | Enable `ctx_index`, `ctx_search`, `ctx_read`, `ctx_summarize`, and `ctx_stats` |
 | `diagnostics` | Inspect sif configuration, `AGENT_` environment variables, and chat history |
+| `roslyn` | C# analysis via Roslyn — `roslyn_find_symbols` and `roslyn_get_diagnostics` (requires [Roslyn Analyzers](https://learn.microsoft.com/en-us/dotnet/csharp/roslyn-sdk/)) |
 
 ```bash
 # Use the default tool set explicitly
@@ -116,6 +118,36 @@ When chat history grows past the compaction threshold, `sif` summarizes older me
 The `diagnostics` tool is for inspecting sif's runtime state only. It is not a debugger and does not launch, attach to, or manage .NET debug adapter sessions. There is also a legacy `debug` tool alias for the same diagnostics behavior.
 
 Tool calling is non-streaming: the model decides whether to call tools, then returns the final response. Thinking and reasoning display works for OpenAI o-series models and Qwen3.x models via vLLM.
+
+## C# Development with Roslyn
+
+Because `sif` is written in C#, it has deep native support for C# development through the **Roslyn** tool set. When enabled, the agent can inspect your C# solutions and projects using the .NET Compiler Platform (Roslyn) directly — no external tools or MCP servers needed.
+
+Enable the Roslyn tools alongside your default set:
+
+```bash
+sif --tools bash,read,edit,write,sleep,serve,context,roslyn
+
+# Or persistently
+sif config --set TOOLS=bash,read,edit,write,sleep,serve,context,roslyn
+```
+
+The Roslyn tool set provides two tools:
+
+| Tool | Description |
+|------|-------------|
+| `roslyn_find_symbols` | Search for declarations of a symbol (class, method, property, etc.) across all projects in a `.sln` file. Returns the symbol name, kind, and source location. |
+| `roslyn_get_diagnostics` | Compile a `.csproj` or `.sln` and surface all compiler diagnostics — errors, warnings, and information messages — with their severity, code, and source location. |
+
+### Example usage
+
+In a chat session, you can ask the agent to:
+
+- **Find where a class is defined**: _"Find the `Program` class in `MyApp.sln`"_
+- **Check for compile errors**: _"Run diagnostics on `MyApp/MyApp.csproj`"_
+- **Locate a method across projects**: _"Find all declarations of `ConnectAsync` in `sif.sln`"_
+
+The Roslyn tools use `MSBuildWorkspace` to load real project references and compilation contexts, so they respect your actual project configuration, targets, and imports — the same way Visual Studio or `dotnet build` would.
 
 ## Secure API Key Storage
 

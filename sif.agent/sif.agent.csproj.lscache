@@ -72,6 +72,7 @@ Services/
  SecureCredentialStore.cs
  SkillStore.cs
  ToolRegistry.cs
+ Tools/RoslynTools.cs
  UiService.cs
 
 [metadataReferences]
@@ -246,38 +247,52 @@ Services/
 <NUGET>/
  boxofyellow.consolemarkdownrenderer/0.9.0/lib/net8.0/ConsoleMarkdownRenderer.dll
  markdig/1.1.3/lib/net10.0/Markdig.dll
+ microsoft.build.framework/17.11.48/ref/net8.0/Microsoft.Build.Framework.dll
+ microsoft.codeanalysis.common/5.3.0/lib/net10.0/Microsoft.CodeAnalysis.dll
+ microsoft.codeanalysis.csharp.workspaces/5.3.0/lib/net10.0/Microsoft.CodeAnalysis.CSharp.Workspaces.dll
+ microsoft.codeanalysis.csharp/5.3.0/lib/net10.0/Microsoft.CodeAnalysis.CSharp.dll
+ microsoft.codeanalysis.workspaces.common/5.3.0/lib/net10.0/Microsoft.CodeAnalysis.Workspaces.dll
+ microsoft.codeanalysis.workspaces.msbuild/5.3.0/lib/net10.0/
+  Microsoft.CodeAnalysis.ExternalAccess.RazorCompiler.dll
+  Microsoft.CodeAnalysis.Workspaces.MSBuild.dll
  microsoft.extensions.ai.abstractions/10.5.2/lib/net10.0/Microsoft.Extensions.AI.Abstractions.dll
  microsoft.extensions.caching.abstractions/10.0.7/lib/net10.0/Microsoft.Extensions.Caching.Abstractions.dll
- microsoft.extensions.configuration.abstractions/10.0.7/lib/net10.0/Microsoft.Extensions.Configuration.Abstractions.dll
+ microsoft.extensions.configuration.abstractions/10.0.8/lib/net10.0/Microsoft.Extensions.Configuration.Abstractions.dll
  microsoft.extensions.configuration.binder/10.0.7/lib/net10.0/Microsoft.Extensions.Configuration.Binder.dll
- microsoft.extensions.configuration.environmentvariables/10.0.7/lib/net10.0/Microsoft.Extensions.Configuration.EnvironmentVariables.dll
- microsoft.extensions.configuration.fileextensions/10.0.7/lib/net10.0/Microsoft.Extensions.Configuration.FileExtensions.dll
- microsoft.extensions.configuration.json/10.0.7/lib/net10.0/Microsoft.Extensions.Configuration.Json.dll
- microsoft.extensions.configuration/10.0.7/lib/net10.0/Microsoft.Extensions.Configuration.dll
+ microsoft.extensions.configuration.environmentvariables/10.0.8/lib/net10.0/Microsoft.Extensions.Configuration.EnvironmentVariables.dll
+ microsoft.extensions.configuration.fileextensions/10.0.8/lib/net10.0/Microsoft.Extensions.Configuration.FileExtensions.dll
+ microsoft.extensions.configuration.json/10.0.8/lib/net10.0/Microsoft.Extensions.Configuration.Json.dll
+ microsoft.extensions.configuration/10.0.8/lib/net10.0/Microsoft.Extensions.Configuration.dll
  microsoft.extensions.dependencyinjection.abstractions/10.0.7/lib/net10.0/Microsoft.Extensions.DependencyInjection.Abstractions.dll
  microsoft.extensions.dependencyinjection/10.0.7/lib/net10.0/Microsoft.Extensions.DependencyInjection.dll
  microsoft.extensions.diagnostics.abstractions/10.0.7/lib/net10.0/Microsoft.Extensions.Diagnostics.Abstractions.dll
  microsoft.extensions.diagnostics/10.0.7/lib/net10.0/Microsoft.Extensions.Diagnostics.dll
- microsoft.extensions.fileproviders.abstractions/10.0.7/lib/net10.0/Microsoft.Extensions.FileProviders.Abstractions.dll
- microsoft.extensions.fileproviders.physical/10.0.7/lib/net10.0/Microsoft.Extensions.FileProviders.Physical.dll
- microsoft.extensions.filesystemglobbing/10.0.7/lib/net10.0/Microsoft.Extensions.FileSystemGlobbing.dll
+ microsoft.extensions.fileproviders.abstractions/10.0.8/lib/net10.0/Microsoft.Extensions.FileProviders.Abstractions.dll
+ microsoft.extensions.fileproviders.physical/10.0.8/lib/net10.0/Microsoft.Extensions.FileProviders.Physical.dll
+ microsoft.extensions.filesystemglobbing/10.0.8/lib/net10.0/Microsoft.Extensions.FileSystemGlobbing.dll
  microsoft.extensions.hosting.abstractions/10.0.7/lib/net10.0/Microsoft.Extensions.Hosting.Abstractions.dll
  microsoft.extensions.http/10.0.7/lib/net10.0/Microsoft.Extensions.Http.dll
  microsoft.extensions.logging.abstractions/10.0.7/lib/net10.0/Microsoft.Extensions.Logging.Abstractions.dll
  microsoft.extensions.logging/10.0.7/lib/net10.0/Microsoft.Extensions.Logging.dll
  microsoft.extensions.options.configurationextensions/10.0.7/lib/net10.0/Microsoft.Extensions.Options.ConfigurationExtensions.dll
  microsoft.extensions.options/10.0.7/lib/net10.0/Microsoft.Extensions.Options.dll
- microsoft.extensions.primitives/10.0.7/lib/net10.0/Microsoft.Extensions.Primitives.dll
+ microsoft.extensions.primitives/10.0.8/lib/net10.0/Microsoft.Extensions.Primitives.dll
+ microsoft.visualstudio.solutionpersistence/1.0.52/lib/net8.0/Microsoft.VisualStudio.SolutionPersistence.dll
  modelcontextprotocol.core/1.3.0/lib/net10.0/ModelContextProtocol.Core.dll
  modelcontextprotocol/1.3.0/lib/net10.0/ModelContextProtocol.dll
  openai/2.10.0/lib/net10.0/OpenAI.dll
  romannumeral/2.0.0/lib/netstandard1.0/RomanNumerals.dll
  spectre.console.ansi/0.55.2/lib/net10.0/Spectre.Console.Ansi.dll
- spectre.console.cli/0.49.1/lib/net8.0/Spectre.Console.Cli.dll
+ spectre.console.cli/0.55.0/lib/net10.0/Spectre.Console.Cli.dll
  spectre.console/0.55.2/lib/net10.0/Spectre.Console.dll
  system.clientmodel/1.10.0/lib/net10.0/System.ClientModel.dll
+ system.composition.attributedmodel/9.0.0/lib/net9.0/System.Composition.AttributedModel.dll
+ system.composition.convention/9.0.0/lib/net9.0/System.Composition.Convention.dll
+ system.composition.hosting/9.0.0/lib/net9.0/System.Composition.Hosting.dll
+ system.composition.runtime/9.0.0/lib/net9.0/System.Composition.Runtime.dll
+ system.composition.typedparts/9.0.0/lib/net9.0/System.Composition.TypedParts.dll
  system.memory.data/10.0.3/lib/net10.0/System.Memory.Data.dll
- system.security.cryptography.protecteddata/10.0.7/lib/net10.0/System.Security.Cryptography.ProtectedData.dll
+ system.security.cryptography.protecteddata/10.0.8/lib/net10.0/System.Security.Cryptography.ProtectedData.dll
 
 [analyzerReferences]
 <DOTNET>/packs/Microsoft.NETCore.App.Ref/10.0.4/analyzers/dotnet/cs/
@@ -290,6 +305,9 @@ Services/
 <DOTNET>/sdk/10.0.104/Sdks/Microsoft.NET.Sdk/analyzers/
  Microsoft.CodeAnalysis.CSharp.NetAnalyzers.dll
  Microsoft.CodeAnalysis.NetAnalyzers.dll
+<NUGET>/microsoft.codeanalysis.analyzers/5.3.0-2.25625.1/analyzers/dotnet/cs/
+ Microsoft.CodeAnalysis.Analyzers.dll
+ Microsoft.CodeAnalysis.CSharp.Analyzers.dll
 <NUGET>/
  microsoft.extensions.logging.abstractions/10.0.7/analyzers/dotnet/roslyn4.4/cs/Microsoft.Extensions.Logging.Generators.dll
  microsoft.extensions.options/10.0.7/analyzers/dotnet/roslyn4.4/cs/Microsoft.Extensions.Options.SourceGeneration.dll
