@@ -241,15 +241,16 @@ internal static class ToolRegistry
         {
             tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
                 "roslyn_find_symbols",
-                "Find symbols in a C# solution.",
+                "Find symbols in a C# solution or project.",
                 BinaryData.FromString("""
                     {
                         "type": "object",
                         "properties": {
-                            "solutionPath": { "type": "string", "description": "Path to .sln file" },
+                            "solutionPath": { "type": "string", "description": "Path to .sln file (alternative to projectPath)" },
+                            "projectPath": { "type": "string", "description": "Path to .csproj file (alternative to solutionPath)" },
                             "name": { "type": "string", "description": "Symbol name to search for" }
                         },
-                        "required": ["solutionPath", "name"]
+                        "required": ["name"]
                     }
                     """)
             ));
@@ -328,13 +329,17 @@ internal static class ToolRegistry
         using var doc = JsonDocument.Parse(argsJson);
         var root = doc.RootElement;
 
-        // Accept multiple parameter name formats: camelCase or snake_case
-        var solutionPath =
-            (root.TryGetProperty("solutionPath", out var s1) ? s1.GetString() :
-             root.TryGetProperty("solution_path", out var s2) ? s2.GetString() :
-             "") ?? "";
-        var name = root.GetProperty("name").GetString() ?? "";
-        return await RoslynTools.FindSymbolsAsync(solutionPath, name);
+        // Accept solutionPath, projectPath, or path (camelCase or snake_case)
+        var path =
+            root.TryGetProperty("solutionPath", out var sp1) ? sp1.GetString() ?? "" :
+            root.TryGetProperty("solution_path", out var sp2) ? sp2.GetString() ?? "" :
+            root.TryGetProperty("projectPath", out var pp1) ? pp1.GetString() ?? "" :
+            root.TryGetProperty("project_path", out var pp2) ? pp2.GetString() ?? "" :
+            root.TryGetProperty("project", out var pp) ? pp.GetString() ?? "" :
+            root.TryGetProperty("path", out var p) ? p.GetString() ?? "" :
+            "";
+        var name = root.GetProperty("name").GetString() ?? root.GetProperty("query").GetString() ?? "";
+        return await RoslynTools.FindSymbolsAsync(path, name);
     }
 
     private static async Task<string> RunRoslynGetDiagnostics(string argsJson)

@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Text.Json;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.MSBuild;
@@ -7,13 +8,18 @@ namespace sif.agent.Services.Tools;
 
 public static class RoslynTools
 {
-    public static async Task<string> FindSymbolsAsync(string solutionPath, string name)
+    public static async Task<string> FindSymbolsAsync(string path, string name)
     {
+        if (string.IsNullOrWhiteSpace(path))
+            return "Error: path is required.";
+
         using var workspace = MSBuildWorkspace.Create();
-        var solution = await workspace.OpenSolutionAsync(solutionPath);
+        var projects = path.EndsWith(".sln")
+            ? (await workspace.OpenSolutionAsync(path)).Projects
+            : ImmutableArray.Create(await workspace.OpenProjectAsync(path));
 
         List<ISymbol> allSymbols = new();
-        foreach (var project in solution.Projects)
+        foreach (var project in projects)
         {
             var symbols = await SymbolFinder.FindDeclarationsAsync(project, name, ignoreCase: true, SymbolFilter.All);
             allSymbols.AddRange(symbols);
