@@ -4,7 +4,6 @@ using System.Text;
 using System.Text.Json;
 using OpenAI;
 using Spectre.Console;
-using ConsoleMarkdownRenderer;
 
 namespace sif.agent;
 
@@ -465,7 +464,8 @@ internal class AgentClient
     private static bool IsLocalTool(string toolName)
     {
         return toolName is "bash" or "read" or "edit" or "write" or "sleep" or "serve" or "tool_catalog"
-            or "ctx_index" or "ctx_search" or "ctx_read" or "ctx_summarize" or "ctx_stats";
+            or "ctx_index" or "ctx_search" or "ctx_read" or "ctx_summarize" or "ctx_stats"
+            or "roslyn_find_symbols" or "roslyn_get_diagnostics";
     }
 
     private static bool IsContextTool(string toolName)

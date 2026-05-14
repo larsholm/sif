@@ -1,11 +1,7 @@
-using System;
 using System.Diagnostics;
 using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
-using System.Threading.Tasks;
-using static System.Security.Cryptography.ProtectedData;
 
 namespace sif.agent.Services;
 

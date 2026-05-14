@@ -19,7 +19,13 @@ rm -rf /tmp/sif-pack
 mkdir -p /tmp/sif-pack/tools/net10.0/any
 
 # Copy all output files to tools directory
-cp bin/Release/net10.0/* /tmp/sif-pack/tools/net10.0/any/ 2>/dev/null || true
+cp -r bin/Release/net10.0/* /tmp/sif-pack/tools/net10.0/any/ 2>/dev/null || true
+
+# Explicitly copy BuildHost directories (required by Roslyn MSBuild workspace for diagnostics/find-symbols)
+# These are subdirectories that can get missed by glob expansion in some cp implementations
+for dir in bin/Release/net10.0/BuildHost-*; do
+    [ -d "$dir" ] && cp -a "$dir" /tmp/sif-pack/tools/net10.0/any/
+done
 
 # Create DotnetToolSettings.xml (required for .NET global tools)
 cat > /tmp/sif-pack/tools/net10.0/any/DotnetToolSettings.xml << 'SETTINGS'

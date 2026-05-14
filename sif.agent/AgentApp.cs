@@ -2,7 +2,6 @@ using System.Text;
 using System.Text.Json;
 using System.Diagnostics;
 using Spectre.Console;
-using ConsoleMarkdownRenderer;
 using sif.agent.Services;
 
 namespace sif.agent;
@@ -93,7 +92,7 @@ internal class AgentApp
     {
         AnsiConsole.MarkupLine("[green]sif[/] - AI agent for local OpenAI-compatible models");
         AnsiConsole.WriteLine();
-        AnsiConsole.WriteLine("Usage: sif [--tools bash,edit,read,write,sleep,serve,context] [--model name] [--base-url url]");
+        AnsiConsole.WriteLine("Usage: sif [--tools bash,edit,read,write,sleep,serve,context,roslyn] [--model name] [--base-url url]");
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine("  (no args)     Start an interactive chat session");
         AnsiConsole.MarkupLine("  [bold]complete[/]  Run a one-off prompt and exit");
@@ -112,7 +111,7 @@ internal class AgentApp
         AnsiConsole.WriteLine("  -t, --temperature <v>  Sampling temperature");
         AnsiConsole.WriteLine("  -max, --max-tokens <v> Max tokens to generate");
         AnsiConsole.WriteLine("  -n, --no-stream        Disable streaming output");
-        AnsiConsole.WriteLine("  --tools <list>         Enable tools: bash,edit,read,write,sleep,serve,context (comma-separated)");
+        AnsiConsole.WriteLine("  --tools <list>         Enable tools: bash,edit,read,write,sleep,serve,context,roslyn (comma-separated)");
         AnsiConsole.WriteLine("  --thinking <true|false> Enable model thinking/reasoning");
         AnsiConsole.WriteLine();
         AnsiConsole.WriteLine("Environment variables:");
@@ -257,16 +256,16 @@ internal class AgentApp
 
         var header = $"[green]sif[/] - [dim]{config.Model} @ {config.BaseUrl}[/]";
         if (tools?.Length > 0)
-            header += $" [dim]tools: {string.Join(", ", tools)}[/]";
+            header += $"[dim], tools: {string.Join(", ", tools)}[/]";
         if (modelContextLength.HasValue && config.CompactionThreshold > 0)
-            header += $" [dim]ctx-window: {modelContextLength.Value:N0}, compact: {config.CompactionThreshold:N0}[/]";
+            header += $"[dim], ctx-window: {modelContextLength.Value:N0}, compact: {config.CompactionThreshold:N0}[/]";
         if (skills.Count > 0)
-            header += $" [dim]skills: {skills.Count}[/]";
+            header += $"[dim], skills: {skills.Count}[/]";
         var mcpToolsCount = mcpService.GetTools().Count;
         if (mcpToolsCount > 0)
-            header += $" [dim]mcp-tools: {mcpToolsCount}[/]";
+            header += $"[dim], mcp-tools: {mcpToolsCount}[/]";
         if (VscodeContext.IsRunningInVscodeTerminal())
-            header += " [dim]vscode[/]";
+            header += "[dim], vscode[/]";
         
         AnsiConsole.MarkupLine(header);
         AnsiConsole.MarkupLine("Type [bold]/quit[/] or [bold]/exit[/] to quit, [bold]/clear[/] to reset conversation, [bold]/context[/] to inspect context, [bold]/help[/] for help.");
@@ -1187,6 +1186,8 @@ Conversation:
                "\n- Use 'serve' to start a local static HTTP server; do not start long-running servers with 'bash'" +
                "\n- Use 'ctx_search' and 'ctx_read' when a tool result says large context was stored" +
                "\n- Use 'ctx_index' for large pasted text or generated data that should be searchable later" +
+               "\n- Use 'roslyn_find_symbols' to find symbols in a C# solution" +
+               "\n- Use 'roslyn_get_diagnostics' to get diagnostic issues in a C# project" +
                "\nThink before acting — explain your plan first." +
                "\nAfter using tools, summarize your key findings in your final answer. Important details from tool results should be restated in natural language so they persist in the conversation history.";
     }
@@ -1382,7 +1383,7 @@ Conversation:
             new TextPrompt<string>("Tools")
                 .DefaultValue(config.Tools is { Length: > 0 }
                     ? string.Join(",", config.Tools)
-                    : "bash,read,edit,write,sleep,serve,context")
+                    : "bash,read,edit,write,sleep,serve,context,roslyn")
                 .Validate(value => string.IsNullOrWhiteSpace(value)
                     ? ValidationResult.Error("[red]Enter at least one tool, or rerun with --tools for a custom set.[/]")
                     : ValidationResult.Success()));

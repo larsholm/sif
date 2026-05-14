@@ -1,5 +1,4 @@
 using System.Text.Json;
-using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using OpenAI.Chat;
