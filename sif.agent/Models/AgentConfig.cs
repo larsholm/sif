@@ -146,6 +146,13 @@ internal class AgentConfig
 
         ApplyValues(config);
 
+        // Switch to the current profile so flat properties reflect it
+        // (Environment variables below will still override if set)
+        if (!string.IsNullOrEmpty(config.CurrentProfile) && config.Profiles.ContainsKey(config.CurrentProfile))
+        {
+            config.SwitchProfile(config.CurrentProfile);
+        }
+
         // Environment variables override everything
         if (Environment.GetEnvironmentVariable("AGENT_BASE_URL") is { Length: > 0 } envBase)
             config.BaseUrl = envBase.TrimEnd('/');
