@@ -88,8 +88,8 @@ internal static class ToolRegistry
                         "type": "object",
                         "properties": {
                             "path": { "type": "string", "description": "Path to the file to edit" },
-                            "oldText": { "type": "string", "description": "The exact text to replace" },
-                            "newText": { "type": "string", "description": "The replacement text" }
+                            "oldText": { "type": "string", "description": "The exact text to replace. Also accepted: old_text (snake_case)." },
+                            "newText": { "type": "string", "description": "The replacement text. Also accepted: new_text (snake_case)." }
                         },
                         "required": ["path", "oldText", "newText"]
                     }
@@ -197,7 +197,7 @@ internal static class ToolRegistry
                         "properties": {
                             "id": { "type": "string", "description": "Context id returned by ctx_index or automatic context storage" },
                             "query": { "type": "string", "description": "Optional search focus within this context blob" },
-                            "maxChars": { "type": "integer", "description": "Maximum characters to return (default 32000, max 160000)" }
+                            "maxChars": { "type": "integer", "description": "Maximum characters to return (default 32000, max 160000). Also accepted: max_chars (snake_case)." }
                         },
                         "required": ["id"]
                     }
@@ -246,7 +246,7 @@ internal static class ToolRegistry
                     {
                         "type": "object",
                         "properties": {
-                            "solutionPath": { "type": "string", "description": "Path to the .sln file" },
+                            "solutionPath": { "type": "string", "description": "Path to the .sln file. Also accepted: solution_path (snake_case)." },
                             "name": { "type": "string", "description": "Symbol name to search for" }
                         },
                         "required": ["solutionPath", "name"]
@@ -261,7 +261,7 @@ internal static class ToolRegistry
                     {
                         "type": "object",
                         "properties": {
-                            "projectPath": { "type": "string", "description": "Path to the .csproj or .sln file" }
+                            "projectPath": { "type": "string", "description": "Path to the .csproj or .sln file. Also accepted: project_path (snake_case), projectFilePath." }
                         },
                         "required": ["projectPath"]
                     }
@@ -316,7 +316,10 @@ internal static class ToolRegistry
         var root = doc.RootElement;
         var id = root.GetProperty("id").GetString() ?? "";
         var query = root.TryGetProperty("query", out var q) ? q.GetString() : null;
-        var maxChars = root.TryGetProperty("maxChars", out var m) ? m.GetInt32() : 32000;
+        var maxChars =
+            root.TryGetProperty("maxChars", out var m1) ? m1.GetInt32() :
+            root.TryGetProperty("max_chars", out var m2) ? m2.GetInt32() :
+            32000;
         return ContextStore.Read(id, query, maxChars);
     }
 
@@ -324,7 +327,12 @@ internal static class ToolRegistry
     {
         using var doc = JsonDocument.Parse(argsJson);
         var root = doc.RootElement;
-        var solutionPath = root.GetProperty("solutionPath").GetString() ?? "";
+
+        // Accept multiple parameter name formats: camelCase or snake_case
+        var solutionPath =
+            (root.TryGetProperty("solutionPath", out var s1) ? s1.GetString() :
+             root.TryGetProperty("solution_path", out var s2) ? s2.GetString() :
+             "") ?? "";
         var name = root.GetProperty("name").GetString() ?? "";
         return await RoslynTools.FindSymbolsAsync(solutionPath, name);
     }
@@ -333,7 +341,14 @@ internal static class ToolRegistry
     {
         using var doc = JsonDocument.Parse(argsJson);
         var root = doc.RootElement;
-        var projectPath = root.GetProperty("projectPath").GetString() ?? "";
+
+        // Accept multiple parameter name formats: camelCase, snake_case, or projectFilePath
+        var projectPath =
+            (root.TryGetProperty("projectPath", out var p1) ? p1.GetString() :
+             root.TryGetProperty("project_path", out var p2) ? p2.GetString() :
+             root.TryGetProperty("projectFilePath", out var p3) ? p3.GetString() :
+             "") ?? "";
+
         return await RoslynTools.GetDiagnosticsAsync(projectPath);
     }
 
@@ -996,8 +1011,16 @@ internal static class ToolRegistry
         using var doc = JsonDocument.Parse(argsJson);
         var root = doc.RootElement;
         var path = ResolvePath(root.GetProperty("path").GetString() ?? "");
-        var oldText = root.GetProperty("oldText").GetString() ?? "";
-        var newText = root.GetProperty("newText").GetString() ?? "";
+
+        // Accept multiple parameter name formats: camelCase or snake_case
+        var oldText =
+            root.TryGetProperty("oldText", out var o1) ? o1.GetString() :
+            root.TryGetProperty("old_text", out var o2) ? o2.GetString() :
+            "";
+        var newText =
+            root.TryGetProperty("newText", out var n1) ? n1.GetString() :
+            root.TryGetProperty("new_text", out var n2) ? n2.GetString() :
+            "";
 
         // Validate inputs
         if (string.IsNullOrEmpty(path)) return "Error: path is required.";
