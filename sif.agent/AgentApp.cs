@@ -2538,7 +2538,7 @@ internal static class VscodeContext
         }
 
         _lastEditorContext = block;
-        return block + "\n\nUser message:\n" + message;
+        return message + "\n\n" + block;
     }
 
     public static string GetDisplayValue(string? value)
