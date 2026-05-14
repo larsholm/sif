@@ -88,8 +88,8 @@ internal static class ToolRegistry
                         "type": "object",
                         "properties": {
                             "path": { "type": "string", "description": "Path to the file to edit" },
-                            "oldText": { "type": "string", "description": "The exact text to replace. Also accepted: old_text (snake_case)." },
-                            "newText": { "type": "string", "description": "The replacement text. Also accepted: new_text (snake_case)." }
+                            "oldText": { "type": "string", "description": "The exact text to replace." },
+                            "newText": { "type": "string", "description": "The replacement text." }
                         },
                         "required": ["path", "oldText", "newText"]
                     }
@@ -119,7 +119,7 @@ internal static class ToolRegistry
         {
             tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
                 "sleep",
-                "Pause execution for a short period of time. Useful when waiting before retrying an operation.",
+                "Wait a number of seconds.",
                 BinaryData.FromString("""
                     {
                         "type": "object",
@@ -197,7 +197,7 @@ internal static class ToolRegistry
                         "properties": {
                             "id": { "type": "string", "description": "Context id returned by ctx_index or automatic context storage" },
                             "query": { "type": "string", "description": "Optional search focus within this context blob" },
-                            "maxChars": { "type": "integer", "description": "Maximum characters to return (default 32000, max 160000). Also accepted: max_chars (snake_case)." }
+                            "maxChars": { "type": "integer", "description": "Maximum characters to return (default 32000, max 160000)." }
                         },
                         "required": ["id"]
                     }
@@ -246,7 +246,7 @@ internal static class ToolRegistry
                     {
                         "type": "object",
                         "properties": {
-                            "solutionPath": { "type": "string", "description": "Path to the .sln file. Also accepted: solution_path (snake_case)." },
+                            "solutionPath": { "type": "string", "description": "Path to the .sln file." },
                             "name": { "type": "string", "description": "Symbol name to search for" }
                         },
                         "required": ["solutionPath", "name"]
@@ -261,7 +261,7 @@ internal static class ToolRegistry
                     {
                         "type": "object",
                         "properties": {
-                            "projectPath": { "type": "string", "description": "Path to the .csproj or .sln file. Also accepted: project_path (snake_case), projectFilePath." }
+                            "projectPath": { "type": "string", "description": "Path to the .csproj or .sln file." }
                         },
                         "required": ["projectPath"]
                     }
