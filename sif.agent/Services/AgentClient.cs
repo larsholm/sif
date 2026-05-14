@@ -27,7 +27,7 @@ internal class AgentClient
     public AgentClient(AgentConfig config, string[]? enabledTools = null, McpService? mcpService = null)
     {
         var endpoint = config.BaseUrl.TrimEnd('/');
-        var apiKey = string.IsNullOrEmpty(config.ApiKey) ? "none" : config.ApiKey;
+        var apiKey = string.IsNullOrEmpty(config.ApiKey) ? "" : config.ApiKey;
 
         OpenAIClient openAIClient;
 
@@ -266,11 +266,11 @@ internal class AgentClient
 
                         messages.Add(OpenAI.Chat.ChatMessage.CreateToolMessage(toolCall.Id, toolResult));
 
-                        // Persist tool calls and results to history so the model can see
-                        // what happened on previous turns
-                        var toolCallContent = $"Called tool: {toolName} with arguments: {argsJson}";
+                        // Persist prior tool context as normal assistant text. OpenAI tool
+                        // messages are only valid immediately after their matching assistant
+                        // tool call inside the same request.
+                        var toolCallContent = $"Tool call from prior turn: {toolName} with arguments: {argsJson}\nResult:\n{toolResult}";
                         history.Add(new ChatMessage("assistant", toolCallContent));
-                        history.Add(new ChatMessage("tool", $"Result from {toolName}:\n{toolResult}", toolCall.Id));
                     }
 
                     // Continue the loop to get the next response
@@ -279,7 +279,7 @@ internal class AgentClient
 
                 // Final text response — strip thinking tags if they're in the content
                 var cleanContent = StripThinkingTags(contentText);
-
+                AnsiConsole.WriteLine();
                 await UiService.DisplayMarkdown(cleanContent);
                 AnsiConsole.WriteLine();
                 
@@ -479,7 +479,7 @@ internal class AgentClient
         {
             "system" => OpenAI.Chat.ChatMessage.CreateSystemMessage(msg.Content),
             "assistant" => OpenAI.Chat.ChatMessage.CreateAssistantMessage(msg.Content),
-            "tool" => OpenAI.Chat.ChatMessage.CreateToolMessage(msg.ToolCallId ?? "unknown", msg.Content),
+            "tool" => OpenAI.Chat.ChatMessage.CreateAssistantMessage($"Prior tool result:\n{msg.Content}"),
             _ => OpenAI.Chat.ChatMessage.CreateUserMessage(msg.Content),
         };
     }

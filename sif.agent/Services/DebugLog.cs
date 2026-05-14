@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.ClientModel;
 
 namespace sif.agent;
 
@@ -11,7 +12,7 @@ internal static class DebugLog
 {
     private const string LogFileName = "errors.jsonl";
     private static readonly object Lock = new();
-    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = false };
 
     internal static string LogPath
     {
@@ -37,6 +38,7 @@ internal static class DebugLog
             message = ex.Message,
             stackTrace = ex.StackTrace ?? "",
             inner = FormatInnerEx(ex),
+            response = FormatResponse(ex),
             context = extraContext ?? "",
         };
 
@@ -56,13 +58,12 @@ internal static class DebugLog
         if (!File.Exists(LogPath) || new FileInfo(LogPath).Length == 0)
             return "No recent errors.";
 
-        var lines = File.ReadAllLines(LogPath);
-        var recent = lines.Skip(Math.Max(0, lines.Length - count)).ToArray();
+        var records = ReadRecords().TakeLast(count).ToArray();
 
         var sb = new StringBuilder();
         sb.AppendLine("Recent errors:");
 
-        foreach (var line in recent)
+        foreach (var line in records)
         {
             try
             {
@@ -81,6 +82,9 @@ internal static class DebugLog
 
                 if (r.TryGetProperty("inner", out var innerProp) && !string.IsNullOrEmpty(innerProp.GetString()))
                     sb.AppendLine($"Inner: {innerProp.GetString()}");
+
+                if (r.TryGetProperty("response", out var responseProp) && !string.IsNullOrEmpty(responseProp.GetString()))
+                    sb.AppendLine($"Response: {responseProp.GetString()}");
 
                 if (r.TryGetProperty("stackTrace", out var stProp) && !string.IsNullOrEmpty(stProp.GetString()))
                 {
@@ -106,8 +110,9 @@ internal static class DebugLog
         if (!File.Exists(LogPath) || new FileInfo(LogPath).Length == 0)
             return "No errors logged.";
 
-        var lines = File.ReadAllLines(LogPath);
-        var last = lines[^1];
+        var last = ReadRecords().LastOrDefault();
+        if (string.IsNullOrWhiteSpace(last))
+            return "No errors logged.";
 
         try
         {
@@ -127,6 +132,9 @@ internal static class DebugLog
 
             if (r.TryGetProperty("inner", out var innerProp) && !string.IsNullOrEmpty(innerProp.GetString()))
                 sb.AppendLine($"Inner: {innerProp.GetString()}");
+
+            if (r.TryGetProperty("response", out var responseProp) && !string.IsNullOrEmpty(responseProp.GetString()))
+                sb.AppendLine($"Response: {responseProp.GetString()}");
 
             if (r.TryGetProperty("stackTrace", out var stProp) && !string.IsNullOrEmpty(stProp.GetString()))
                 sb.AppendLine(stProp.GetString());
@@ -151,5 +159,99 @@ internal static class DebugLog
             inner = inner.InnerException;
         }
         return string.Join(" -> ", parts);
+    }
+
+    private static string FormatResponse(Exception ex)
+    {
+        if (ex is not ClientResultException clientEx)
+            return "";
+
+        try
+        {
+            var response = clientEx.GetRawResponse();
+            if (response == null)
+                return "";
+
+            var sb = new StringBuilder();
+            sb.Append($"HTTP {response.Status}");
+            if (!string.IsNullOrEmpty(response.ReasonPhrase))
+                sb.Append($" {response.ReasonPhrase}");
+
+            try
+            {
+                var content = response.Content.ToString();
+                if (!string.IsNullOrWhiteSpace(content))
+                    sb.AppendLine().Append(content.Trim());
+            }
+            catch
+            {
+                // Some responses are not buffered.
+            }
+
+            return sb.ToString();
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
+    private static IEnumerable<string> ReadRecords()
+    {
+        var text = File.ReadAllText(LogPath);
+        if (string.IsNullOrWhiteSpace(text))
+            yield break;
+
+        var sb = new StringBuilder();
+        var depth = 0;
+        var inString = false;
+        var escaped = false;
+
+        foreach (var ch in text)
+        {
+            if (depth == 0 && char.IsWhiteSpace(ch))
+                continue;
+
+            sb.Append(ch);
+
+            if (inString)
+            {
+                if (escaped)
+                {
+                    escaped = false;
+                }
+                else if (ch == '\\')
+                {
+                    escaped = true;
+                }
+                else if (ch == '"')
+                {
+                    inString = false;
+                }
+                continue;
+            }
+
+            if (ch == '"')
+            {
+                inString = true;
+            }
+            else if (ch == '{')
+            {
+                depth++;
+            }
+            else if (ch == '}')
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    yield return sb.ToString();
+                    sb.Clear();
+                }
+            }
+        }
+
+        var tail = sb.ToString().Trim();
+        if (tail.Length > 0)
+            yield return tail;
     }
 }

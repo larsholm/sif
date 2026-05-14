@@ -337,7 +337,7 @@ internal class AgentApp
                         client = newClient;
                         if (shouldRestart)
                         {
-                            ClearChatHistory(history);
+                            history.Clear();
                             var initialSys = BuildInitialSystemPrompt(null, tools, skills);
                             if (!string.IsNullOrWhiteSpace(initialSys))
                                 history.Add(new ChatMessage("system", initialSys));
