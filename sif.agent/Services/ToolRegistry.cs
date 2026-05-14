@@ -51,9 +51,8 @@ internal static class ToolRegistry
                         "properties": {
                             "command": { "type": "string", "description": "Shell command to run" },
                             "limit": { "type": "integer", "description": "Max output chars (default 24000, max 120000)" },
-                            "timeout": { "type": "number", "description": "Timeout in seconds (default 30, max 300)" }
-                        },
-                        "required": ["command"]
+                            "timeout": { "type": "number", "description": "Timeout in seconds" }
+                        }
                     }
                     """)
             ));
@@ -69,10 +68,9 @@ internal static class ToolRegistry
                         "type": "object",
                         "properties": {
                             "path": { "type": "string", "description": "File path" },
-                            "skiplines": { "type": "integer", "description": "Lines to skip from start (default 0)" },
-                            "limit": { "type": "integer", "description": "Max lines (default 1000, max 5000)" }
-                        },
-                        "required": ["path"]
+                            "skiplines": { "type": "integer", "description": "Lines to skip from start" },
+                            "limit": { "type": "integer", "description": "Max lines" }
+                        }
                     }
                     """)
             ));
@@ -90,8 +88,7 @@ internal static class ToolRegistry
                             "path": { "type": "string", "description": "File path" },
                             "oldText": { "type": "string", "description": "Exact text to replace" },
                             "newText": { "type": "string", "description": "Replacement text" }
-                        },
-                        "required": ["path", "oldText", "newText"]
+                        }
                     }
                     """)
             ));
@@ -108,8 +105,7 @@ internal static class ToolRegistry
                         "properties": {
                             "path": { "type": "string", "description": "File path" },
                             "content": { "type": "string", "description": "File content" }
-                        },
-                        "required": ["path", "content"]
+                        }
                     }
                     """)
             ));
@@ -124,9 +120,8 @@ internal static class ToolRegistry
                     {
                         "type": "object",
                         "properties": {
-                            "seconds": { "type": "number", "description": "Seconds to wait (0-60)" }
-                        },
-                        "required": ["seconds"]
+                            "seconds": { "type": "number", "description": "Seconds to wait, 0-60" }
+                        }
                     }
                     """)
             ));
@@ -141,7 +136,7 @@ internal static class ToolRegistry
                     {
                         "type": "object",
                         "properties": {
-                            "path": { "type": "string", "description": "Directory to serve (default: CWD)" },
+                            "path": { "type": "string", "description": "Directory to serve (default CWD)" },
                             "port": { "type": "integer", "description": "Port (0 or omit for auto)" },
                             "bind": { "type": "string", "description": "Bind address (default 127.0.0.1)" }
                         }
@@ -159,10 +154,9 @@ internal static class ToolRegistry
                     {
                         "type": "object",
                         "properties": {
-                            "source": { "type": "string", "description": "Short label describing source" },
+                            "source": { "type": "string", "description": "Short label" },
                             "content": { "type": "string", "description": "Text to store" }
-                        },
-                        "required": ["source", "content"]
+                        }
                     }
                     """)
             ));
@@ -177,10 +171,9 @@ internal static class ToolRegistry
                     {
                         "type": "object",
                         "properties": {
-                            "query": { "type": "string", "description": "Search terms" },
-                            "limit": { "type": "integer", "description": "Max results (default 8)" }
-                        },
-                        "required": ["query"]
+                            "query": { "type": "string", "description": "Search terms (aliases: q, search, text)" },
+                            "limit": { "type": "integer", "description": "Max results (default 8; alias: max)" }
+                        }
                     }
                     """)
             ));
@@ -195,11 +188,10 @@ internal static class ToolRegistry
                     {
                         "type": "object",
                         "properties": {
-                            "id": { "type": "string", "description": "Context id from ctx_index or auto-storage" },
+                            "id": { "type": "string", "description": "Context id" },
                             "query": { "type": "string", "description": "Optional search focus within blob" },
-                            "maxChars": { "type": "integer", "description": "Max characters to return (default 32000, max 160000)" }
-                        },
-                        "required": ["id"]
+                            "maxChars": { "type": "integer", "description": "Max chars" }
+                        }
                     }
                     """)
             ));
@@ -214,10 +206,9 @@ internal static class ToolRegistry
                     {
                         "type": "object",
                         "properties": {
-                            "id": { "type": "string", "description": "Context id to summarize" },
-                            "focus": { "type": "string", "description": "What to focus on (e.g. 'error messages', 'config values', 'API endpoints'). Defaults to most important if omitted." }
-                        },
-                        "required": ["id"]
+                            "id": { "type": "string", "description": "Context id" },
+                            "focus": { "type": "string", "description": "Summary focus" }
+                        }
                     }
                     """)
             ));
@@ -246,11 +237,10 @@ internal static class ToolRegistry
                     {
                         "type": "object",
                         "properties": {
-                            "solutionPath": { "type": "string", "description": "Path to .sln file (alternative to projectPath)" },
-                            "projectPath": { "type": "string", "description": "Path to .csproj file (alternative to solutionPath)" },
-                            "name": { "type": "string", "description": "Symbol name to search for" }
-                        },
-                        "required": ["name"]
+                            "solutionPath": { "type": "string", "description": ".sln path" },
+                            "projectPath": { "type": "string", "description": ".csproj path" },
+                            "name": { "type": "string", "description": "Symbol name" }
+                        }
                     }
                     """)
             ));
@@ -262,9 +252,8 @@ internal static class ToolRegistry
                     {
                         "type": "object",
                         "properties": {
-                            "projectPath": { "type": "string", "description": "Path to .csproj or .sln" }
-                        },
-                        "required": ["projectPath"]
+                            "projectPath": { "type": "string", "description": ".csproj or .sln path" }
+                        }
                     }
                     """)
             ));
@@ -297,8 +286,10 @@ internal static class ToolRegistry
     {
         using var doc = JsonDocument.Parse(argsJson);
         var root = doc.RootElement;
-        var source = root.TryGetProperty("source", out var s) ? s.GetString() ?? "manual" : "manual";
-        var content = root.GetProperty("content").GetString() ?? "";
+        var source = JsonArgs.String(root, "manual", "source", "name", "title", "label");
+        var content = JsonArgs.String(root, "", "content", "text", "data", "value", "blob");
+        if (string.IsNullOrEmpty(content))
+            return "Error: content is required.";
         return ContextStore.StoreAndDescribe(source, content);
     }
 
@@ -306,8 +297,10 @@ internal static class ToolRegistry
     {
         using var doc = JsonDocument.Parse(argsJson);
         var root = doc.RootElement;
-        var query = root.GetProperty("query").GetString() ?? "";
-        var limit = root.TryGetProperty("limit", out var l) ? l.GetInt32() : 8;
+        var query = JsonArgs.String(root, "", "query", "q", "search", "term", "text");
+        var limit = JsonArgs.Int(root, 8, "limit", "max", "maxResults", "max_results");
+        if (string.IsNullOrEmpty(query))
+            return "Error: query is required.";
         return ContextStore.Search(query, limit);
     }
 
@@ -315,12 +308,11 @@ internal static class ToolRegistry
     {
         using var doc = JsonDocument.Parse(argsJson);
         var root = doc.RootElement;
-        var id = root.GetProperty("id").GetString() ?? "";
-        var query = root.TryGetProperty("query", out var q) ? q.GetString() : null;
-        var maxChars =
-            root.TryGetProperty("maxChars", out var m1) ? m1.GetInt32() :
-            root.TryGetProperty("max_chars", out var m2) ? m2.GetInt32() :
-            32000;
+        var id = JsonArgs.String(root, "", "id", "contextId", "context_id", "key", "handle");
+        var query = JsonArgs.String(root, "", "query", "q", "search", "focus");
+        var maxChars = JsonArgs.Int(root, 32000, "maxChars", "max_chars", "limit", "max", "chars");
+        if (string.IsNullOrEmpty(id))
+            return "Error: id is required.";
         return ContextStore.Read(id, query, maxChars);
     }
 
@@ -330,16 +322,11 @@ internal static class ToolRegistry
         var root = doc.RootElement;
 
         // Accept solutionPath, projectPath, or path (camelCase or snake_case)
-        var path =
-            root.TryGetProperty("solutionPath", out var sp1) ? sp1.GetString() ?? "" :
-            root.TryGetProperty("solution_path", out var sp2) ? sp2.GetString() ?? "" :
-            root.TryGetProperty("projectPath", out var pp1) ? pp1.GetString() ?? "" :
-            root.TryGetProperty("project_path", out var pp2) ? pp2.GetString() ?? "" :
-            root.TryGetProperty("project", out var pp) ? pp.GetString() ?? "" :
-            root.TryGetProperty("path", out var p) ? p.GetString() ?? "" :
-            "";
+        var path = JsonArgs.String(root, "", "solutionPath", "solution_path", "projectPath", "project_path", "project", "path", "file");
             
-        var name = root.TryGetProperty("name", out var n) ? n.GetString() ?? "" : root.TryGetProperty("query", out var q) ? q.GetString() ?? "" : "";
+        var name = JsonArgs.String(root, "", "name", "query", "q", "symbol");
+        if (string.IsNullOrEmpty(name))
+            return "Error: name is required.";
 
         return await RoslynTools.FindSymbolsAsync(path, name);
     }
@@ -350,13 +337,7 @@ internal static class ToolRegistry
         var root = doc.RootElement;
 
         // Accept multiple parameter name formats: camelCase, snake_case, or projectFilePath
-        var projectPath =
-            (root.TryGetProperty("path", out var p) ? p.GetString() :
-             root.TryGetProperty("project", out var pp) ? pp.GetString() :
-             root.TryGetProperty("projectPath", out var p1) ? p1.GetString() :
-             root.TryGetProperty("project_path", out var p2) ? p2.GetString() :
-             root.TryGetProperty("projectFilePath", out var p3) ? p3.GetString() :
-             "") ?? "";
+        var projectPath = JsonArgs.String(root, "", "path", "file", "project", "projectPath", "project_path", "projectFilePath", "solutionPath", "solution_path");
 
         return await RoslynTools.GetDiagnosticsAsync(projectPath);
     }
@@ -365,14 +346,16 @@ internal static class ToolRegistry
     {
         using var doc = JsonDocument.Parse(argsJson);
         var root = doc.RootElement;
-        var seconds = root.TryGetProperty("seconds", out var s) ? s.GetDouble() : 0;
+        var seconds = JsonArgs.Double(root, 0, "seconds", "second", "duration", "delay", "time");
+        if (seconds == 0 && JsonArgs.Double(root, 0, "ms", "milliseconds") is var milliseconds && milliseconds > 0)
+            seconds = milliseconds / 1000;
 
         if (double.IsNaN(seconds) || double.IsInfinity(seconds))
             return "Error: seconds must be a finite number.";
         if (seconds < 0)
             return "Error: seconds must be greater than or equal to 0.";
-        if (seconds > 60)
-            return "Error: seconds must be less than or equal to 60.";
+        if (seconds > 600)
+            return "Error: seconds must be less than or equal to 600.";
 
         await Task.Delay(TimeSpan.FromSeconds(seconds), cancellationToken);
         return $"Slept for {seconds:0.###} seconds.";
@@ -387,21 +370,11 @@ internal static class ToolRegistry
 
             using var doc = JsonDocument.Parse(argsJson);
             var root = doc.RootElement;
-            var pathArg = root.TryGetProperty("path", out var p) ? p.GetString() : null;
+            var pathArg = JsonArgs.String(root, "", "path", "dir", "directory", "root", "folder");
             var path = ResolvePath(pathArg ?? "");
-            var bind = root.TryGetProperty("bind", out var b) ? b.GetString() ?? "127.0.0.1" : "127.0.0.1";
+            var bind = JsonArgs.String(root, "127.0.0.1", "bind", "host", "address");
 
-            int port;
-            if (root.TryGetProperty("port", out var portElement))
-            {
-                if (portElement.ValueKind != JsonValueKind.Number)
-                    return "Error: port must be a number.";
-                port = portElement.GetInt32();
-            }
-            else
-            {
-                port = 0;
-            }
+            var port = JsonArgs.Int(root, 0, "port");
 
             if (!Directory.Exists(path))
                 return $"Error: Directory not found: {path}";
@@ -520,29 +493,21 @@ internal static class ToolRegistry
     {
         using var doc = JsonDocument.Parse(argsJson);
         var root = doc.RootElement;
-        var command = root.GetProperty("command").GetString() ?? "";
-        var limit = root.TryGetProperty("limit", out var l) ? l.GetInt32() : 24000;
+        var command = JsonArgs.String(root, "", "command", "cmd", "script", "shell", "input");
+        if (string.IsNullOrWhiteSpace(command))
+            return "Error: command is required.";
+
+        var limit = JsonArgs.Int(root, 24000, "limit", "maxChars", "max_chars", "maxOutput", "max_output");
         limit = Math.Clamp(limit, 1000, 120000);
 
         // Parse timeout parameter (default 30s, max 300s, min 1s)
-        var timeoutSeconds = 30.0;
-        if (root.TryGetProperty("timeout", out var t))
-        {
-            if (t.ValueKind == JsonValueKind.Number && t.TryGetDouble(out var parsedTimeout))
-            {
-                if (double.IsNaN(parsedTimeout) || double.IsInfinity(parsedTimeout))
-                    return "Error: timeout must be a finite number.";
-                if (parsedTimeout < 1)
-                    return "Error: timeout must be at least 1 second.";
-                if (parsedTimeout > 300)
-                    return "Error: timeout must be at most 300 seconds (5 minutes).";
-                timeoutSeconds = parsedTimeout;
-            }
-            else
-            {
-                return "Error: timeout must be a number.";
-            }
-        }
+        var timeoutSeconds = JsonArgs.Double(root, 30, "timeout", "timeoutSeconds", "timeout_seconds", "seconds");
+        if (double.IsNaN(timeoutSeconds) || double.IsInfinity(timeoutSeconds))
+            return "Error: timeout must be a finite number.";
+        if (timeoutSeconds < 1)
+            return "Error: timeout must be at least 1 second.";
+        if (timeoutSeconds > 300)
+            return "Error: timeout must be at most 300 seconds (5 minutes).";
         var timeout = TimeSpan.FromSeconds(timeoutSeconds);
 
         var firstWord = GetFirstCommandWord(command);
@@ -992,10 +957,13 @@ internal static class ToolRegistry
     {
         using var doc = JsonDocument.Parse(argsJson);
         var root = doc.RootElement;
-        var path = ResolvePath(root.GetProperty("path").GetString() ?? "");
-        var skiplines = root.TryGetProperty("skiplines", out var s) ? s.GetInt32() : 0;
-        var limit = root.TryGetProperty("limit", out var l) ? l.GetInt32() : 1000;
+        var path = ResolvePath(JsonArgs.String(root, "", "path", "file", "filePath", "file_path", "filename"));
+        var skiplines = JsonArgs.Int(root, 0, "skiplines", "skipLines", "skip_lines", "skip", "offset");
+        var limit = JsonArgs.Int(root, 1000, "limit", "lines", "maxLines", "max_lines", "max");
         limit = Math.Clamp(limit, 1, 5000);
+
+        if (string.IsNullOrWhiteSpace(path) || path == Environment.CurrentDirectory)
+            return "Error: path is required.";
 
         if (!File.Exists(path))
             return $"Error: File not found: {path}";
@@ -1019,17 +987,11 @@ internal static class ToolRegistry
     {
         using var doc = JsonDocument.Parse(argsJson);
         var root = doc.RootElement;
-        var path = ResolvePath(root.GetProperty("path").GetString() ?? "");
+        var path = ResolvePath(JsonArgs.String(root, "", "path", "file", "filePath", "file_path", "filename"));
 
         // Accept multiple parameter name formats: camelCase or snake_case
-        var oldText =
-            root.TryGetProperty("oldText", out var o1) ? o1.GetString() :
-            root.TryGetProperty("old_text", out var o2) ? o2.GetString() :
-            "";
-        var newText =
-            root.TryGetProperty("newText", out var n1) ? n1.GetString() :
-            root.TryGetProperty("new_text", out var n2) ? n2.GetString() :
-            "";
+        var oldText = JsonArgs.String(root, "", "oldText", "old_text", "old", "search", "find", "target");
+        var newText = JsonArgs.String(root, "", "newText", "new_text", "new", "replacement", "replace", "with");
 
         // Validate inputs
         if (string.IsNullOrEmpty(path)) return "Error: path is required.";
@@ -1106,8 +1068,11 @@ internal static class ToolRegistry
     {
         using var doc = JsonDocument.Parse(argsJson);
         var root = doc.RootElement;
-        var path = ResolvePath(root.GetProperty("path").GetString() ?? "");
-        var content = root.GetProperty("content").GetString() ?? "";
+        var path = ResolvePath(JsonArgs.String(root, "", "path", "file", "filePath", "file_path", "filename"));
+        var content = JsonArgs.String(root, "", "content", "text", "data", "body", "value");
+
+        if (string.IsNullOrEmpty(path) || path == Environment.CurrentDirectory)
+            return "Error: path is required.";
 
         // Warn if file is not in a git repository
         var gitWarning = "";

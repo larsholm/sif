@@ -362,19 +362,15 @@ internal class AgentClient
     {
         var enabled = new List<string>();
         using var doc = JsonDocument.Parse(argsJson);
-        if (doc.RootElement.TryGetProperty("enable", out var enable) && enable.ValueKind == JsonValueKind.Array)
+        foreach (var name in JsonArgs.StringArray(doc.RootElement, "enable", "tools", "tool", "names"))
         {
-            foreach (var item in enable.EnumerateArray())
-            {
-                var name = item.GetString();
-                if (string.IsNullOrWhiteSpace(name))
-                    continue;
+            if (string.IsNullOrWhiteSpace(name))
+                continue;
 
-                if (_availableLocalTools.Contains(name))
-                {
-                    _activeLocalTools.Add(name);
-                    enabled.Add(name);
-                }
+            if (_availableLocalTools.Contains(name))
+            {
+                _activeLocalTools.Add(name);
+                enabled.Add(name);
             }
         }
 
@@ -397,8 +393,8 @@ internal class AgentClient
     {
         using var doc = JsonDocument.Parse(argsJson);
         var root = doc.RootElement;
-        var id = root.GetProperty("id").GetString() ?? "";
-        var focus = root.TryGetProperty("focus", out var f) && f.ValueKind == JsonValueKind.String ? f.GetString() : null;
+        var id = JsonArgs.String(root, "", "id", "contextId", "context_id", "key", "handle");
+        var focus = JsonArgs.String(root, "", "focus", "query", "topic", "summaryFocus", "summary_focus");
 
         if (string.IsNullOrEmpty(id))
             return "Error: id is required.";
