@@ -32,7 +32,7 @@ internal static class ToolRegistry
                             "enable": {
                                 "type": "array",
                                 "items": { "type": "string" },
-                                "description": "Optional tool names to enable for the next step"
+                                "description": "Tool names to enable"
                             }
                         }
                     }
@@ -44,14 +44,14 @@ internal static class ToolRegistry
         {
             tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
                 "bash",
-                "Run an allowed shell command and return output. Uses Bash on Unix-like systems and PowerShell on Windows. Default timeout 30s; use the timeout parameter to override or use serve for long-running servers.",
+                "Run shell commands. Bash on Unix, PowerShell on Windows. Default 30s timeout; use serve for long-running servers.",
                 BinaryData.FromString("""
                     {
                         "type": "object",
                         "properties": {
-                            "command": { "type": "string", "description": "The shell command to execute" },
-                            "limit": { "type": "integer", "description": "Max output characters (default 24000, max 120000)" },
-                            "timeout": { "type": "number", "description": "Timeout in seconds (default 30, max 300). Overrides the default 30s timeout." }
+                            "command": { "type": "string", "description": "Shell command to run" },
+                            "limit": { "type": "integer", "description": "Max output chars (default 24000, max 120000)" },
+                            "timeout": { "type": "number", "description": "Timeout in seconds (default 30, max 300)" }
                         },
                         "required": ["command"]
                     }
@@ -63,14 +63,14 @@ internal static class ToolRegistry
         {
             tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
                 "read",
-                "Read the contents of a file. Returns text for text files, file info for binary files.",
+                "Read file contents. Text for text files, file info for binary files.",
                 BinaryData.FromString("""
                     {
                         "type": "object",
                         "properties": {
-                            "path": { "type": "string", "description": "Path to the file to read" },
-                            "skiplines": { "type": "integer", "description": "Number of lines to skip from the start (default 0)" },
-                            "limit": { "type": "integer", "description": "Max lines to read (default 1000, max 5000)" }
+                            "path": { "type": "string", "description": "File path" },
+                            "skiplines": { "type": "integer", "description": "Lines to skip from start (default 0)" },
+                            "limit": { "type": "integer", "description": "Max lines (default 1000, max 5000)" }
                         },
                         "required": ["path"]
                     }
@@ -82,14 +82,14 @@ internal static class ToolRegistry
         {
             tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
                 "edit",
-                "Edit a file by replacing old text with new text. The old text must match exactly.",
+                "Replace text in a file. Old text must match exactly.",
                 BinaryData.FromString("""
                     {
                         "type": "object",
                         "properties": {
-                            "path": { "type": "string", "description": "Path to the file to edit" },
-                            "oldText": { "type": "string", "description": "The exact text to replace." },
-                            "newText": { "type": "string", "description": "The replacement text." }
+                            "path": { "type": "string", "description": "File path" },
+                            "oldText": { "type": "string", "description": "Exact text to replace" },
+                            "newText": { "type": "string", "description": "Replacement text" }
                         },
                         "required": ["path", "oldText", "newText"]
                     }
@@ -101,13 +101,13 @@ internal static class ToolRegistry
         {
             tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
                 "write",
-                "Write content to a file. Creates the file if it doesn't exist, overwrites if it does.",
+                "Write content to a file (creates or overwrites).",
                 BinaryData.FromString("""
                     {
                         "type": "object",
                         "properties": {
-                            "path": { "type": "string", "description": "Path to the file to write" },
-                            "content": { "type": "string", "description": "Content to write to the file" }
+                            "path": { "type": "string", "description": "File path" },
+                            "content": { "type": "string", "description": "File content" }
                         },
                         "required": ["path", "content"]
                     }
@@ -124,7 +124,7 @@ internal static class ToolRegistry
                     {
                         "type": "object",
                         "properties": {
-                            "seconds": { "type": "number", "description": "Number of seconds to wait, from 0 to 60" }
+                            "seconds": { "type": "number", "description": "Seconds to wait (0-60)" }
                         },
                         "required": ["seconds"]
                     }
@@ -136,14 +136,14 @@ internal static class ToolRegistry
         {
             tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
                 "serve",
-                "Start a local static HTTP server for a directory and return immediately with its URL and process id.",
+                "Start a local static HTTP server for a directory and return its URL.",
                 BinaryData.FromString("""
                     {
                         "type": "object",
                         "properties": {
-                            "path": { "type": "string", "description": "Directory to serve. Defaults to the current working directory." },
-                            "port": { "type": "integer", "description": "Port to use. Use 0 or omit to choose a free port." },
-                            "bind": { "type": "string", "description": "Bind address. Defaults to 127.0.0.1." }
+                            "path": { "type": "string", "description": "Directory to serve (default: CWD)" },
+                            "port": { "type": "integer", "description": "Port (0 or omit for auto)" },
+                            "bind": { "type": "string", "description": "Bind address (default 127.0.0.1)" }
                         }
                     }
                     """)
@@ -154,13 +154,13 @@ internal static class ToolRegistry
         {
             tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
                 "ctx_index",
-                "Store large text in the local context store and return a compact handle for later search/read.",
+                "Store large text in the local context store and return a handle.",
                 BinaryData.FromString("""
                     {
                         "type": "object",
                         "properties": {
-                            "source": { "type": "string", "description": "Short label describing where this content came from" },
-                            "content": { "type": "string", "description": "The text content to store out-of-band" }
+                            "source": { "type": "string", "description": "Short label describing source" },
+                            "content": { "type": "string", "description": "Text to store" }
                         },
                         "required": ["source", "content"]
                     }
@@ -172,13 +172,13 @@ internal static class ToolRegistry
         {
             tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
                 "ctx_search",
-                "Search previously stored large context and return focused snippets instead of full blobs.",
+                "Search stored context and return focused snippets.",
                 BinaryData.FromString("""
                     {
                         "type": "object",
                         "properties": {
                             "query": { "type": "string", "description": "Search terms" },
-                            "limit": { "type": "integer", "description": "Maximum result count (default 8)" }
+                            "limit": { "type": "integer", "description": "Max results (default 8)" }
                         },
                         "required": ["query"]
                     }
@@ -190,14 +190,14 @@ internal static class ToolRegistry
         {
             tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
                 "ctx_read",
-                "Read stored context by id. Use query to retrieve a focused snippet from a large stored blob.",
+                "Read stored context by id. Use query to retrieve a focused snippet.",
                 BinaryData.FromString("""
                     {
                         "type": "object",
                         "properties": {
-                            "id": { "type": "string", "description": "Context id returned by ctx_index or automatic context storage" },
-                            "query": { "type": "string", "description": "Optional search focus within this context blob" },
-                            "maxChars": { "type": "integer", "description": "Maximum characters to return (default 32000, max 160000)." }
+                            "id": { "type": "string", "description": "Context id from ctx_index or auto-storage" },
+                            "query": { "type": "string", "description": "Optional search focus within blob" },
+                            "maxChars": { "type": "integer", "description": "Max characters to return (default 32000, max 160000)" }
                         },
                         "required": ["id"]
                     }
@@ -209,13 +209,13 @@ internal static class ToolRegistry
         {
             tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
                 "ctx_summarize",
-                "Generate a focused summary of stored context using the LLM. Use when you need to understand what's in a large stored blob but don't know the right search terms.",
+                "Generate a focused summary of stored context. Use when unsure of search terms.",
                 BinaryData.FromString("""
                     {
                         "type": "object",
                         "properties": {
                             "id": { "type": "string", "description": "Context id to summarize" },
-                            "focus": { "type": "string", "description": "What to focus the summary on (e.g. 'error messages', 'configuration values', 'API endpoints'). Defaults to most important information if omitted." }
+                            "focus": { "type": "string", "description": "What to focus on (e.g. 'error messages', 'config values', 'API endpoints'). Defaults to most important if omitted." }
                         },
                         "required": ["id"]
                     }
@@ -227,7 +227,7 @@ internal static class ToolRegistry
         {
             tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
                 "ctx_stats",
-                "Show local context store statistics for this sif session.",
+                "Show local context store statistics.",
                 BinaryData.FromString("""
                     {
                         "type": "object",
@@ -246,7 +246,7 @@ internal static class ToolRegistry
                     {
                         "type": "object",
                         "properties": {
-                            "solutionPath": { "type": "string", "description": "Path to the .sln file." },
+                            "solutionPath": { "type": "string", "description": "Path to .sln file" },
                             "name": { "type": "string", "description": "Symbol name to search for" }
                         },
                         "required": ["solutionPath", "name"]
@@ -261,7 +261,7 @@ internal static class ToolRegistry
                     {
                         "type": "object",
                         "properties": {
-                            "projectPath": { "type": "string", "description": "Path to the .csproj or .sln file." }
+                            "projectPath": { "type": "string", "description": "Path to .csproj or .sln" }
                         },
                         "required": ["projectPath"]
                     }
