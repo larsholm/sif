@@ -773,7 +773,7 @@ internal static class ToolRegistry
     {
         var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "ls", "cat", "grep", "find", "pwd", "cd", "csi", "head", "tail", "wc", "whoami",
+            "#", "ls", "cat", "grep", "find", "pwd", "cd", "csi", "head", "tail", "wc", "whoami",
             "hostname", "date", "env", "echo", "file", "stat", "du", "df",
             "man", "locate", "which", "dirname", "basename", "realpath",
             "diff", "sort", "uniq", "tr", "cut", "sed", "awk", "gzip",
