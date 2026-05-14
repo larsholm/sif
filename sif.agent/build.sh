@@ -20,9 +20,6 @@ mkdir -p /tmp/sif-pack/tools/net10.0/any
 
 # Copy all output files to tools directory
 cp bin/Release/net10.0/* /tmp/sif-pack/tools/net10.0/any/ 2>/dev/null || true
-cp -r bin/Release/net10.0/de /tmp/sif-pack/tools/net10.0/any/ 2>/dev/null || true
-cp -r bin/Release/net10.0/fr /tmp/sif-pack/tools/net10.0/any/ 2>/dev/null || true
-cp -r bin/Release/net10.0/sv /tmp/sif-pack/tools/net10.0/any/ 2>/dev/null || true
 
 # Create DotnetToolSettings.xml (required for .NET global tools)
 cat > /tmp/sif-pack/tools/net10.0/any/DotnetToolSettings.xml << 'SETTINGS'
