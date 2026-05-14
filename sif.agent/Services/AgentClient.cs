@@ -266,6 +266,12 @@ internal class AgentClient
                             toolResult = toolResult.Substring(0, 120000) + "\n... (truncated)";
 
                         messages.Add(OpenAI.Chat.ChatMessage.CreateToolMessage(toolCall.Id, toolResult));
+
+                        // Persist tool calls and results to history so the model can see
+                        // what happened on previous turns
+                        var toolCallContent = $"Called tool: {toolName} with arguments: {argsJson}";
+                        history.Add(new ChatMessage("assistant", toolCallContent));
+                        history.Add(new ChatMessage("user", $"Result from {toolName}:\n{toolResult}"));
                     }
 
                     // Continue the loop to get the next response
