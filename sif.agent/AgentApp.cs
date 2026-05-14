@@ -804,7 +804,7 @@ Conversation:
 
         AnsiConsole.Write(table);
         AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine("[dim]/model switch <name> to change the active profile[/]\n");
+        AnsiConsole.MarkupLine("[dim]/model <name> to change the active profile[/]\n");
     }
 
     private static void ShowChatHelp()
@@ -816,7 +816,7 @@ Conversation:
         table.AddRow("[bold]/clear[/]", "Clear conversation history and keep the system prompt");
         table.AddRow("[bold]/sys <prompt>[/]", "Change the system prompt");
         table.AddRow("[bold]/model[/]", "List model profiles and show current one");
-        table.AddRow("[bold]/model switch <name>[/]", "Switch to a model profile (clears conversation)");
+        table.AddRow("[bold]/model <name>[/]", "Switch to a model profile (clears conversation)");
         table.AddRow("[bold]/context[/]", "Show chat history and stored context summary");
         table.AddRow("[bold]/context full[/]", "Show full stored message contents sent before the next user message");
         table.AddRow("[bold]/context list[/]", "List stored context entries");
