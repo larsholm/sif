@@ -338,7 +338,9 @@ internal static class ToolRegistry
             root.TryGetProperty("project", out var pp) ? pp.GetString() ?? "" :
             root.TryGetProperty("path", out var p) ? p.GetString() ?? "" :
             "";
-        var name = root.GetProperty("name").GetString() ?? root.GetProperty("query").GetString() ?? "";
+            
+        var name = root.TryGetProperty("name", out var n) ? n.GetString() ?? "" : root.TryGetProperty("query", out var q) ? q.GetString() ?? "" : "";
+
         return await RoslynTools.FindSymbolsAsync(path, name);
     }
 
@@ -349,7 +351,9 @@ internal static class ToolRegistry
 
         // Accept multiple parameter name formats: camelCase, snake_case, or projectFilePath
         var projectPath =
-            (root.TryGetProperty("projectPath", out var p1) ? p1.GetString() :
+            (root.TryGetProperty("path", out var p) ? p.GetString() :
+             root.TryGetProperty("project", out var pp) ? pp.GetString() :
+             root.TryGetProperty("projectPath", out var p1) ? p1.GetString() :
              root.TryGetProperty("project_path", out var p2) ? p2.GetString() :
              root.TryGetProperty("projectFilePath", out var p3) ? p3.GetString() :
              "") ?? "";
