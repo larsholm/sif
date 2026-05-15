@@ -56,6 +56,8 @@ TemporaryDependencyNodeTargetIdentifier=net10.0
 [sourceFiles]
 <NUGET>/microsoft.net.test.sdk/18.0.1/build/net8.0/Microsoft.NET.Test.Sdk.Program.cs
  @folderNames=..,..,..,.nuget,packages,microsoft.net.test.sdk,18.0.1,build,net8.0
+AgentClientIntegrationTests.cs
+AssemblyInfo.cs
 GeneralBehaviorTests.cs
 obj/Debug/net10.0/
  .NETCoreApp,Version=v10.0.AssemblyAttributes.cs

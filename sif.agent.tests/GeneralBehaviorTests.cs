@@ -72,7 +72,7 @@ public sealed class GeneralBehaviorTests
     [InlineData("roslyn_find_symbols", "{}", "name is required")]
     public async Task ToolsReturnClearMissingArgumentErrors(string tool, string arguments, string expected)
     {
-        var result = await ToolRegistry.ExecuteAsync(tool, arguments);
+        var result = await WithTimeout(ToolRegistry.ExecuteAsync(tool, arguments));
 
         Assert.Contains(expected, result, StringComparison.OrdinalIgnoreCase);
     }
@@ -81,13 +81,22 @@ public sealed class GeneralBehaviorTests
     [InlineData("""{"seconds":-1}""", "greater than or equal to 0")]
     [InlineData("""{"seconds":61}""", "less than or equal to 60")]
     [InlineData("""{"timeout":0,"command":"echo nope"}""", "at least 1 second")]
-    [InlineData("""{"timeout":301,"command":"echo nope"}""", "at most 300 seconds")]
+    [InlineData("""{"timeout":601,"command":"echo nope"}""", "at most 600 seconds")]
     public async Task ToolsValidateNumericBounds(string arguments, string expected)
     {
         var tool = arguments.Contains("command", StringComparison.Ordinal) ? "bash" : "sleep";
 
-        var result = await ToolRegistry.ExecuteAsync(tool, arguments);
+        var result = await WithTimeout(ToolRegistry.ExecuteAsync(tool, arguments));
 
         Assert.Contains(expected, result, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static async Task<string> WithTimeout(Task<string> task)
+    {
+        var completed = await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(2)));
+        if (completed != task)
+            throw new TimeoutException("Tool execution did not complete.");
+
+        return await task;
     }
 }

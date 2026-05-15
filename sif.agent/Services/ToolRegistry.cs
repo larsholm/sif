@@ -44,7 +44,7 @@ internal static class ToolRegistry
         {
             tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
                 "bash",
-                "Run shell commands. Bash on Unix, PowerShell on Windows. Default 30s timeout; use serve for long-running servers.",
+                "Run shell commands. Bash on Unix, PowerShell on Windows. Default 30s timeout, max 10 min; use serve for long-running servers.",
                 BinaryData.FromString("""
                     {
                         "type": "object",
@@ -354,8 +354,8 @@ internal static class ToolRegistry
             return "Error: seconds must be a finite number.";
         if (seconds < 0)
             return "Error: seconds must be greater than or equal to 0.";
-        if (seconds > 600)
-            return "Error: seconds must be less than or equal to 600.";
+        if (seconds > 60)
+            return "Error: seconds must be less than or equal to 60.";
 
         await Task.Delay(TimeSpan.FromSeconds(seconds), cancellationToken);
         return $"Slept for {seconds:0.###} seconds.";
@@ -500,14 +500,14 @@ internal static class ToolRegistry
         var limit = JsonArgs.Int(root, 24000, "limit", "maxChars", "max_chars", "maxOutput", "max_output");
         limit = Math.Clamp(limit, 1000, 120000);
 
-        // Parse timeout parameter (default 30s, max 300s, min 1s)
+        // Parse timeout parameter (default 30s, max 600s, min 1s)
         var timeoutSeconds = JsonArgs.Double(root, 30, "timeout", "timeoutSeconds", "timeout_seconds", "seconds");
         if (double.IsNaN(timeoutSeconds) || double.IsInfinity(timeoutSeconds))
             return "Error: timeout must be a finite number.";
         if (timeoutSeconds < 1)
             return "Error: timeout must be at least 1 second.";
-        if (timeoutSeconds > 300)
-            return "Error: timeout must be at most 300 seconds (5 minutes).";
+        if (timeoutSeconds > 600)
+            return "Error: timeout must be at most 600 seconds (10 minutes).";
         var timeout = TimeSpan.FromSeconds(timeoutSeconds);
 
         var firstWord = GetFirstCommandWord(command);
