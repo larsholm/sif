@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Diagnostics;
 using Spectre.Console;
 using sif.agent.Services;
+using sif.agent.Services.Tools;
 
 namespace sif.agent;
 
@@ -1140,8 +1141,8 @@ Conversation:
         if (config.Tools?.Length > 0)
             return config.Tools;
 
-        // Default: always enable tools
-        return new[] { "bash", "read", "edit", "write", "sleep", "serve", "context", "roslyn" };
+        // Default: keep Roslyn ambient instead of exposing it as model-callable tools.
+        return new[] { "bash", "read", "edit", "write", "sleep", "serve", "context" };
     }
 
     private static string BuildInitialSystemPrompt(string? cliSystemPrompt, string[]? tools, IReadOnlyList<SkillFile> skills)
@@ -1186,8 +1187,11 @@ Conversation:
                "\n- Use 'serve' to start a local static HTTP server; do not start long-running servers with 'bash'" +
                "\n- Use 'ctx_search' and 'ctx_read' when a tool result says large context was stored" +
                "\n- Use 'ctx_index' for large pasted text or generated data that should be searchable later" +
-               "\n- Use 'roslyn_find_symbols' to find symbols in a C# solution" +
-               "\n- Use 'roslyn_get_diagnostics' to get diagnostic issues in a C# project" +
+               "\n- When VS Code context points at a C# file, ambient Roslyn context may be attached automatically" +
+               (tools.Any(t => t.Equals("roslyn", StringComparison.OrdinalIgnoreCase))
+                   ? "\n- Use 'roslyn_find_symbols' to find symbols in a C# solution" +
+                     "\n- Use 'roslyn_get_diagnostics' to get diagnostic issues in a C# project"
+                   : "") +
                "\nThink before acting — explain your plan first." +
                "\nAfter using tools, summarize your key findings in your final answer. Important details from tool results should be restated in natural language so they persist in the conversation history.";
     }
@@ -2532,10 +2536,7 @@ internal static class VscodeContext
 
         // Only include editor context if it changed since the last turn
         if (block == _lastEditorContext)
-        {
-            _lastEditorContext = null;
             return message;
-        }
 
         _lastEditorContext = block;
         return message + "\n\n" + block;
@@ -2577,6 +2578,14 @@ internal static class VscodeContext
             sb.AppendLine(TrimText(selectedText, MaxInlineTextChars));
         }
         sb.AppendLine("</editor_context>");
+
+        var roslynContext = RoslynTools.BuildAmbientContext(file, line);
+        if (!string.IsNullOrWhiteSpace(roslynContext))
+        {
+            sb.AppendLine();
+            sb.AppendLine(roslynContext);
+        }
+
         return sb.ToString().TrimEnd();
     }
 

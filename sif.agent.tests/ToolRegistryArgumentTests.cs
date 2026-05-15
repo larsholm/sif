@@ -1,4 +1,5 @@
 using sif.agent;
+using sif.agent.Services.Tools;
 using Xunit;
 
 namespace sif.agent.tests;
@@ -85,6 +86,32 @@ public sealed class ToolRegistryArgumentTests
             $$"""{"path":"{{project}}","query":"ToolRegistry"}""");
 
         Assert.Contains("ToolRegistry", result);
+    }
+
+    [Fact]
+    public async Task AmbientRoslynContextReportsActiveFileDiagnostics()
+    {
+        var dir = CreateTempDirectory();
+        var file = Path.Combine(dir, "Broken.cs");
+        await File.WriteAllTextAsync(file, """
+            namespace Demo;
+
+            public class Broken
+            {
+                public void Run()
+                {
+                    var value =
+                }
+            }
+            """);
+
+        var result = RoslynTools.BuildAmbientContext(file, "5");
+
+        Assert.NotNull(result);
+        Assert.Contains("""<roslyn_context source="ambient">""", result);
+        Assert.Contains("Nearest declaration: method Run", result);
+        Assert.Contains("Syntax diagnostics:", result);
+        Assert.Contains("Error", result);
     }
 
     private static string CreateTempDirectory()
