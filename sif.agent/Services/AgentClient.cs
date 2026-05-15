@@ -33,7 +33,8 @@ internal class AgentClient
 
         if (!endpoint.Contains("openai.com", StringComparison.OrdinalIgnoreCase))
         {
-            openAIClient = new OpenAIClient(new ApiKeyCredential(apiKey), new OpenAI.OpenAIClientOptions
+            var localApiKey = string.IsNullOrWhiteSpace(apiKey) ? "local-api-key" : apiKey;
+            openAIClient = new OpenAIClient(new ApiKeyCredential(localApiKey), new OpenAI.OpenAIClientOptions
             {
                 Endpoint = new Uri(endpoint)
             });
