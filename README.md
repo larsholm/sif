@@ -29,7 +29,25 @@
 
 ## Install
 
-Linux/macOS:
+Install the released .NET tool from nuget.org:
+
+```sh
+dotnet tool install --global sif.agent
+```
+
+Update an existing install:
+
+```sh
+dotnet tool update --global sif.agent
+```
+
+The `sif` command will be available in your PATH after the .NET global tools directory is on your shell path.
+
+`sif update` also uses the NuGet feed by default, and `AGENT_AUTO_UPDATE_SOURCE` can point updates at another NuGet feed URL or a local folder containing `sif.agent` packages.
+
+Releases are published from Git tags like `v1.2.3` via GitHub Actions. The publish workflow uses NuGet trusted publishing, so nuget.org must have a trusted publisher policy for this repository and workflow.
+
+The companion VS Code extension is currently installed by the source installers. Linux/macOS:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/larsholm/sif/main/install.sh | bash
@@ -41,13 +59,7 @@ Windows PowerShell:
 irm https://raw.githubusercontent.com/larsholm/sif/main/install.ps1 | iex
 ```
 
-This downloads the latest `main` archive, builds the agent, and installs it as a global .NET tool. The `sif` command will be available in your PATH.
-
-Released versions are published to nuget.org as the `sif.agent` .NET tool. `sif update` uses the NuGet feed by default, and `AGENT_AUTO_UPDATE_SOURCE` can point updates at another NuGet feed URL or a local folder containing `sif.agent` packages.
-
-Releases are published from Git tags like `v1.2.3` via GitHub Actions. The publish workflow uses NuGet trusted publishing, so nuget.org must have a trusted publisher policy for this repository and workflow.
-
-The installer also installs the companion VS Code extension into `~/.vscode/extensions`. Set `VSCODE_EXTENSIONS=/path/to/extensions` before running the installer to target another VS Code-compatible extensions directory.
+These download the latest `main` archive, build the agent, install it as a global .NET tool, and install the companion VS Code extension into `~/.vscode/extensions`. Set `VSCODE_EXTENSIONS=/path/to/extensions` before running the installer to target another VS Code-compatible extensions directory.
 
 On first launch, `sif` opens a setup wizard for the API base URL, optional API key, model, tools, and thinking/reasoning display. The wizard fetches available models from the configured endpoint when possible and falls back to manual model entry if the endpoint cannot be queried. Run `sif setup` any time to update those values. Chat startup also probes model metadata for context-window size when the endpoint exposes it.
 
