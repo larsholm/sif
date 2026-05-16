@@ -36,6 +36,9 @@
 
   <ItemGroup>
     <None Include="../README.md" Pack="true" PackagePath="/" />
+    <EmbeddedResource Include="../sif.vscode/package.json" LogicalName="sif.vscode.package.json" />
+    <EmbeddedResource Include="../sif.vscode/extension.js" LogicalName="sif.vscode.extension.js" />
+    <EmbeddedResource Include="../sif.vscode/README.md" LogicalName="sif.vscode.README.md" />
   </ItemGroup>
 
   <ItemGroup>

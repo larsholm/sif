@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Diagnostics;
+using System.Reflection;
 using Spectre.Console;
 using sif.agent.Services;
 using sif.agent.Services.Tools;
@@ -86,6 +87,8 @@ internal class AgentApp
                 return await RunSecure(rest);
             case "update":
                 return await RunUpdate(rest);
+            case "vscode":
+                return RunVscode(rest);
             default:
                 AnsiConsole.MarkupLine($"[yellow]Unknown command: {cmd.EscapeMarkup()}[/]");
                 ShowHelp();
@@ -106,6 +109,7 @@ internal class AgentApp
         AnsiConsole.MarkupLine("  [bold]secure[/]  Manage secure API key storage");
         AnsiConsole.MarkupLine("  [bold]setup[/]  Run the first-launch setup wizard");
         AnsiConsole.MarkupLine("  [bold]update[/]  Update sif.agent to the latest version");
+        AnsiConsole.MarkupLine("  [bold]vscode[/]  Install, remove, or inspect the companion VS Code extension");
         AnsiConsole.MarkupLine("  [bold]uninstall[/]  Remove the global tool and VS Code extension");
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine("Options (all commands):");
@@ -1424,6 +1428,8 @@ Conversation:
         config.Save();
 
         AnsiConsole.MarkupLine("\n[green]Configuration saved.[/]");
+        if (firstLaunch && AnsiConsole.Confirm("Install the companion VS Code extension?", true))
+            InstallVscodeExtension();
         AnsiConsole.MarkupLine("[dim]Run `sif config` to review or `sif setup` to change these values later.[/]\n");
     }
 
@@ -2150,6 +2156,105 @@ Conversation:
         return 1;
     }
 
+    private static int RunVscode(string[] args)
+    {
+        var command = args.FirstOrDefault()?.ToLowerInvariant();
+        switch (command)
+        {
+            case null:
+            case "":
+            case "help":
+            case "-h":
+            case "--help":
+                AnsiConsole.MarkupLine("[bold]sif vscode[/] - Manage the companion VS Code extension");
+                AnsiConsole.WriteLine();
+                AnsiConsole.MarkupLine("  [bold]install[/]  Install or update the extension");
+                AnsiConsole.MarkupLine("  [bold]remove[/]   Remove the extension");
+                AnsiConsole.MarkupLine("  [bold]status[/]   Show extension install status");
+                return 0;
+            case "install":
+            case "update":
+                InstallVscodeExtension();
+                return 0;
+            case "remove":
+            case "uninstall":
+                RemoveVscodeExtension();
+                return 0;
+            case "status":
+                ShowVscodeExtensionStatus();
+                return 0;
+            default:
+                return ShowHelpAndExit($"Unknown vscode command: {command}");
+        }
+    }
+
+    private static void InstallVscodeExtension()
+    {
+        const string extensionId = "sif.sif-vscode";
+        const string packageResource = "sif.vscode.package.json";
+        const string extensionResource = "sif.vscode.extension.js";
+        const string readmeResource = "sif.vscode.README.md";
+
+        var packageJson = ReadEmbeddedResource(packageResource);
+        var extensionJs = ReadEmbeddedResource(extensionResource);
+        var readme = ReadEmbeddedResource(readmeResource);
+
+        var version = ReadVscodeExtensionVersion(packageJson);
+        var installDir = Path.Combine(GetVscodeExtensionsRoot(), $"{extensionId}-{version}");
+
+        RemoveVscodeExtension();
+
+        Directory.CreateDirectory(installDir);
+        File.WriteAllText(Path.Combine(installDir, "package.json"), packageJson);
+        File.WriteAllText(Path.Combine(installDir, "extension.js"), extensionJs);
+        File.WriteAllText(Path.Combine(installDir, "README.md"), readme);
+
+        AnsiConsole.MarkupLine($"[green]VS Code extension installed:[/] {installDir.EscapeMarkup()}");
+        AnsiConsole.MarkupLine("[dim]Restart VS Code if it is already running.[/]");
+    }
+
+    private static string ReadEmbeddedResource(string name)
+    {
+        var assembly = Assembly.GetExecutingAssembly();
+        using var stream = assembly.GetManifestResourceStream(name)
+            ?? throw new InvalidOperationException($"Embedded resource not found: {name}");
+        using var reader = new StreamReader(stream, Encoding.UTF8);
+        return reader.ReadToEnd();
+    }
+
+    private static string ReadVscodeExtensionVersion(string packageJson)
+    {
+        using var doc = JsonDocument.Parse(packageJson);
+        return doc.RootElement.TryGetProperty("version", out var version) &&
+               !string.IsNullOrWhiteSpace(version.GetString())
+            ? version.GetString()!
+            : "0.1.0";
+    }
+
+    private static void ShowVscodeExtensionStatus()
+    {
+        const string extensionPrefix = "sif.sif-vscode-";
+        var extensionsRoot = GetVscodeExtensionsRoot();
+
+        if (!Directory.Exists(extensionsRoot))
+        {
+            AnsiConsole.MarkupLine("[yellow]VS Code extensions directory was not found.[/]");
+            AnsiConsole.MarkupLine($"[dim]{extensionsRoot.EscapeMarkup()}[/]");
+            return;
+        }
+
+        var installs = Directory.EnumerateDirectories(extensionsRoot, extensionPrefix + "*").ToArray();
+        if (installs.Length == 0)
+        {
+            AnsiConsole.MarkupLine("[yellow]The sif VS Code extension is not installed.[/]");
+            AnsiConsole.MarkupLine("[dim]Run `sif vscode install` to install it.[/]");
+            return;
+        }
+
+        foreach (var install in installs)
+            AnsiConsole.MarkupLine($"[green]Installed:[/] {install.EscapeMarkup()}");
+    }
+
     private static async Task<int> RunUninstall(string[] args)
     {
         var force = args.Any(arg => arg is "-y" or "--yes" or "--force");
@@ -2193,9 +2298,7 @@ Conversation:
     private static void RemoveVscodeExtension()
     {
         const string extensionPrefix = "sif.sif-vscode-";
-        var extensionsRoot = Environment.GetEnvironmentVariable("VSCODE_EXTENSIONS");
-        if (string.IsNullOrWhiteSpace(extensionsRoot))
-            extensionsRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".vscode", "extensions");
+        var extensionsRoot = GetVscodeExtensionsRoot();
 
         if (!Directory.Exists(extensionsRoot))
             return;
@@ -2212,6 +2315,14 @@ Conversation:
                 AnsiConsole.MarkupLine($"[yellow]Warning:[/] Could not remove VS Code extension {dir.EscapeMarkup()}: {ex.Message.EscapeMarkup()}");
             }
         }
+    }
+
+    private static string GetVscodeExtensionsRoot()
+    {
+        var extensionsRoot = Environment.GetEnvironmentVariable("VSCODE_EXTENSIONS");
+        return string.IsNullOrWhiteSpace(extensionsRoot)
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".vscode", "extensions")
+            : extensionsRoot;
     }
 
     private static void RemoveConfigFile()
