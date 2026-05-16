@@ -25,6 +25,15 @@ internal class AgentConfig
     /// </summary>
     public bool UseSecureApiKeyStorage { get; set; }
     /// <summary>
+    /// If true, the app checks for tool updates on startup and offers to install them.
+    /// </summary>
+    public bool AutoUpdateEnabled { get; set; }
+    /// <summary>
+    /// Optional source to use when updating the global tool.
+    /// If empty, dotnet tool update uses the default registered source(s).
+    /// </summary>
+    public string? AutoUpdateSource { get; set; }
+    /// <summary>
     /// Named model profiles for easy switching between local/cloud backends.
     /// If populated, <see cref="CurrentProfile"/> determines which profile's
     /// BaseUrl, ApiKey, Model, Temperature, and MaxTokens are active.
@@ -112,6 +121,8 @@ internal class AgentConfig
                     config.CompactionThreshold = loaded.CompactionThreshold;
                     config.CompactionThresholdConfigured = loaded.CompactionThreshold != DefaultCompactionThreshold;
                     config.UseSecureApiKeyStorage = loaded.UseSecureApiKeyStorage;
+                    config.AutoUpdateEnabled = loaded.AutoUpdateEnabled;
+                    config.AutoUpdateSource = loaded.AutoUpdateSource;
                     config.McpServers = loaded.McpServers ?? new();
                     config.Values = loaded.Values ?? new();
                     config.Profiles = loaded.Profiles ?? new();
@@ -176,6 +187,10 @@ internal class AgentConfig
             config.CompactionThreshold = envCompact;
             config.CompactionThresholdConfigured = true;
         }
+        if (bool.TryParse(Environment.GetEnvironmentVariable("AGENT_AUTO_UPDATE_ENABLED"), out var envAutoUpdateEnabled))
+            config.AutoUpdateEnabled = envAutoUpdateEnabled;
+        if (Environment.GetEnvironmentVariable("AGENT_AUTO_UPDATE_SOURCE") is { Length: > 0 } envAutoUpdateSource)
+            config.AutoUpdateSource = envAutoUpdateSource;
 
         // Load API key from secure storage if configured
         if (config.UseSecureApiKeyStorage && string.IsNullOrEmpty(config.ApiKey))
@@ -312,6 +327,15 @@ internal class AgentConfig
             case "SHELL_ALLOWED_COMMANDS":
             case "AGENT_SHELL_ALLOWED_COMMANDS":
                 config.ShellAllowedCommands = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                break;
+            case "AUTO_UPDATE_ENABLED":
+            case "AGENT_AUTO_UPDATE_ENABLED":
+                if (bool.TryParse(value, out var autoUpdateEnabled))
+                    config.AutoUpdateEnabled = autoUpdateEnabled;
+                break;
+            case "AUTO_UPDATE_SOURCE":
+            case "AGENT_AUTO_UPDATE_SOURCE":
+                config.AutoUpdateSource = value;
                 break;
         }
     }

@@ -1,0 +1,50 @@
+name: Publish NuGet package
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Derive version from tag
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?)$ ]]; then
+            VERSION="${BASH_REMATCH[1]}"
+          else
+            VERSION="$(date +%Y.%m.%d).${GITHUB_RUN_NUMBER}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Restore
+        run: dotnet restore sif.agent.tests/sif.agent.tests.csproj /p:Version=${{ steps.version.outputs.version }}
+
+      - name: Build
+        run: dotnet build sif.agent.tests/sif.agent.tests.csproj -c Release --no-restore /p:Version=${{ steps.version.outputs.version }}
+
+      - name: Test
+        run: dotnet test sif.agent.tests/sif.agent.tests.csproj -c Release --no-build
+
+      - name: Pack
+        run: dotnet pack sif.agent/sif.agent.csproj -c Release --no-build -o artifacts /p:Version=${{ steps.version.outputs.version }}
+
+      - name: Publish to NuGet
+        run: dotnet nuget push artifacts/*.nupkg --source https://api.nuget.org/v3/index.json --api-key "${{ secrets.NUGET_API_KEY }}" --skip-duplicate

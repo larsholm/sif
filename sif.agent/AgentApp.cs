@@ -12,6 +12,8 @@ namespace sif.agent;
 /// </summary>
 internal class AgentApp
 {
+    private const string DefaultNuGetSource = "https://api.nuget.org/v3/index.json";
+
     public async Task<int> Run(string[] args)
     {
         // Find the first non-flag argument that isn't a value for a flag
@@ -82,6 +84,8 @@ internal class AgentApp
                 return RunModels(rest);
             case "secure":
                 return await RunSecure(rest);
+            case "update":
+                return await RunUpdate(rest);
             default:
                 AnsiConsole.MarkupLine($"[yellow]Unknown command: {cmd.EscapeMarkup()}[/]");
                 ShowHelp();
@@ -101,6 +105,7 @@ internal class AgentApp
         AnsiConsole.MarkupLine("  [bold]models[/]  List, add, switch, or remove model profiles");
         AnsiConsole.MarkupLine("  [bold]secure[/]  Manage secure API key storage");
         AnsiConsole.MarkupLine("  [bold]setup[/]  Run the first-launch setup wizard");
+        AnsiConsole.MarkupLine("  [bold]update[/]  Update sif.agent to the latest version");
         AnsiConsole.MarkupLine("  [bold]uninstall[/]  Remove the global tool and VS Code extension");
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine("Options (all commands):");
@@ -124,6 +129,8 @@ internal class AgentApp
         AnsiConsole.WriteLine("  AGENT_MAX_TOKENS - Max tokens to generate");
         AnsiConsole.WriteLine("  AGENT_TEMPERATURE - Sampling temperature");
         AnsiConsole.WriteLine("  AGENT_COMPACTION_THRESHOLD - Chat-history token threshold for compaction (0 disables)");
+        AnsiConsole.WriteLine("  AGENT_AUTO_UPDATE_ENABLED - Check for updates on startup");
+        AnsiConsole.WriteLine("  AGENT_AUTO_UPDATE_SOURCE - Optional tool source for updates (defaults to nuget.org)");
     }
 
     private static CliArgs ParseArgs(string[] args)
@@ -242,6 +249,7 @@ internal class AgentApp
 
         if (opts.Thinking.HasValue)
             config.ThinkingEnabled = opts.Thinking;
+        await MaybeAutoUpdateAsync(config, interactive: true);
         var modelContextLength = await TryApplyModelCompactionThresholdAsync(config);
 
         await using var mcpService = new McpService();
@@ -1681,6 +1689,8 @@ Conversation:
             ("AGENT_TEMPERATURE", "Temperature", config.Temperature?.ToString() ?? "default"),
             ("AGENT_THINKING_ENABLED", "Thinking", config.ThinkingEnabled?.ToString() ?? "default"),
             ("AGENT_COMPACTION_THRESHOLD", "Compaction threshold", config.CompactionThreshold.ToString()),
+            ("AGENT_AUTO_UPDATE_ENABLED", "Auto-update", config.AutoUpdateEnabled.ToString()),
+            ("AGENT_AUTO_UPDATE_SOURCE", "Auto-update source", config.AutoUpdateSource ?? DefaultNuGetSource),
             ("AGENT_TOOLS", "Tools", config.Tools is { Length: > 0 } ? string.Join(",", config.Tools) : "default"),
             ("AGENT_SHELL_ALLOWED_COMMANDS", "Shell allowed commands", config.ShellAllowedCommands is { Length: > 0 } ? string.Join(",", config.ShellAllowedCommands) : "default"),
         };
@@ -1695,6 +1705,121 @@ Conversation:
 
         AnsiConsole.Write(table);
         return 0;
+    }
+
+    private static async Task<int> RunUpdate(string[] args)
+    {
+        var config = AgentConfig.Load();
+        var source = args.FirstOrDefault(a => !a.StartsWith('-')) ?? config.AutoUpdateSource;
+        if (string.IsNullOrWhiteSpace(source))
+        {
+            source = ResolveUpdateSource(config);
+        }
+
+        if (string.IsNullOrWhiteSpace(source))
+        {
+            AnsiConsole.MarkupLine("[yellow]No update source configured or discoverable.[/]");
+            AnsiConsole.MarkupLine("[dim]Use AGENT_AUTO_UPDATE_SOURCE to point at a NuGet feed URL or local package folder.[/]");
+            return 0;
+        }
+
+        return await UpdateToolAsync(source, interactive: true);
+    }
+
+    private static async Task<int> MaybeAutoUpdateAsync(AgentConfig config, bool interactive)
+    {
+        if (!config.AutoUpdateEnabled)
+            return 0;
+
+        var source = ResolveUpdateSource(config);
+        if (string.IsNullOrWhiteSpace(source))
+        {
+            AnsiConsole.MarkupLine("[yellow]Auto-update is enabled, but no package source was found.[/]");
+            AnsiConsole.MarkupLine("[dim]Set AGENT_AUTO_UPDATE_SOURCE to a NuGet feed URL or local package folder.[/]");
+            return 0;
+        }
+
+        if (interactive)
+            AnsiConsole.MarkupLine($"[dim]Auto-update is enabled. Checking updates from {source.EscapeMarkup()}...[/]");
+
+        return await UpdateToolAsync(source, interactive: interactive);
+    }
+
+    private static string? ResolveUpdateSource(AgentConfig config)
+    {
+        if (!string.IsNullOrWhiteSpace(config.AutoUpdateSource))
+            return config.AutoUpdateSource;
+
+        var repoRoot = FindRepositoryRoot();
+        if (repoRoot is null)
+            return DefaultNuGetSource;
+
+        var localFeed = Path.Combine(repoRoot, "nupkg");
+        if (Directory.Exists(localFeed))
+            return localFeed;
+
+        return DefaultNuGetSource;
+    }
+
+    private static string? FindRepositoryRoot()
+    {
+        var dir = new DirectoryInfo(Environment.CurrentDirectory);
+        while (dir != null)
+        {
+            if (File.Exists(Path.Combine(dir.FullName, "sif.agent.csproj")) &&
+                File.Exists(Path.Combine(dir.FullName, "build.sh")))
+                return dir.FullName;
+
+            dir = dir.Parent;
+        }
+        return null;
+    }
+
+    private static async Task<int> UpdateToolAsync(string source, bool interactive)
+    {
+        if (interactive && !AnsiConsole.Confirm($"Run dotnet tool update using {source}?"))
+            return 0;
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = "dotnet",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+
+        psi.ArgumentList.Add("tool");
+        psi.ArgumentList.Add("update");
+        psi.ArgumentList.Add("sif.agent");
+        psi.ArgumentList.Add("--global");
+        psi.ArgumentList.Add("--add-source");
+        psi.ArgumentList.Add(source);
+
+        AnsiConsole.MarkupLine($"[dim]Using update source: {source.EscapeMarkup()}[/]");
+
+        var process = Process.Start(psi);
+        if (process is null)
+        {
+            AnsiConsole.MarkupLine("[red]Failed to start dotnet tool update.[/]");
+            return 1;
+        }
+
+        var stdout = await process.StandardOutput.ReadToEndAsync();
+        var stderr = await process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+
+        if (!string.IsNullOrWhiteSpace(stdout))
+            AnsiConsole.WriteLine(stdout);
+        if (!string.IsNullOrWhiteSpace(stderr))
+            AnsiConsole.WriteLine(stderr);
+
+        if (process.ExitCode != 0 && stderr.Contains("not found in NuGet feeds", StringComparison.OrdinalIgnoreCase))
+        {
+            AnsiConsole.MarkupLine("[yellow]No package was found in the configured source.[/]");
+            AnsiConsole.MarkupLine("[dim]Set AGENT_AUTO_UPDATE_SOURCE to a feed URL/path that contains sif.agent.[/]");
+        }
+
+        return process.ExitCode;
     }
 
     private static async Task<int> RunSecure(string[] args)
