@@ -8,7 +8,7 @@
 
 ## Highlights
 
-- **Interactive** - run `sif` to start a chat session.
+- **Interactive** - run `sif` to start a coding session.
 - **Local model friendly** - use vLLM, Ollama, LM Studio, LiteLLM, OpenAI, or any compatible endpoint.
 - **Tool calling** - enable shell, file, context, sleep, static server, diagnostics, and Roslyn tools.
 - **C# as a first-class citizen** - the built-in Roslyn tools let the agent analyze C# solutions directly — find symbols across projects, and inspect compiler diagnostics — without leaving the chat.
