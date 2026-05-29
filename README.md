@@ -4,7 +4,7 @@
   <img src="assets/sif.jpg" alt="Sif" width="720">
 </p>
 
-`sif` is a lightweight BYOK AI agent console tool written in C#. It works with OpenAI-compatible APIs, local model servers, and a small set of built-in tools for reading, editing, searching, serving, and inspecting local context. **C# is a first-class citizen** — the built-in Roslyn tools let the agent analyze solutions and projects directly using the .NET Compiler Platform.
+`sif` is a lightweight BYOK coding assistant written in C#. It works with OpenAI-compatible APIs, local model servers, and a small set of built-in tools for reading, editing, searching, serving, and inspecting local context. **C# is a first-class citizen** — the built-in Roslyn tools let the agent analyze solutions and projects directly using the .NET Compiler Platform.
 
 ## Highlights
 
