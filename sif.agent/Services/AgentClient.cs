@@ -161,6 +161,8 @@ internal class AgentClient
     {
         var messages = history.Select(m => ToRequestMessage(m)).ToList();
         int totalTokens = 0;
+        int totalOutputTokens = 0;
+        var totalTime = TimeSpan.Zero;
 
         while (true)
             {
@@ -170,9 +172,14 @@ internal class AgentClient
                     opts.Tools.Add(tool);
                 ApplyThinkingOptions(opts);
 
+                var sw = System.Diagnostics.Stopwatch.StartNew();
                 var result = await _chatClient.CompleteChatAsync(messages, opts, cancellationToken);
+                sw.Stop();
 
-                totalTokens += result.Value.Usage?.TotalTokenCount ?? 0;
+                var usage = result.Value.Usage;
+                totalTokens += usage?.TotalTokenCount ?? 0;
+                totalOutputTokens += usage?.OutputTokenCount ?? 0;
+                totalTime += sw.Elapsed;
 
                 // Extract reasoning from the raw response (vLLM/Qwen) or from content tags
                 string reasoningText = ExtractReasoningFromRawResponse(result);
@@ -194,12 +201,16 @@ internal class AgentClient
                 // Check if the model wants to call tools
                 if (result.Value.ToolCalls.Count > 0)
                 {
-                    messages.Add(OpenAI.Chat.ChatMessage.CreateAssistantMessage(result.Value));
+                    var toolCalls = result.Value.ToolCalls
+                        .Select(NormalizeToolCall)
+                        .ToList();
+                    messages.Add(OpenAI.Chat.ChatMessage.CreateAssistantMessage(toolCalls.Select(call => call.ToolCall)));
 
-                    foreach (var toolCall in result.Value.ToolCalls)
+                    foreach (var normalizedCall in toolCalls)
                     {
+                        var toolCall = normalizedCall.ToolCall;
                         var toolName = toolCall.FunctionName;
-                        var argsJson = toolCall.FunctionArguments.ToString();
+                        var argsJson = normalizedCall.ArgumentsJson;
 
                         var preview = argsJson.Length > 80 ? argsJson.Substring(0, 80) + "..." : argsJson;
                         AnsiConsole.MarkupLine($"\n[dim]Tool: {toolName.EscapeMarkup()} ({preview.EscapeMarkup()})[/]");
@@ -245,6 +256,9 @@ internal class AgentClient
                             AnsiConsole.MarkupLine($"[dim]Debug saved to {debugPath.EscapeMarkup()}[/]");
                         }
 
+                        if (!string.IsNullOrEmpty(normalizedCall.Warning))
+                            toolResult = normalizedCall.Warning + "\n\n" + toolResult;
+
                         if (!IsContextTool(toolName) && toolResult.Length > ContextStore.AutoStoreThreshold)
                         {
                             var originalResult = toolResult;
@@ -283,6 +297,17 @@ internal class AgentClient
                 AnsiConsole.WriteLine();
                 await UiService.DisplayMarkdown(cleanContent);
                 AnsiConsole.WriteLine();
+                
+                // Display TPS stats
+                if (totalTime.TotalSeconds > 0 && totalOutputTokens > 0)
+                {
+                    var tps = totalOutputTokens / totalTime.TotalSeconds;
+                    AnsiConsole.MarkupLine($"[dim]⚡ {totalOutputTokens:N0} output tokens in {totalTime.TotalSeconds:F1}s ({tps:F1} tps) | {totalTokens:N0} total tokens[/]");
+                }
+                else if (totalTokens > 0)
+                {
+                    AnsiConsole.MarkupLine($"[dim]📊 {totalTokens:N0} total tokens[/]");
+                }
                 
                 history.Add(new ChatMessage("assistant", cleanContent));
                 messages.Add(OpenAI.Chat.ChatMessage.CreateAssistantMessage(result.Value));
@@ -326,6 +351,8 @@ internal class AgentClient
 
         var sb = new StringBuilder();
         int totalTokens = 0;
+        int outputTokens = 0;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
 
         await foreach (var update in stream.WithCancellation(cancellationToken))
         {
@@ -342,7 +369,20 @@ internal class AgentClient
             if (update.Usage is { } usage)
             {
                 totalTokens = usage.TotalTokenCount;
+                outputTokens = usage.OutputTokenCount;
             }
+        }
+        sw.Stop();
+
+        AnsiConsole.WriteLine();
+        if (sw.Elapsed.TotalSeconds > 0 && outputTokens > 0)
+        {
+            var tps = outputTokens / sw.Elapsed.TotalSeconds;
+            AnsiConsole.MarkupLine($"[dim]⚡ {outputTokens:N0} output tokens in {sw.Elapsed.TotalSeconds:F1}s ({tps:F1} tps) | {totalTokens:N0} total tokens[/]");
+        }
+        else if (totalTokens > 0)
+        {
+            AnsiConsole.MarkupLine($"[dim]📊 {totalTokens:N0} total tokens[/]");
         }
 
         return (sb.ToString(), totalTokens);
@@ -492,6 +532,47 @@ internal class AgentClient
         return sb.ToString();
     }
 
+    private static NormalizedToolCall NormalizeToolCall(OpenAI.Chat.ChatToolCall toolCall)
+    {
+        var argsJson = toolCall.FunctionArguments.ToString();
+        if (IsJsonObject(argsJson))
+            return new NormalizedToolCall(toolCall, argsJson, "");
+
+        var warning = string.IsNullOrWhiteSpace(argsJson)
+            ? $"Warning: Tool '{toolCall.FunctionName}' was called with empty arguments. Retrying with an empty JSON object; provide the required arguments in the next tool call if this result is insufficient."
+            : $"Warning: Tool '{toolCall.FunctionName}' was called with invalid arguments. Expected a JSON object, received: {TruncateForWarning(argsJson)}. Retrying with an empty JSON object; provide valid JSON arguments in the next tool call if this result is insufficient.";
+
+        const string fallbackArguments = "{}";
+        var sanitizedToolCall = OpenAI.Chat.ChatToolCall.CreateFunctionToolCall(
+            toolCall.Id,
+            toolCall.FunctionName,
+            BinaryData.FromString(fallbackArguments));
+
+        return new NormalizedToolCall(sanitizedToolCall, fallbackArguments, warning);
+    }
+
+    private static bool IsJsonObject(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(text);
+            return doc.RootElement.ValueKind == JsonValueKind.Object;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static string TruncateForWarning(string text)
+    {
+        text = text.Replace("\r", "\\r").Replace("\n", "\\n");
+        return text.Length > 200 ? text[..200] + "..." : text;
+    }
+
     private static string StripThinkingTags(string text)
     {
         // Strip <thinking>...</thinking>, <thought>...</thought>, etc.
@@ -510,4 +591,9 @@ internal class AgentClient
         if (match.Success) return match.Groups[1].Value;
         return "";
     }
+
+    private sealed record NormalizedToolCall(
+        OpenAI.Chat.ChatToolCall ToolCall,
+        string ArgumentsJson,
+        string Warning);
 }

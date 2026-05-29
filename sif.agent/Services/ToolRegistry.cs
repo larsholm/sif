@@ -240,7 +240,8 @@ internal static class ToolRegistry
                             "solutionPath": { "type": "string", "description": ".sln path" },
                             "projectPath": { "type": "string", "description": ".csproj path" },
                             "name": { "type": "string", "description": "Symbol name" }
-                        }
+                        },
+                        "required": ["name"]
                     }
                     """)
             ));
@@ -253,7 +254,8 @@ internal static class ToolRegistry
                         "type": "object",
                         "properties": {
                             "projectPath": { "type": "string", "description": ".csproj or .sln path" }
-                        }
+                        },
+                        "required": ["projectPath"]
                     }
                     """)
             ));

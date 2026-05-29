@@ -114,6 +114,52 @@ public sealed class AgentClientIntegrationTests
         Assert.DoesNotContain(messages, message => message.GetProperty("role").GetString() == "tool");
     }
 
+    [Fact]
+    public async Task ChatWithToolsSanitizesEmptyToolArgumentsBeforeContinuing()
+    {
+        await using var server = new ChatCompletionStub();
+        server.Enqueue(ChatResponse("""
+            {
+              "role": "assistant",
+              "content": null,
+              "tool_calls": [
+                {
+                  "id": "call_read_empty",
+                  "type": "function",
+                  "function": {
+                    "name": "read",
+                    "arguments": ""
+                  }
+                }
+              ]
+            }
+            """, finishReason: "tool_calls"));
+        server.Enqueue(ChatResponse("""{"role":"assistant","content":"recovered"}"""));
+
+        var client = new AgentClient(TestConfig(server.BaseUrl, ConfiguredDefaultModel()), ["read"]);
+        var history = new List<ChatMessage> { new("user", "read something") };
+
+        var (response, _) = await WithTimeout(client.ChatWithToolsAsync(history));
+
+        Assert.Equal("recovered", response);
+        Assert.Equal(2, server.Requests.Count);
+
+        var secondMessages = server.Requests[1].Json.RootElement.GetProperty("messages").EnumerateArray().ToArray();
+        var assistantToolCall = secondMessages.Single(message =>
+            message.GetProperty("role").GetString() == "assistant" &&
+            message.TryGetProperty("tool_calls", out _));
+        var arguments = assistantToolCall
+            .GetProperty("tool_calls")[0]
+            .GetProperty("function")
+            .GetProperty("arguments")
+            .GetString();
+        Assert.Equal("{}", arguments);
+
+        var toolMessage = secondMessages.Single(message => message.GetProperty("role").GetString() == "tool");
+        Assert.Contains("called with empty arguments", MessageText(toolMessage));
+        Assert.Contains("path is required", MessageText(toolMessage));
+    }
+
     private static AgentConfig TestConfig(string baseUrl, string model)
     {
         return new AgentConfig
