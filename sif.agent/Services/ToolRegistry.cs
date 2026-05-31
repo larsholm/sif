@@ -320,6 +320,11 @@ internal static class ToolRegistry
 
                 cancellationToken.ThrowIfCancellationRequested();
                 var result = FormatCommandResult(outputTask.Result, errorTask.Result, limit);
+                var exitCode = process.ExitCode;
+                if (exitCode != 0)
+                    return string.IsNullOrEmpty(result)
+                        ? $"(exit code {exitCode}, no output)"
+                        : $"{result}\n(exit code {exitCode})";
                 return string.IsNullOrEmpty(result) ? "(no output)" : result;
             }
             finally
