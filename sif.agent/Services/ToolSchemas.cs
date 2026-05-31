@@ -51,7 +51,8 @@ internal static class ToolSchemas
                             "command": { "type": "string", "description": "Shell command to run" },
                             "limit": { "type": "integer", "description": "Max output chars (default 24000, max 120000)" },
                             "timeout": { "type": "number", "description": "Timeout in seconds" }
-                        }
+                        },
+                        "required": ["command"]
                     }
                     """)
             ));
@@ -68,8 +69,9 @@ internal static class ToolSchemas
                         "properties": {
                             "path": { "type": "string", "description": "File path" },
                             "skiplines": { "type": "integer", "description": "Lines to skip from start" },
-                            "limit": { "type": "integer", "description": "Max lines" }
-                        }
+                            "limit": { "type": "integer", "description": "Max lines to read (default 1000)" }
+                        },
+                        "required": ["path"]
                     }
                     """)
             ));
@@ -85,9 +87,10 @@ internal static class ToolSchemas
                         "type": "object",
                         "properties": {
                             "path": { "type": "string", "description": "File path" },
-                            "oldText": { "type": "string", "description": "Exact text to replace" },
-                            "newText": { "type": "string", "description": "Replacement text" }
-                        }
+                            "oldText": { "type": "string", "description": "The exact literal text to replace (including all whitespace, indentation, newlines, and surrounding code etc.). Must match the file content exactly." },
+                            "newText": { "type": "string", "description": "The exact literal text to replace 'oldText' with." }
+                        },
+                        "required": ["path", "oldText", "newText"]
                     }
                     """)
             ));
@@ -103,8 +106,9 @@ internal static class ToolSchemas
                         "type": "object",
                         "properties": {
                             "path": { "type": "string", "description": "File path" },
-                            "content": { "type": "string", "description": "File content" }
-                        }
+                            "content": { "type": "string", "description": "Full file content to write" }
+                        },
+                        "required": ["path", "content"]
                     }
                     """)
             ));
@@ -120,7 +124,8 @@ internal static class ToolSchemas
                         "type": "object",
                         "properties": {
                             "seconds": { "type": "number", "description": "Seconds to wait, 0-60" }
-                        }
+                        },
+                        "required": ["seconds"]
                     }
                     """)
             ));
@@ -153,9 +158,10 @@ internal static class ToolSchemas
                     {
                         "type": "object",
                         "properties": {
-                            "source": { "type": "string", "description": "Short label" },
-                            "content": { "type": "string", "description": "Text to store" }
-                        }
+                            "source": { "type": "string", "description": "Short label (e.g. filename or URL)" },
+                            "content": { "type": "string", "description": "Full text to index" }
+                        },
+                        "required": ["content"]
                     }
                     """)
             ));
@@ -172,7 +178,8 @@ internal static class ToolSchemas
                         "properties": {
                             "query": { "type": "string", "description": "Search terms (aliases: q, search, text)" },
                             "limit": { "type": "integer", "description": "Max results (default 8; alias: max)" }
-                        }
+                        },
+                        "required": ["query"]
                     }
                     """)
             ));
@@ -190,7 +197,8 @@ internal static class ToolSchemas
                             "id": { "type": "string", "description": "Context id" },
                             "query": { "type": "string", "description": "Optional search focus within blob" },
                             "maxChars": { "type": "integer", "description": "Max chars" }
-                        }
+                        },
+                        "required": ["id"]
                     }
                     """)
             ));
@@ -207,7 +215,8 @@ internal static class ToolSchemas
                         "properties": {
                             "id": { "type": "string", "description": "Context id" },
                             "focus": { "type": "string", "description": "Summary focus" }
-                        }
+                        },
+                        "required": ["id"]
                     }
                     """)
             ));

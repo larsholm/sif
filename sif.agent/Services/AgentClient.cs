@@ -226,6 +226,8 @@ internal class AgentClient
                         }
                         catch (Exception ex)
                         {
+                            AnsiConsole.WriteException(ex);
+
                             var msgChars = messages.Sum(m => m.GetType().GetProperty("Content")?.GetValue(m)?.ToString()?.Length ?? 0);
                             var ctxEntries = ContextStore.ListEntries();
                             var storedChars = ctxEntries.Sum(e => e.Length);
