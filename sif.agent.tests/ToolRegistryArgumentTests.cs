@@ -100,6 +100,17 @@ public sealed class ToolRegistryArgumentTests
     }
 
     [Fact]
+    public async Task RoslynFindSymbolsAcceptsProjectDirectory()
+    {
+        var projectDirectory = Path.Combine(RepositoryRoot(), "sif.agent");
+        var result = await ToolRegistry.ExecuteAsync(
+            "roslyn_find_symbols",
+            $$"""{"path":"{{projectDirectory}}","query":"ToolRegistry"}""");
+
+        Assert.Contains("ToolRegistry", result);
+    }
+
+    [Fact]
     public async Task AmbientRoslynContextReportsActiveFileDiagnostics()
     {
         var dir = CreateTempDirectory();

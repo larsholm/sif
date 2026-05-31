@@ -245,8 +245,8 @@ internal static class ToolSchemas
                     {
                         "type": "object",
                         "properties": {
-                            "solutionPath": { "type": "string", "description": ".sln path" },
-                            "projectPath": { "type": "string", "description": ".csproj path" },
+                            "solutionPath": { "type": "string", "description": ".sln path or directory containing one .sln/.csproj" },
+                            "projectPath": { "type": "string", "description": ".csproj path or directory containing one .sln/.csproj" },
                             "name": { "type": "string", "description": "Symbol name" }
                         },
                         "required": ["name"]
@@ -261,7 +261,7 @@ internal static class ToolSchemas
                     {
                         "type": "object",
                         "properties": {
-                            "projectPath": { "type": "string", "description": ".csproj or .sln path" }
+                            "projectPath": { "type": "string", "description": ".csproj/.sln path or directory containing one .sln/.csproj" }
                         },
                         "required": ["projectPath"]
                     }

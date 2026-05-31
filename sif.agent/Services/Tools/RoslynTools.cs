@@ -21,6 +21,45 @@ public static class RoslynTools
         return Directory.GetFiles(dir, "*.csproj").FirstOrDefault();
     }
 
+    private static string? ResolveSolutionOrProjectPath(string? path, out string? error)
+    {
+        error = null;
+        path = string.IsNullOrWhiteSpace(path) ? GetDefaultSolutionOrProject() : path;
+
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        path = Path.IsPathRooted(path)
+            ? path
+            : Path.GetFullPath(path, Directory.GetCurrentDirectory());
+
+        if (!Directory.Exists(path))
+            return path;
+
+        var solutions = Directory.GetFiles(path, "*.sln");
+        if (solutions.Length == 1)
+            return solutions[0];
+
+        if (solutions.Length > 1)
+        {
+            error = $"Error: Directory contains multiple solution files: {path}";
+            return null;
+        }
+
+        var projects = Directory.GetFiles(path, "*.csproj");
+        if (projects.Length == 1)
+            return projects[0];
+
+        if (projects.Length > 1)
+        {
+            error = $"Error: Directory contains multiple project files: {path}";
+            return null;
+        }
+
+        error = $"Error: No solution or project file found in directory: {path}";
+        return null;
+    }
+
     public static string? BuildAmbientContext(string? filePath, string? line)
     {
         if (string.IsNullOrWhiteSpace(filePath) ||
@@ -122,12 +161,14 @@ public static class RoslynTools
 
     public static async Task<string> FindSymbolsAsync(string? path, string name)
     {
-        path = string.IsNullOrWhiteSpace(path) ? GetDefaultSolutionOrProject() : path;
+        path = ResolveSolutionOrProjectPath(path, out var error);
+        if (error != null)
+            return error;
         if (string.IsNullOrWhiteSpace(path))
             return "Error: No solution or project file found.";
 
         using var workspace = MSBuildWorkspace.Create();
-        var projects = path.EndsWith(".sln")
+        var projects = path.EndsWith(".sln", StringComparison.OrdinalIgnoreCase)
             ? (await workspace.OpenSolutionAsync(path)).Projects
             : ImmutableArray.Create(await workspace.OpenProjectAsync(path));
 
@@ -150,25 +191,35 @@ public static class RoslynTools
 
     public static async Task<string> GetDiagnosticsAsync(string? projectPath)
     {
-        projectPath = string.IsNullOrWhiteSpace(projectPath) ? GetDefaultSolutionOrProject() : projectPath;
+        projectPath = ResolveSolutionOrProjectPath(projectPath, out var error);
+        if (error != null)
+            return error;
         if (string.IsNullOrWhiteSpace(projectPath))
             return "Error: No solution or project file found.";
 
         using var workspace = MSBuildWorkspace.Create();
-        var project = await workspace.OpenProjectAsync(projectPath);
-        var compilation = await project.GetCompilationAsync();
+        var projects = projectPath.EndsWith(".sln", StringComparison.OrdinalIgnoreCase)
+            ? (await workspace.OpenSolutionAsync(projectPath)).Projects
+            : ImmutableArray.Create(await workspace.OpenProjectAsync(projectPath));
 
-        if (compilation == null) return "Could not compile project.";
-
-        var diagnostics = compilation.GetDiagnostics();
-        var result = diagnostics.Select(d => new
+        var allDiagnostics = new List<object>();
+        foreach (var project in projects)
         {
-            Id = d.Id,
-            Severity = d.Severity.ToString(),
-            Message = d.GetMessage(),
-            Location = d.Location.GetLineSpan().ToString()
-        });
+            var compilation = await project.GetCompilationAsync();
 
-        return JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true });
+            if (compilation == null)
+                return $"Could not compile project: {project.Name}";
+
+            allDiagnostics.AddRange(compilation.GetDiagnostics().Select(d => new
+            {
+                Project = project.Name,
+                Id = d.Id,
+                Severity = d.Severity.ToString(),
+                Message = d.GetMessage(),
+                Location = d.Location.GetLineSpan().ToString()
+            }));
+        }
+
+        return JsonSerializer.Serialize(allDiagnostics, new JsonSerializerOptions { WriteIndented = true });
     }
 }
