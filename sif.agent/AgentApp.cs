@@ -730,14 +730,11 @@ Conversation:
                     AnsiConsole.MarkupLine("[yellow]Usage: /model switch <name>[/]\n");
                     return (newClient, shouldRestart);
                 }
-                if (config.SwitchProfile(name))
+                if (TrySwitchProfile(config, name))
                 {
-                    config.Save();
                     shouldRestart = true;
-                    var profile = config.Profiles[name];
                     // Create new client with the profile's settings
                     newClient = new AgentClient(config, tools, mcpService);
-                    AnsiConsole.MarkupLine($"[green]Switched to profile '{name.EscapeMarkup()}': {profile.Model.EscapeMarkup()} @ {profile.BaseUrl.EscapeMarkup()}[/]");
                     await ShowSwitchedModelHeader(config, tools, mcpService, skillsCount);
                     AnsiConsole.MarkupLine("[dim]Conversation cleared. Start a new message to continue.[/]\n");
                 }
@@ -753,13 +750,10 @@ Conversation:
                 break;
             default:
                 // Treat unknown subcommand as a profile name to switch to
-                if (config.SwitchProfile(subcommand))
+                if (TrySwitchProfile(config, subcommand))
                 {
-                    config.Save();
                     shouldRestart = true;
-                    var profile = config.Profiles[subcommand];
                     newClient = new AgentClient(config, tools, mcpService);
-                    AnsiConsole.MarkupLine($"[green]Switched to profile '{subcommand.EscapeMarkup()}': {profile.Model.EscapeMarkup()} @ {profile.BaseUrl.EscapeMarkup()}[/]");
                     await ShowSwitchedModelHeader(config, tools, mcpService, skillsCount);
                     AnsiConsole.MarkupLine("[dim]Conversation cleared. Start a new message to continue.[/]\n");
                 }
@@ -771,6 +765,22 @@ Conversation:
         }
 
         return (newClient, shouldRestart);
+    }
+
+    /// <summary>
+    /// Switch the active profile, persist the change, and print the standard
+    /// "Switched to profile" confirmation. Returns false (without messaging) if
+    /// the profile does not exist, leaving the not-found message to the caller.
+    /// </summary>
+    private static bool TrySwitchProfile(AgentConfig config, string name)
+    {
+        if (!config.SwitchProfile(name))
+            return false;
+
+        config.Save();
+        var profile = config.Profiles[name];
+        AnsiConsole.MarkupLine($"[green]Switched to profile '{name.EscapeMarkup()}': {profile.Model.EscapeMarkup()} @ {profile.BaseUrl.EscapeMarkup()}[/]");
+        return true;
     }
 
     /// <summary>
@@ -2152,13 +2162,8 @@ Conversation:
         }
 
         var name = args[0];
-        if (config.SwitchProfile(name))
-        {
-            var profile = config.Profiles[name];
-            config.Save();
-            AnsiConsole.MarkupLine($"[green]Switched to profile '{name.EscapeMarkup()}': {profile.Model.EscapeMarkup()} @ {profile.BaseUrl.EscapeMarkup()}[/]");
+        if (TrySwitchProfile(config, name))
             return 0;
-        }
 
         AnsiConsole.MarkupLine($"[red]Profile '{name.EscapeMarkup()}' not found. Use 'sif models list' to see available profiles.[/]");
         return 1;
