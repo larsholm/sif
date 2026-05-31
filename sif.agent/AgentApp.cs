@@ -254,7 +254,8 @@ internal class AgentApp
         if (opts.Thinking.HasValue)
             config.ThinkingEnabled = opts.Thinking;
         await MaybeAutoUpdateAsync(config, interactive: true);
-        var modelContextLength = await TryApplyModelCompactionThresholdAsync(config);
+        var modelInfo = await FetchModelInfoAsync(config.BaseUrl, config.ApiKey ?? "", config.Model);
+        ApplyCompactionThreshold(config, modelInfo.ContextLength);
 
         await using var mcpService = new McpService();
         if (config.McpServers?.Count > 0)
@@ -267,20 +268,7 @@ internal class AgentApp
         var client = new AgentClient(config, tools, mcpService);
         var skills = SkillStore.Load();
 
-        var header = $"[green]sif[/] - [dim]{config.Model} @ {config.BaseUrl}[/]";
-        if (tools?.Length > 0)
-            header += $"[dim], tools: {string.Join(", ", tools)}[/]";
-        if (modelContextLength.HasValue && config.CompactionThreshold > 0)
-            header += $"[dim], ctx-window: {modelContextLength.Value:N0}, compact: {config.CompactionThreshold:N0}[/]";
-        if (skills.Count > 0)
-            header += $"[dim], skills: {skills.Count}[/]";
-        var mcpToolsCount = mcpService.GetTools().Count;
-        if (mcpToolsCount > 0)
-            header += $"[dim], mcp-tools: {mcpToolsCount}[/]";
-        if (VscodeContext.IsRunningInVscodeTerminal())
-            header += "[dim], vscode[/]";
-        
-        AnsiConsole.MarkupLine(header);
+        AnsiConsole.MarkupLine(BuildChatHeader(config, modelInfo, tools, mcpService, skills.Count));
         AnsiConsole.MarkupLine("Type [bold]/quit[/] or [bold]/exit[/] to quit, [bold]/clear[/] to reset conversation, [bold]/context[/] to inspect context, [bold]/help[/] for help.");
         AnsiConsole.MarkupLine("[dim]Press Ctrl+C to exit.[/]\n");
 
@@ -343,7 +331,7 @@ internal class AgentApp
                 else if (trimmed == "/model" || trimmed.StartsWith("/model "))
                 {
                     var rest = trimmed.Length == "/model".Length ? "" : trimmed["/model".Length..].Trim();
-                    HandleModelCommandInline(rest, config, tools, mcpService, out var newClient, out var shouldRestart);
+                    var (newClient, shouldRestart) = await HandleModelCommandInline(rest, config, tools, mcpService, skills.Count);
                     if (newClient != null)
                     {
                         if (client is IDisposable disp) disp.Dispose();
@@ -714,16 +702,16 @@ Conversation:
                model.StartsWith("o3", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static void HandleModelCommandInline(string rest, AgentConfig config, string[]? tools, McpService? mcpService, out AgentClient? newClient, out bool shouldRestart)
+    private static async Task<(AgentClient? newClient, bool shouldRestart)> HandleModelCommandInline(string rest, AgentConfig config, string[]? tools, McpService? mcpService, int skillsCount)
     {
-        newClient = null;
-        shouldRestart = false;
+        AgentClient? newClient = null;
+        bool shouldRestart = false;
 
         if (string.IsNullOrWhiteSpace(rest))
         {
             // List profiles
             ShowModelProfiles(config);
-            return;
+            return (newClient, shouldRestart);
         }
 
         var parts = rest.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -740,7 +728,7 @@ Conversation:
                 if (string.IsNullOrEmpty(name))
                 {
                     AnsiConsole.MarkupLine("[yellow]Usage: /model switch <name>[/]\n");
-                    return;
+                    return (newClient, shouldRestart);
                 }
                 if (config.SwitchProfile(name))
                 {
@@ -750,6 +738,7 @@ Conversation:
                     // Create new client with the profile's settings
                     newClient = new AgentClient(config, tools, mcpService);
                     AnsiConsole.MarkupLine($"[green]Switched to profile '{name.EscapeMarkup()}': {profile.Model.EscapeMarkup()} @ {profile.BaseUrl.EscapeMarkup()}[/]");
+                    await ShowSwitchedModelHeader(config, tools, mcpService, skillsCount);
                     AnsiConsole.MarkupLine("[dim]Conversation cleared. Start a new message to continue.[/]\n");
                 }
                 else
@@ -771,6 +760,7 @@ Conversation:
                     var profile = config.Profiles[subcommand];
                     newClient = new AgentClient(config, tools, mcpService);
                     AnsiConsole.MarkupLine($"[green]Switched to profile '{subcommand.EscapeMarkup()}': {profile.Model.EscapeMarkup()} @ {profile.BaseUrl.EscapeMarkup()}[/]");
+                    await ShowSwitchedModelHeader(config, tools, mcpService, skillsCount);
                     AnsiConsole.MarkupLine("[dim]Conversation cleared. Start a new message to continue.[/]\n");
                 }
                 else
@@ -779,6 +769,19 @@ Conversation:
                 }
                 break;
         }
+
+        return (newClient, shouldRestart);
+    }
+
+    /// <summary>
+    /// After switching profiles, fetch the new model's endpoint info, re-apply the
+    /// compaction threshold, and print the refreshed header line.
+    /// </summary>
+    private static async Task ShowSwitchedModelHeader(AgentConfig config, string[]? tools, McpService? mcpService, int skillsCount)
+    {
+        var modelInfo = await FetchModelInfoAsync(config.BaseUrl, config.ApiKey ?? "", config.Model);
+        ApplyCompactionThreshold(config, modelInfo.ContextLength);
+        AnsiConsole.MarkupLine(BuildChatHeader(config, modelInfo, tools, mcpService, skillsCount));
     }
 
     private static void ShowModelProfiles(AgentConfig config)
@@ -1512,24 +1515,47 @@ Conversation:
         return new List<string>();
     }
 
-    private static async Task<int?> TryApplyModelCompactionThresholdAsync(AgentConfig config)
-    {
-        if (config.CompactionThreshold <= 0)
-            return null;
+    private record ModelEndpointInfo(int? ContextLength, decimal? OutputPricePerMillion);
 
-        var contextLength = await FetchModelContextLengthAsync(config.BaseUrl, config.ApiKey ?? "", config.Model);
-        if (!contextLength.HasValue)
-            return null;
+    /// <summary>
+    /// Build the one-line chat session header summarizing the active model, pricing,
+    /// context window, tools, skills, and MCP tools.
+    /// </summary>
+    private static string BuildChatHeader(AgentConfig config, ModelEndpointInfo modelInfo, string[]? tools, McpService? mcpService, int skillsCount)
+    {
+        var header = $"[green]sif[/] - [dim]{config.Model} @ {config.BaseUrl}[/]";
+        if (modelInfo.OutputPricePerMillion.HasValue)
+            header += $"[dim] ${modelInfo.OutputPricePerMillion.Value:F2}/M[/]";
+        if (modelInfo.ContextLength.HasValue && config.CompactionThreshold > 0)
+            header += $"[dim], ctx-window: {modelInfo.ContextLength.Value:N0}, compact: {config.CompactionThreshold:N0}[/]";
+        if (tools?.Length > 0)
+            header += $"[dim], tools: {string.Join(", ", tools)}[/]";
+        if (skillsCount > 0)
+            header += $"[dim], skills: {skillsCount}[/]";
+        var mcpToolsCount = mcpService?.GetTools().Count ?? 0;
+        if (mcpToolsCount > 0)
+            header += $"[dim], mcp-tools: {mcpToolsCount}[/]";
+        if (VscodeContext.IsRunningInVscodeTerminal())
+            header += "[dim], vscode[/]";
+        return header;
+    }
+
+    /// <summary>
+    /// Adjust the compaction threshold based on the model's reported context length.
+    /// Custom configured thresholds are left untouched.
+    /// </summary>
+    private static void ApplyCompactionThreshold(AgentConfig config, int? contextLength)
+    {
+        if (config.CompactionThreshold <= 0 || !contextLength.HasValue)
+            return;
 
         // Treat the built-in value as "auto". Custom configured thresholds stay explicit,
         // even when the custom value happens to equal the built-in default.
         if (!config.CompactionThresholdConfigured)
             config.CompactionThreshold = Math.Max(1000, (int)Math.Floor(contextLength.Value * 0.60));
-
-        return contextLength;
     }
 
-    private static async Task<int?> FetchModelContextLengthAsync(string baseUrl, string apiKey, string modelId)
+    private static async Task<ModelEndpointInfo> FetchModelInfoAsync(string baseUrl, string apiKey, string modelId)
     {
         using var http = new HttpClient
         {
@@ -1562,17 +1588,44 @@ Conversation:
                         continue;
 
                     var contextLength = TryReadContextLength(item);
-                    if (contextLength.HasValue)
-                        return contextLength;
+                    var outputPrice = TryReadOutputPricePerMillion(item);
+                    if (contextLength.HasValue || outputPrice.HasValue)
+                        return new ModelEndpointInfo(contextLength, outputPrice);
                 }
             }
             catch
             {
-                // Ignore endpoint probe failures; compaction falls back to configured threshold.
+                // Ignore endpoint probe failures; callers fall back to defaults.
             }
         }
 
-        return null;
+        return new ModelEndpointInfo(null, null);
+    }
+
+    private static decimal? TryReadOutputPricePerMillion(JsonElement model)
+    {
+        // OpenRouter and compatible endpoints expose pricing under a "pricing" object.
+        // "completion" is the per-token output price in USD; multiply by 1M for per-million.
+        if (!model.TryGetProperty("pricing", out var pricing) || pricing.ValueKind != JsonValueKind.Object)
+            return null;
+
+        if (!pricing.TryGetProperty("completion", out var completionEl))
+            return null;
+
+        string? raw = completionEl.ValueKind switch
+        {
+            JsonValueKind.String => completionEl.GetString(),
+            JsonValueKind.Number => completionEl.GetDecimal().ToString(System.Globalization.CultureInfo.InvariantCulture),
+            _ => null
+        };
+
+        if (raw is null || !decimal.TryParse(raw, System.Globalization.NumberStyles.Any,
+                System.Globalization.CultureInfo.InvariantCulture, out var perToken))
+            return null;
+
+        if (perToken <= 0) return null;
+
+        return perToken * 1_000_000m;
     }
 
     private static int? TryReadContextLength(JsonElement model)
