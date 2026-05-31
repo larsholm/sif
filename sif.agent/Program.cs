@@ -1,4 +1,12 @@
 using sif.agent;
 
 var app = new AgentApp();
-return await app.Run(args);
+ContextStore.CleanupPreviousSessions();
+try
+{
+    return await app.Run(args);
+}
+finally
+{
+    ContextStore.CleanupCurrentSession();
+}

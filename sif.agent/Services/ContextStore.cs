@@ -29,13 +29,18 @@ internal static class ContextStore
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = false };
     private static readonly string SessionId = DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmss");
 
-    private static string RootPath
+    private static string RootParentPath
     {
         get
         {
             var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            return Path.Combine(home, ".sif", "context", SessionId);
+            return Path.Combine(home, ".sif", "context");
         }
+    }
+
+    private static string RootPath
+    {
+        get => Path.Combine(RootParentPath, SessionId);
     }
 
     private static string IndexPath => Path.Combine(RootPath, "index.jsonl");
@@ -188,6 +193,52 @@ internal static class ContextStore
     }
 
     public static string GetRootPath() => RootPath;
+
+    public static int CleanupPreviousSessions()
+    {
+        return CleanupSessions(deleteCurrent: false);
+    }
+
+    public static int CleanupCurrentSession()
+    {
+        if (!Directory.Exists(RootPath))
+            return 0;
+
+        try
+        {
+            Directory.Delete(RootPath, recursive: true);
+            return 1;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    private static int CleanupSessions(bool deleteCurrent)
+    {
+        if (!Directory.Exists(RootParentPath))
+            return 0;
+
+        var deleted = 0;
+        foreach (var dir in Directory.EnumerateDirectories(RootParentPath))
+        {
+            if (!deleteCurrent && string.Equals(dir, RootPath, StringComparison.Ordinal))
+                continue;
+
+            try
+            {
+                Directory.Delete(dir, recursive: true);
+                deleted++;
+            }
+            catch
+            {
+                // Best-effort cleanup only; context storage should not block startup.
+            }
+        }
+
+        return deleted;
+    }
 
     private static void WriteIndex(IEnumerable<ContextEntry> entries)
     {
