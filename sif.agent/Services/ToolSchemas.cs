@@ -33,7 +33,7 @@ internal static class ToolSchemas
         {
             tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
                 "bash",
-                "Run shell commands. Default 30s timeout, max 10 min;",
+                "Run shell commands. Default 30s timeout, max 10 min. A non-zero exit code is reported automatically as '(exit code N)' \u2014 do not append '; echo $?' to capture it.",
                 BinaryData.FromString("""
                     {
                         "type": "object",

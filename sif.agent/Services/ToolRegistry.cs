@@ -497,7 +497,7 @@ internal static class ToolRegistry
             result += (result.Length > 0 ? "\n" : "") + errors.Trim();
 
         if (result.Length > limit)
-            result = result.Substring(0, limit) + $"\n... (truncated, {result.Length - limit} more chars)";
+            result = result.Substring(0, limit) + $"\n... (truncated, {result.Length - limit} more chars; raise 'limit' or narrow the command)";
 
         return result;
     }
@@ -567,7 +567,7 @@ internal static class ToolRegistry
         {
             var lines = File.ReadAllLines(path);
             if (lines.Length > skiplines) lines = lines.Skip(skiplines).ToArray();
-            if (lines.Length > limit) return string.Join('\n', lines.Take(limit)) + $"\n... ({lines.Length - limit} more lines)";
+            if (lines.Length > limit) return string.Join('\n', lines.Take(limit)) + $"\n... ({lines.Length - limit} more lines; pass skiplines={skiplines + limit} to continue)";
             return string.Join('\n', lines);
         }
 
@@ -591,12 +591,9 @@ internal static class ToolRegistry
         
         if (!File.Exists(path)) return $"Error: File not found: {path}";
 
-        // Warn if file is not in a git repository
-        var gitWarning = "";
+        // Warn (to the user only) if file is not in a git repository.
         if (!IsPathInGitRepo(path))
-        {
-            gitWarning = GetGitWarning(path, "edit");
-        }
+            WarnNotInGitRepo(path, "edit");
 
         var content = File.ReadAllText(path);
         
@@ -631,7 +628,7 @@ internal static class ToolRegistry
             File.WriteAllText(path, newContent);
             var occurrences = CountOccurrences(content, oldText);
             var successMsg = $"Edited {Path.GetFileName(path)} successfully. Replaced {occurrences} occurrence(s) of the specified text.";
-            return gitWarning + successMsg;
+            return successMsg;
         }
 
         // Should not reach here due to check above, but defensively:
@@ -666,19 +663,16 @@ internal static class ToolRegistry
         if (string.IsNullOrEmpty(path) || path == Environment.CurrentDirectory)
             return "Error: path is required.";
 
-        // Warn if file is not in a git repository
-        var gitWarning = "";
+        // Warn (to the user only) if file is not in a git repository.
         if (!IsPathInGitRepo(path))
-        {
-            gitWarning = GetGitWarning(path, "write");
-        }
+            WarnNotInGitRepo(path, "write");
 
         var dir = Path.GetDirectoryName(path);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
 
         File.WriteAllText(path, content);
         var successMsg = $"Wrote {path} ({content.Length} chars).";
-        return gitWarning + successMsg;
+        return successMsg;
     }
 
     private static string ResolvePath(string path)
@@ -711,22 +705,29 @@ internal static class ToolRegistry
         }
     }
 
-    private static string GetGitWarning(string filePath, string operation)
+    private static readonly HashSet<string> _gitWarnedDirs = new(StringComparer.Ordinal);
+
+    // Surfaces a one-time, user-facing notice when writing/editing outside a git
+    // repo. Printed to the console only (never returned to the model) and shown
+    // at most once per directory per process.
+    private static void WarnNotInGitRepo(string filePath, string operation)
     {
         var fileName = Path.GetFileName(filePath);
         var dir = Path.GetDirectoryName(Path.GetFullPath(filePath)) ?? Environment.CurrentDirectory;
-        
-        return $"""
+
+        lock (_gitWarnedDirs)
+        {
+            if (!_gitWarnedDirs.Add(dir))
+                return;
+        }
+
+        var warning = $"""
             ⚠️  Warning: {fileName} is not in a git repository.
-            
             It's recommended to track files with git before {operation.ToLower()}ing them.
             To create a git repo in this directory:
               cd {dir}
               git init
-              git add {fileName}
-              git commit -m "Initial commit"
-            
-            Continuing with {operation.ToLower()}...
             """;
+        AnsiConsole.MarkupLine($"[yellow]{warning.EscapeMarkup()}[/]");
     }
 }
