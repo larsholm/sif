@@ -19,6 +19,7 @@
 - **VS Code context** - the companion extension exposes active editor, cursor, and selection context to `sif`.
 - **Skills** - reusable markdown instructions can be loaded from project or user skill folders.
 - **Persistent config** - store model, endpoint, tool, reasoning, and compaction settings in `~/.sif/sif-agent.json`.
+- **Model profiles** - save multiple named endpoint/model presets and switch between them with `sif models switch` or the `/model` chat command.
 - **Secure API key storage** - API keys can be stored in OS credential stores (Windows Credential Manager, macOS Keychain, Linux libsecret) instead of plaintext config files. Use `sif secure migrate` to move keys to secure storage.
 
 ## Requirements
@@ -262,6 +263,35 @@ Configuration is loaded from `~/.sif/sif-agent.json`, then overridden by environ
 
 `AGENT_COMPACT_THRESHOLD` is accepted as a backwards-compatible alias for `AGENT_COMPACTION_THRESHOLD`.
 
+## Model Profiles
+
+`sif` can store multiple named model profiles in `~/.sif/sif-agent.json`, each with its own base URL, model, optional API key, and optional compaction threshold. Switch between them without re-running setup.
+
+```bash
+# List configured profiles (current one is marked)
+sif models
+
+# Add a profile
+sif models add ollama --url http://localhost:11434/v1 --model llama3.2
+sif models add local --url http://localhost:8020/v1 --model qwen3.6-27b-autoround --compact 60000
+
+# Switch the active profile
+sif models switch ollama
+
+# Remove a profile
+sif models remove ollama
+```
+
+`sif models add` accepts `--url`/`-u`, `--model`/`-m`, `--key`/`-k`, and `--compact` (per-profile compaction threshold; falls back to the global setting when omitted).
+
+During a chat session you can list and switch profiles inline. Switching clears the current conversation:
+
+```text
+/model              # list profiles and show the current one
+/model switch local # switch to the "local" profile
+/model local        # shorthand for switching
+```
+
 ## CLI Reference
 
 | Flag | Description |
@@ -285,6 +315,8 @@ During an interactive chat session:
 | `/q`, `/quit`, `/exit` | Exit the chat session |
 | `/clear` | Clear conversation history, keeping the system prompt |
 | `/sys <prompt>` | Change the system prompt |
+| `/model` | List model profiles and show the current one |
+| `/model <name>` | Switch to a model profile (clears conversation) |
 | `/context` | Show chat history and stored context summary |
 | `/context full` | Show full stored message contents sent before the next user message |
 | `/context list` | List stored context entries |
@@ -297,6 +329,9 @@ During an interactive chat session:
 | `/context clear-store` | Delete stored context entries for this session |
 | `/context clear all` | Clear both chat history and stored context |
 | `/vscode` | Show detected VS Code terminal/editor context |
+| `/debug` | Show recent errors (saved to a log, survives `/clear`) |
+| `/debug latest` | Show full details of the most recent error |
+| `/debug list` | Show recent error entries |
 | `/help` | Show help and options |
 
 In chat input, press `Alt+Enter` to insert a newline. Long input lines wrap in place and can be edited with the arrow, Home, End, Backspace, and Delete keys.
