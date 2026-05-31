@@ -63,6 +63,66 @@ public static class SecureCredentialStoreFactory
 }
 
 /// <summary>
+/// Shared helpers for running the external credential-manager CLIs.
+/// All failures are swallowed so callers can fall back gracefully.
+/// </summary>
+internal static class CredentialProcess
+{
+    /// <summary>
+    /// Run a process and report whether it exited with code 0. Returns false on any error.
+    /// </summary>
+    public static bool TryRunForExit(string fileName, string arguments, bool redirectStdout = false, bool redirectStderr = false)
+    {
+        try
+        {
+            var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = fileName,
+                Arguments = arguments,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = redirectStdout,
+                RedirectStandardError = redirectStderr
+            });
+            process?.WaitForExit();
+            return process?.ExitCode == 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Run a process, returning whether it started and its captured standard output.
+    /// Returns (false, "") on any error.
+    /// </summary>
+    public static (bool Started, string Output) TryRunForOutput(string fileName, string arguments, bool redirectStderr = false)
+    {
+        try
+        {
+            var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = fileName,
+                Arguments = arguments,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = redirectStderr
+            });
+            if (process == null) return (false, "");
+            var output = process.StandardOutput.ReadToEnd();
+            process.WaitForExit();
+            return (true, output);
+        }
+        catch
+        {
+            return (false, "");
+        }
+    }
+}
+
+/// <summary>
 /// Windows Credential Manager store.
 /// Uses cmdkey.exe for basic support (no additional dependencies).
 /// </summary>
@@ -75,26 +135,13 @@ internal class WindowsCredentialStore : ISecureCredentialStore
 
     public Task<bool> StoreAsync(string key, string secret)
     {
-        try
-        {
-            var target = TargetPrefix + key;
-            // Use cmdkey to add generic credential
-            var process = Process.Start(new ProcessStartInfo
-            {
-                FileName = "cmdkey.exe",
-                Arguments = $"/add:{target} /generic /user:sif-agent /pass:{secret}",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            });
-            process?.WaitForExit();
-            return Task.FromResult(process?.ExitCode == 0);
-        }
-        catch
-        {
-            return Task.FromResult(false);
-        }
+        var target = TargetPrefix + key;
+        // Use cmdkey to add generic credential
+        return Task.FromResult(CredentialProcess.TryRunForExit(
+            "cmdkey.exe",
+            $"/add:{target} /generic /user:sif-agent /pass:{secret}",
+            redirectStdout: true,
+            redirectStderr: true));
     }
 
     public Task<string?> RetrieveAsync(string key)
@@ -115,47 +162,15 @@ internal class WindowsCredentialStore : ISecureCredentialStore
 
     public Task<bool> DeleteAsync(string key)
     {
-        try
-        {
-            var target = TargetPrefix + key;
-            var process = Process.Start(new ProcessStartInfo
-            {
-                FileName = "cmdkey.exe",
-                Arguments = $"/delete:{target}",
-                UseShellExecute = false,
-                CreateNoWindow = true
-            });
-            process?.WaitForExit();
-            return Task.FromResult(process?.ExitCode == 0);
-        }
-        catch
-        {
-            return Task.FromResult(false);
-        }
+        var target = TargetPrefix + key;
+        return Task.FromResult(CredentialProcess.TryRunForExit("cmdkey.exe", $"/delete:{target}"));
     }
 
     public Task<bool> ExistsAsync(string key)
     {
-        try
-        {
-            var target = TargetPrefix + key;
-            var process = Process.Start(new ProcessStartInfo
-            {
-                FileName = "cmdkey.exe",
-                Arguments = $"/list:{target}",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true
-            });
-            if (process == null) return Task.FromResult(false);
-            var output = process.StandardOutput.ReadToEnd();
-            process.WaitForExit();
-            return Task.FromResult(output.Contains(target));
-        }
-        catch
-        {
-            return Task.FromResult(false);
-        }
+        var target = TargetPrefix + key;
+        var (started, output) = CredentialProcess.TryRunForOutput("cmdkey.exe", $"/list:{target}");
+        return Task.FromResult(started && output.Contains(target));
     }
 }
 
@@ -172,89 +187,36 @@ internal class MacOSCredentialStore : ISecureCredentialStore
 
     public Task<bool> StoreAsync(string key, string secret)
     {
-        try
-        {
-            var process = Process.Start(new ProcessStartInfo
-            {
-                FileName = "security",
-                Arguments = $"add-generic-password -s {ServiceName} -a {key} -w {secret} -U",
-                UseShellExecute = false,
-                CreateNoWindow = true
-            });
-            process?.WaitForExit();
-            return Task.FromResult(process?.ExitCode == 0);
-        }
-        catch
-        {
-            return Task.FromResult(false);
-        }
+        return Task.FromResult(CredentialProcess.TryRunForExit(
+            "security",
+            $"add-generic-password -s {ServiceName} -a {key} -w {secret} -U"));
     }
 
     public Task<string?> RetrieveAsync(string key)
     {
-        try
-        {
-            var process = Process.Start(new ProcessStartInfo
-            {
-                FileName = "security",
-                Arguments = $"find-generic-password -s {ServiceName} -a {key} -w",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            });
-            if (process == null) return Task.FromResult<string?>(null);
-            var output = process.StandardOutput.ReadToEnd().Trim();
-            process.WaitForExit();
-            return Task.FromResult(string.IsNullOrEmpty(output) ? null : output);
-        }
-        catch
-        {
-            return Task.FromResult<string?>(null);
-        }
+        var (started, output) = CredentialProcess.TryRunForOutput(
+            "security",
+            $"find-generic-password -s {ServiceName} -a {key} -w",
+            redirectStderr: true);
+        if (!started) return Task.FromResult<string?>(null);
+        var trimmed = output.Trim();
+        return Task.FromResult<string?>(string.IsNullOrEmpty(trimmed) ? null : trimmed);
     }
 
     public Task<bool> DeleteAsync(string key)
     {
-        try
-        {
-            var process = Process.Start(new ProcessStartInfo
-            {
-                FileName = "security",
-                Arguments = $"delete-generic-password -s {ServiceName} -a {key}",
-                UseShellExecute = false,
-                CreateNoWindow = true
-            });
-            process?.WaitForExit();
-            return Task.FromResult(process?.ExitCode == 0);
-        }
-        catch
-        {
-            return Task.FromResult(false);
-        }
+        return Task.FromResult(CredentialProcess.TryRunForExit(
+            "security",
+            $"delete-generic-password -s {ServiceName} -a {key}"));
     }
 
     public Task<bool> ExistsAsync(string key)
     {
-        try
-        {
-            var process = Process.Start(new ProcessStartInfo
-            {
-                FileName = "security",
-                Arguments = $"find-generic-password -s {ServiceName} -a {key}",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            });
-            if (process == null) return Task.FromResult(false);
-            process.WaitForExit();
-            return Task.FromResult(process.ExitCode == 0);
-        }
-        catch
-        {
-            return Task.FromResult(false);
-        }
+        return Task.FromResult(CredentialProcess.TryRunForExit(
+            "security",
+            $"find-generic-password -s {ServiceName} -a {key}",
+            redirectStdout: true,
+            redirectStderr: true));
     }
 }
 
@@ -272,23 +234,7 @@ internal class LinuxCredentialStore : ISecureCredentialStore
     private bool HasSecretTool()
     {
         if (_hasSecretTool.HasValue) return _hasSecretTool.Value;
-        try
-        {
-            var process = Process.Start(new ProcessStartInfo
-            {
-                FileName = "which",
-                Arguments = "secret-tool",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true
-            });
-            process?.WaitForExit();
-            _hasSecretTool = process?.ExitCode == 0;
-        }
-        catch
-        {
-            _hasSecretTool = false;
-        }
+        _hasSecretTool = CredentialProcess.TryRunForExit("which", "secret-tool", redirectStdout: true);
         return _hasSecretTool.Value;
     }
 

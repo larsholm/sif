@@ -84,37 +84,6 @@ internal class AgentClient
     }
 
     /// <summary>
-    /// Extract the "reasoning" field from a raw API response.
-    /// vLLM / Qwen return reasoning as a separate field on the choice message.
-    /// </summary>
-    private static string ExtractReasoningFromRawResponse(ClientResult<OpenAI.Chat.ChatCompletion> result)
-    {
-        try
-        {
-            var rawResponse = result.GetRawResponse();
-            var json = rawResponse.Content.ToString();
-            using var doc = JsonDocument.Parse(json);
-            var choices = doc.RootElement.GetProperty("choices");
-            if (choices.GetArrayLength() > 0)
-            {
-                var choice = choices[0];
-                var message = choice.GetProperty("message");
-                if (message.TryGetProperty("reasoning", out var reasoning))
-                {
-                    var text = reasoning.GetString();
-                    if (!string.IsNullOrEmpty(text))
-                        return text.Trim();
-                }
-            }
-        }
-        catch
-        {
-            // Parsing failed — no reasoning available
-        }
-        return "";
-    }
-
-    /// <summary>
     /// Generate a focused summary of arbitrary content using the LLM.
     /// Capped at 4000 characters.
     /// </summary>
@@ -144,13 +113,13 @@ internal class AgentClient
         ApplyThinkingOptions(opts);
         var result = await _chatClient.CompleteChatAsync(messages, opts);
 
-        string reasoningText = ExtractReasoningFromRawResponse(result);
+        string reasoningText = ChatResponseParsing.ExtractReasoningFromRawResponse(result);
         var contentText = ExtractText(result.Value.Content);
 
         if (string.IsNullOrEmpty(reasoningText))
-            reasoningText = ExtractThinking(contentText);
+            reasoningText = ChatResponseParsing.ExtractThinking(contentText);
 
-        return (StripThinkingTags(contentText), reasoningText);
+        return (ChatResponseParsing.StripThinkingTags(contentText), reasoningText);
     }
 
     /// <summary>
@@ -179,7 +148,7 @@ internal class AgentClient
                 {
                     result = await _chatClient.CompleteChatAsync(messages, opts, cancellationToken);
                 }
-                catch (ClientResultException ex) when (malformedToolCallRetries == 0 && IsProviderToolParseError(ex))
+                catch (ClientResultException ex) when (malformedToolCallRetries == 0 && ChatResponseParsing.IsProviderToolParseError(ex))
                 {
                     malformedToolCallRetries++;
                     sw.Stop();
@@ -198,12 +167,12 @@ internal class AgentClient
                 totalTime += sw.Elapsed;
 
                 // Extract reasoning from the raw response (vLLM/Qwen) or from content tags
-                string reasoningText = ExtractReasoningFromRawResponse(result);
+                string reasoningText = ChatResponseParsing.ExtractReasoningFromRawResponse(result);
                 var contentText = ExtractText(result.Value.Content);
 
                 // Fall back to extracting thinking tags from content if no separate reasoning field
                 if (string.IsNullOrEmpty(reasoningText))
-                    reasoningText = ExtractThinking(contentText);
+                    reasoningText = ChatResponseParsing.ExtractThinking(contentText);
 
                 // Show reasoning/thinking before tool calls or final response
                 if (!string.IsNullOrEmpty(reasoningText))
@@ -309,7 +278,7 @@ internal class AgentClient
                 }
 
                 // Final text response — strip thinking tags if they're in the content
-                var cleanContent = StripThinkingTags(contentText);
+                var cleanContent = ChatResponseParsing.StripThinkingTags(contentText);
                 AnsiConsole.WriteLine();
                 await UiService.DisplayMarkdown(cleanContent);
                 AnsiConsole.WriteLine();
@@ -343,14 +312,14 @@ internal class AgentClient
         ApplyThinkingOptions(opts);
         var result = await _chatClient.CompleteChatAsync(messages, opts, cancellationToken);
 
-        string reasoningText = ExtractReasoningFromRawResponse(result);
+        string reasoningText = ChatResponseParsing.ExtractReasoningFromRawResponse(result);
         var contentText = ExtractText(result.Value.Content);
 
         // Fall back to extracting thinking tags from content
         if (string.IsNullOrEmpty(reasoningText))
-            reasoningText = ExtractThinking(contentText);
+            reasoningText = ChatResponseParsing.ExtractThinking(contentText);
 
-        return (StripThinkingTags(contentText), reasoningText);
+        return (ChatResponseParsing.StripThinkingTags(contentText), reasoningText);
     }
 
     /// <summary>
@@ -558,12 +527,12 @@ internal class AgentClient
     private static NormalizedToolCall NormalizeToolCall(OpenAI.Chat.ChatToolCall toolCall)
     {
         var argsJson = toolCall.FunctionArguments.ToString();
-        if (IsJsonObject(argsJson))
+        if (ChatResponseParsing.IsJsonObject(argsJson))
             return new NormalizedToolCall(toolCall, argsJson, "");
 
         var warning = string.IsNullOrWhiteSpace(argsJson)
             ? $"Warning: Tool '{toolCall.FunctionName}' was called with empty arguments. Retrying with an empty JSON object; provide the required arguments in the next tool call if this result is insufficient."
-            : $"Warning: Tool '{toolCall.FunctionName}' was called with invalid arguments. Expected a JSON object, received: {TruncateForWarning(argsJson)}. Retrying with an empty JSON object; provide valid JSON arguments in the next tool call if this result is insufficient.";
+            : $"Warning: Tool '{toolCall.FunctionName}' was called with invalid arguments. Expected a JSON object, received: {ChatResponseParsing.TruncateForWarning(argsJson)}. Retrying with an empty JSON object; provide valid JSON arguments in the next tool call if this result is insufficient.";
 
         const string fallbackArguments = "{}";
         var sanitizedToolCall = OpenAI.Chat.ChatToolCall.CreateFunctionToolCall(
@@ -572,62 +541,6 @@ internal class AgentClient
             BinaryData.FromString(fallbackArguments));
 
         return new NormalizedToolCall(sanitizedToolCall, fallbackArguments, warning);
-    }
-
-    private static bool IsJsonObject(string text)
-    {
-        if (!JsonArgs.TryParseObject(text, out var doc, out _))
-            return false;
-
-        using (doc)
-            return true;
-    }
-
-    private static bool IsProviderToolParseError(ClientResultException ex)
-    {
-        var response = TryReadRawResponse(ex);
-        var text = (ex.Message + "\n" + response).ToLowerInvariant();
-        return text.Contains("failed to parse input", StringComparison.Ordinal) ||
-               text.Contains("failed to parse tool call", StringComparison.Ordinal) ||
-               text.Contains("<tool_call>", StringComparison.Ordinal) ||
-               text.Contains("<function=", StringComparison.Ordinal);
-    }
-
-    private static string TryReadRawResponse(ClientResultException ex)
-    {
-        try
-        {
-            return ex.GetRawResponse()?.Content.ToString() ?? "";
-        }
-        catch
-        {
-            return "";
-        }
-    }
-
-    private static string TruncateForWarning(string text)
-    {
-        text = text.Replace("\r", "\\r").Replace("\n", "\\n");
-        return text.Length > 200 ? text[..200] + "..." : text;
-    }
-
-    private static string StripThinkingTags(string text)
-    {
-        // Strip <thinking>...</thinking>, <thought>...</thought>, etc.
-        text = System.Text.RegularExpressions.Regex.Replace(text, @"<\/?(?:thinking|thought|reasoning|think)>\s*", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        return text;
-    }
-
-    private static string ExtractThinking(string text)
-    {
-        // Extract content from <thinking>...</thinking>, <thought>...</thought>, etc.
-        var match = System.Text.RegularExpressions.Regex.Match(text, @"<thinking>(.*?)</thinking>", System.Text.RegularExpressions.RegexOptions.Singleline | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        if (match.Success) return match.Groups[1].Value;
-        match = System.Text.RegularExpressions.Regex.Match(text, @"<thought>(.*?)</thought>", System.Text.RegularExpressions.RegexOptions.Singleline | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        if (match.Success) return match.Groups[1].Value;
-        match = System.Text.RegularExpressions.Regex.Match(text, @"<reasoning>(.*?)</reasoning>", System.Text.RegularExpressions.RegexOptions.Singleline | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        if (match.Success) return match.Groups[1].Value;
-        return "";
     }
 
     private sealed record NormalizedToolCall(

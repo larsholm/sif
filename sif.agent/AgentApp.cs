@@ -137,95 +137,9 @@ internal class AgentApp
         AnsiConsole.WriteLine("  AGENT_AUTO_UPDATE_SOURCE - Optional tool source for updates (defaults to nuget.org)");
     }
 
-    private static CliArgs ParseArgs(string[] args)
-    {
-        var opts = new CliArgs();
-        bool nextIsValue = false;
-        string? pendingFlag = null;
-
-        foreach (var arg in args)
-        {
-            if (nextIsValue)
-            {
-                nextIsValue = false;
-                if (pendingFlag == "-s" || pendingFlag == "--system") opts.SystemPrompt = arg;
-                else if (pendingFlag == "-m" || pendingFlag == "--model") opts.Model = arg;
-                else if (pendingFlag == "-u" || pendingFlag == "--base-url") opts.BaseUrl = arg;
-                else if (pendingFlag == "-k" || pendingFlag == "--api-key") opts.ApiKey = arg;
-                else if (pendingFlag == "-t" || pendingFlag == "--temperature") opts.Temperature = float.TryParse(arg, out var t) ? t : null;
-                else if (pendingFlag == "-max" || pendingFlag == "--max-tokens") opts.MaxTokens = int.TryParse(arg, out var m) ? m : null;
-                else if (pendingFlag == "--tools") opts.Tools = arg.Split(',').Select(s => s.Trim()).ToArray();
-                else if (pendingFlag == "--thinking") opts.Thinking = ParseThinkingArg(arg);
-                else if (pendingFlag == "-p" || pendingFlag == "--profile") opts.Profile = arg;
-                pendingFlag = null;
-                continue;
-            }
-
-            if (arg is "-s" or "--system" or "-m" or "--model" or "-u" or "--base-url" or "-k" or "--api-key" or "--tools" or "--thinking" or "-t" or "--temperature" or "-max" or "--max-tokens" or "-p" or "--profile")
-            {
-                nextIsValue = true;
-                pendingFlag = arg;
-                continue;
-            }
-
-            if (arg.StartsWith("-s ") || arg.StartsWith("--system "))
-                opts.SystemPrompt = arg[(arg.StartsWith("-s ") ? 3 : 9)..].Trim();
-            else if (arg.StartsWith("-m ") || arg.StartsWith("--model "))
-                opts.Model = arg[(arg.StartsWith("-m ") ? 3 : 8)..].Trim();
-            else if (arg.StartsWith("-u ") || arg.StartsWith("--base-url "))
-                opts.BaseUrl = arg[(arg.StartsWith("-u ") ? 3 : 11)..].Trim();
-            else if (arg.StartsWith("-k ") || arg.StartsWith("--api-key "))
-                opts.ApiKey = arg[(arg.StartsWith("-k ") ? 3 : 11)..].Trim();
-            else if (arg.StartsWith("-p ") || arg.StartsWith("--profile "))
-                opts.Profile = arg[(arg.StartsWith("-p ") ? 3 : 10)..].Trim();
-            else if (arg.StartsWith("--thinking "))
-                opts.Thinking = ParseThinkingArg(arg["--thinking ".Length..].Trim());
-            else if (arg is "-n" or "--no-stream")
-                opts.NoStream = true;
-            else if (arg.StartsWith("-s="))
-                opts.SystemPrompt = arg[3..];
-            else if (arg.StartsWith("--system="))
-                opts.SystemPrompt = arg[9..];
-            else if (arg.StartsWith("-m="))
-                opts.Model = arg[3..];
-            else if (arg.StartsWith("--model="))
-                opts.Model = arg[8..];
-            else if (arg.StartsWith("-u="))
-                opts.BaseUrl = arg[3..];
-            else if (arg.StartsWith("--base-url="))
-                opts.BaseUrl = arg[11..];
-            else if (arg.StartsWith("-k="))
-                opts.ApiKey = arg[3..];
-            else if (arg.StartsWith("-p="))
-                opts.Profile = arg[3..];
-            else if (arg.StartsWith("--profile="))
-                opts.Profile = arg[10..];
-            else if (arg.StartsWith("--api-key="))
-                opts.ApiKey = arg[11..];
-            else if (arg.StartsWith("-t="))
-                opts.Temperature = float.TryParse(arg[3..], out var t) ? t : null;
-            else if (arg.StartsWith("--temperature="))
-                opts.Temperature = float.TryParse(arg[14..], out var t2) ? t2 : null;
-            else if (arg.StartsWith("-max="))
-                opts.MaxTokens = int.TryParse(arg[5..], out var m) ? m : null;
-            else if (arg.StartsWith("--max-tokens="))
-                opts.MaxTokens = int.TryParse(arg[13..], out var m2) ? m2 : null;
-            else if (arg.StartsWith("--tools="))
-                opts.Tools = arg[8..].Split(',').Select(s => s.Trim()).ToArray();
-            else if (arg.StartsWith("--thinking="))
-                opts.Thinking = ParseThinkingArg(arg["--thinking=".Length..].Trim());
-            else if (!arg.StartsWith("-"))
-            {
-                opts.Positional ??= new List<string>();
-                opts.Positional.Add(arg);
-            }
-        }
-        return opts;
-    }
-
     private async Task<int> RunChat(string[] args)
     {
-        var opts = ParseArgs(args);
+        var opts = CliParser.ParseArgs(args);
         if (ShouldRunFirstLaunchSetup(opts))
             await RunSetupWizard(firstLaunch: true);
 
@@ -300,7 +214,7 @@ internal class AgentApp
                 }
                 else if (trimmed == "/clear")
                 {
-                    ClearChatHistory(history);
+                    ContextCommandHandler.ClearChatHistory(history);
                     AnsiConsole.MarkupLine("[dim]Conversation cleared.[/]\n");
                 }
                 else if (trimmed.StartsWith("/sys "))
@@ -314,7 +228,7 @@ internal class AgentApp
                 }
                 else if (trimmed == "/context" || trimmed.StartsWith("/context "))
                 {
-                    HandleContextCommand(trimmed, history, tools);
+                    ContextCommandHandler.Handle(trimmed, history, tools, ShowChatHelp);
                 }
                 else if (trimmed == "/debug" || trimmed.StartsWith("/debug "))
                 {
@@ -361,7 +275,7 @@ internal class AgentApp
                 {
                     AnsiConsole.Write(new Markup("[green]agent>[/] "));
                     var (response, tokenCount) = await RunWithEscapeCancel(ct => client.ChatWithToolsAsync(history, ct));
-                    var ctxEstimate = EstimateContextSize(history);
+                    var ctxEstimate = ContextCommandHandler.EstimateContextSize(history);
                     AnsiConsole.MarkupLine($"[dim]\n({tokenCount} tokens, {ctxEstimate} context)[/]\n");
                 }
                 else if (opts.NoStream || (config.ThinkingEnabled ?? false) && !IsOModel(config.Model))
@@ -390,7 +304,7 @@ internal class AgentApp
                     AnsiConsole.Write(new Markup("[green]agent>[/] "));
                     var (response, tokenCount) = await RunWithEscapeCancel(ct => client.ChatStreamingAsync(history, ct));
                     history.Add(new ChatMessage("assistant", response));
-                    var ctxEstimate = EstimateContextSize(history);
+                    var ctxEstimate = ContextCommandHandler.EstimateContextSize(history);
                     AnsiConsole.MarkupLine($"[dim]\n({tokenCount} tokens, {ctxEstimate} context)[/]\n");
                 }
             }
@@ -410,7 +324,7 @@ internal class AgentApp
             }
 
             // Check if we should compact the conversation history
-            _ = await MaybeCompactHistoryAsync(history, client, config, tools);
+            _ = await HistoryCompactor.MaybeCompactAsync(history, client, config, HasContextTool(tools));
         }
 
         AnsiConsole.MarkupLine("\n[dim]Goodbye![/]");
@@ -462,192 +376,6 @@ internal class AgentApp
     }
 
     /// <summary>
-    /// When chat history size exceeds CompactionThreshold, call the LLM to summarize
-    /// the conversation, store the summary in ContextStore, and replace old history
-    /// with system prompt + summary reference + most recent messages.
-    /// Returns true if compaction was performed.
-    /// </summary>
-    private static async Task<bool> MaybeCompactHistoryAsync(List<ChatMessage> history, AgentClient client, AgentConfig config, string[]? tools, CancellationToken cancellationToken = default)
-    {
-        const int RecentMessageCount = 4;
-        const int MaxCompactionChunkChars = 48000;
-        const string CompactionSystemMarker = "--- Compacted conversation context ---\n";
-
-        // Compaction disabled if threshold is 0 or negative
-        if (config.CompactionThreshold <= 0)
-            return false;
-
-        // Need context tool to store summaries
-        if (!HasContextTool(tools))
-            return false;
-
-        // Need at least a few messages to be worth compacting
-        if (history.Count < 5)
-            return false;
-
-        // Estimate chat history size in tokens. Stored context is intentionally excluded:
-        // compaction moves data there, so counting it would immediately retrigger compaction.
-        var chars = history.Sum(m => m.Content.Length);
-        var estimatedTokens = chars / 4;
-
-        // Check if we've crossed the threshold
-        if (estimatedTokens < config.CompactionThreshold)
-            return false;
-
-        // Find the system prompt
-        var systemIdx = history.FindIndex(m => m.Role == "system");
-        var systemPrompt = systemIdx >= 0 ? history[systemIdx].Content : "";
-        var markerIndex = systemPrompt.IndexOf(CompactionSystemMarker, StringComparison.Ordinal);
-        var baseSystemPrompt = markerIndex >= 0 ? systemPrompt[..markerIndex] : systemPrompt;
-
-        var nonSystemMessages = history.Where(m => m.Role != "system").ToList();
-        var keepCount = Math.Min(RecentMessageCount, nonSystemMessages.Count);
-        var recentMessages = nonSystemMessages.TakeLast(keepCount).ToList();
-
-        // Build content to summarize: all non-system messages except the recent ones
-        var messagesToSummarize = nonSystemMessages.Take(nonSystemMessages.Count - keepCount).ToList();
-
-        if (messagesToSummarize.Count == 0)
-            return false;
-
-        List<string> BuildCompactionChunks()
-        {
-            var chunks = new List<string>();
-            var current = new StringBuilder();
-
-            void Flush()
-            {
-                if (current.Length == 0)
-                    return;
-
-                chunks.Add(current.ToString());
-                current.Clear();
-            }
-
-            foreach (var msg in messagesToSummarize)
-            {
-                var formatted = $"[{msg.Role}]\n{msg.Content}\n\n";
-                if (formatted.Length > MaxCompactionChunkChars)
-                {
-                    Flush();
-                    for (int offset = 0; offset < formatted.Length; offset += MaxCompactionChunkChars)
-                        chunks.Add(formatted.Substring(offset, Math.Min(MaxCompactionChunkChars, formatted.Length - offset)));
-                    continue;
-                }
-
-                if (current.Length + formatted.Length > MaxCompactionChunkChars)
-                    Flush();
-
-                current.Append(formatted);
-            }
-
-            Flush();
-            return chunks;
-        }
-
-        async Task<string> SummarizeChunkAsync(string content, string focus)
-        {
-            var prompt = $@"Summarize this conversation history for compaction.
-Preserve decisions, facts, user preferences, unresolved tasks, code/file changes, tool results, ids, paths, errors, and assumptions needed to continue the conversation.
-Focus: {focus}
-
-Conversation:
-{content}";
-
-            var (summary, _) = await client.CompleteAsync(
-                prompt,
-                "You compact chat history. Produce a concise but complete continuation summary. Do not invent facts.");
-            return summary.Trim();
-        }
-
-        async Task<string> SummarizeChunksAsync(List<string> chunks)
-        {
-            var summaries = new List<string>();
-            for (int i = 0; i < chunks.Count; i++)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var focus = chunks.Count == 1 ? "complete conversation state" : $"chunk {i + 1} of {chunks.Count}";
-                summaries.Add(await SummarizeChunkAsync(chunks[i], focus));
-            }
-
-            while (summaries.Count > 1)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var combinedChunks = new List<string>();
-                var current = new StringBuilder();
-
-                foreach (var summary in summaries)
-                {
-                    var formatted = summary + "\n\n";
-                    if (current.Length + formatted.Length > MaxCompactionChunkChars)
-                    {
-                        if (current.Length > 0)
-                        {
-                            combinedChunks.Add(current.ToString());
-                            current.Clear();
-                        }
-                    }
-
-                    current.Append(formatted);
-                }
-
-                if (current.Length > 0)
-                    combinedChunks.Add(current.ToString());
-
-                if (combinedChunks.Count == 1)
-                    return await SummarizeChunkAsync(combinedChunks[0], "merge all chunk summaries into one continuation summary");
-
-                summaries.Clear();
-                for (int i = 0; i < combinedChunks.Count; i++)
-                    summaries.Add(await SummarizeChunkAsync(combinedChunks[i], $"merge summary chunk {i + 1} of {combinedChunks.Count}"));
-            }
-
-            return summaries[0];
-        }
-
-        var chunks = BuildCompactionChunks();
-        var contentToSummarize = string.Concat(chunks);
-        AnsiConsole.MarkupLine($"[dim]Compacting history ({estimatedTokens / 1000:0.0}k tokens, threshold {config.CompactionThreshold / 1000:0.0}k tokens, {chunks.Count:N0} chunk(s))...[/]");
-
-        try
-        {
-            var summary = await SummarizeChunksAsync(chunks);
-
-            // Store both the raw compacted history and the summary. Do not clear the
-            // context store here; recent messages may still reference older entries.
-            var storedEntry = ContextStore.Store("chat history pre-compaction", contentToSummarize);
-            var summaryEntry = ContextStore.Store("conversation summary (compaction)", summary);
-
-            // Build the new history: system + summary reference + recent messages
-            var newHistory = new List<ChatMessage>();
-
-            var compactionNote =
-                $"Previous conversation compacted. Continue using this summary as prior context.\n" +
-                $"Context store ids: summary={summaryEntry.Id}, raw_history={storedEntry.Id}. Use ctx_read with those ids if details are needed.\n\n" +
-                $"Conversation summary:\n{summary}";
-            var compactedSystemPrompt = string.IsNullOrWhiteSpace(baseSystemPrompt)
-                ? CompactionSystemMarker + compactionNote
-                : baseSystemPrompt.TrimEnd() + "\n\n" + CompactionSystemMarker + compactionNote;
-            newHistory.Add(new ChatMessage("system", compactedSystemPrompt));
-
-            // Add recent messages
-            foreach (var msg in recentMessages)
-                newHistory.Add(new ChatMessage(msg.Role, msg.Content));
-
-            history.Clear();
-            history.AddRange(newHistory);
-
-            AnsiConsole.MarkupLine($"[dim]Compaction complete. Reduced history to {history.Count} messages.[/]\n");
-            return true;
-        }
-        catch (Exception ex)
-        {
-            AnsiConsole.MarkupLine($"[yellow]Compaction failed ({ex.Message}), continuing with existing history.[/]");
-            return false;
-        }
-    }
-
-    /// <summary>
     /// Removes messages from the last user message onward, undoing
     /// partial assistant/tool messages from an interrupted turn.
     /// </summary>
@@ -689,11 +417,6 @@ Conversation:
                 return;
             }
         }
-    }
-
-    private static bool ParseThinkingArg(string arg)
-    {
-        return arg.ToLowerInvariant() is "true" or "1" or "yes";
     }
 
     private static bool IsOModel(string model)
@@ -921,236 +644,6 @@ Conversation:
         AnsiConsole.MarkupLine("[dim]Editor context is read from SIF_VSCODE_CONTEXT_FILE or SIF_VSCODE_FILE, SIF_VSCODE_LINE, SIF_VSCODE_COLUMN, SIF_VSCODE_SELECTED_TEXT, and SIF_VSCODE_SELECTED_TEXT_B64.[/]\n");
     }
 
-    private static void HandleContextCommand(string command, List<ChatMessage> history, string[]? tools)
-    {
-        var rest = command.Length == "/context".Length ? "" : command["/context".Length..].Trim();
-        if (string.IsNullOrWhiteSpace(rest) || rest.Equals("stats", StringComparison.OrdinalIgnoreCase))
-        {
-            ShowContextSummary(history, tools);
-            return;
-        }
-
-        var parts = rest.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var subcommand = parts[0].ToLowerInvariant();
-        var arg = parts.Length > 1 ? parts[1].Trim() : "";
-
-        switch (subcommand)
-        {
-            case "help":
-                ShowChatHelp();
-                break;
-            case "list":
-                ShowContextEntries();
-                break;
-            case "messages":
-            case "full":
-                ShowModelMessages(history, full: true);
-                break;
-            case "search":
-                if (string.IsNullOrWhiteSpace(arg))
-                    AnsiConsole.MarkupLine("[yellow]Usage:[/] /context search <query>\n");
-                else
-                    AnsiConsole.WriteLine(ContextStore.Search(arg));
-                break;
-            case "read":
-                HandleContextRead(arg);
-                break;
-            case "delete":
-            case "remove":
-            case "rm":
-                HandleContextDelete(arg);
-                break;
-            case "drop":
-                HandleContextDrop(arg, history);
-                break;
-            case "clear-history":
-                ClearChatHistory(history);
-                AnsiConsole.MarkupLine("[dim]Conversation cleared.[/]\n");
-                break;
-            case "clear-store":
-                AnsiConsole.MarkupLine($"[dim]Deleted {ContextStore.Clear():N0} stored context entries.[/]\n");
-                break;
-            case "clear" when string.IsNullOrWhiteSpace(arg) || arg.Equals("history", StringComparison.OrdinalIgnoreCase):
-                ClearChatHistory(history);
-                AnsiConsole.MarkupLine("[dim]Conversation cleared.[/]\n");
-                break;
-            case "clear" when arg.Equals("store", StringComparison.OrdinalIgnoreCase):
-                AnsiConsole.MarkupLine($"[dim]Deleted {ContextStore.Clear():N0} stored context entries.[/]\n");
-                break;
-            case "clear" when arg.Equals("all", StringComparison.OrdinalIgnoreCase):
-                ClearChatHistory(history);
-                AnsiConsole.MarkupLine($"[dim]Conversation cleared. Deleted {ContextStore.Clear():N0} stored context entries.[/]\n");
-                break;
-            default:
-                AnsiConsole.MarkupLine($"[yellow]Unknown /context command:[/] {subcommand.EscapeMarkup()}");
-                AnsiConsole.MarkupLine("[dim]Use /context help for available commands.[/]\n");
-                break;
-        }
-    }
-
-    private static string EstimateContextSize(List<ChatMessage> history)
-    {
-        var chars = history.Sum(m => m.Content.Length);
-        var entries = ContextStore.ListEntries();
-        var storedChars = entries.Sum(e => e.Length);
-        var totalChars = chars + storedChars;
-        var tokens = totalChars / 4;
-        if (tokens < 1000)
-            return $"~{tokens} tokens";
-        return $"~{tokens / 1000:0.0}k tokens";
-    }
-
-    private static void ShowContextSummary(List<ChatMessage> history, string[]? tools)
-    {
-        var nonSystemMessages = history.Count(m => m.Role != "system");
-        var chars = history.Sum(m => m.Content.Length);
-        var entries = ContextStore.ListEntries();
-        var storedChars = entries.Sum(e => e.Length);
-
-        var table = new Table();
-        table.Title("[green]Current Context[/]");
-        table.AddColumn("Area");
-        table.AddColumn("Count");
-        table.AddColumn("Size");
-        table.AddRow("Chat messages", history.Count.ToString("N0"), $"~{chars / 4:N0} tokens / {chars:N0} chars");
-        table.AddRow("Non-system messages", nonSystemMessages.ToString("N0"), "");
-        table.AddRow("Configured tools", tools is { Length: > 0 } ? string.Join(", ", tools).EscapeMarkup() : "[dim]none[/]", "");
-        table.AddRow("Stored context", entries.Count.ToString("N0"), $"{storedChars:N0} chars");
-        table.AddRow("Store path", "", $"[dim]{ContextStore.GetRootPath().EscapeMarkup()}[/]");
-        AnsiConsole.Write(table);
-        ShowModelMessages(history, full: false);
-        if (VscodeContext.IsRunningInVscodeTerminal())
-            AnsiConsole.MarkupLine("[dim]Note: current VS Code editor context is appended to the next user message when you send it. Use /vscode to inspect it.[/]");
-        AnsiConsole.MarkupLine("[dim]Use /context full to show full stored message contents. Tool schemas are also sent when tools are enabled.[/]");
-        AnsiConsole.MarkupLine("[dim]Use /context help for management commands.[/]\n");
-    }
-
-    private static void ShowModelMessages(List<ChatMessage> history, bool full)
-    {
-        if (history.Count == 0)
-        {
-            AnsiConsole.MarkupLine("[dim]No chat messages are currently stored.[/]\n");
-            return;
-        }
-
-        var table = new Table();
-        table.Title(full ? "[green]Stored Model Messages[/]" : "[green]Stored Messages Sent Before Next User Message[/]");
-        table.AddColumn("#");
-        table.AddColumn("Role");
-        table.AddColumn("Chars");
-        table.AddColumn(full ? "Content" : "Preview");
-
-        for (var i = 0; i < history.Count; i++)
-        {
-            var message = history[i];
-            var content = full ? message.Content : Preview(message.Content, 220);
-            table.AddRow(
-                (i + 1).ToString("N0"),
-                message.Role.EscapeMarkup(),
-                message.Content.Length.ToString("N0"),
-                content.EscapeMarkup());
-        }
-
-        AnsiConsole.Write(table);
-        AnsiConsole.WriteLine();
-    }
-
-    private static string Preview(string text, int maxChars)
-    {
-        var normalized = text.Replace("\r\n", "\n").Replace('\r', '\n').Replace('\n', ' ');
-        return normalized.Length <= maxChars ? normalized : normalized[..maxChars] + "...";
-    }
-
-    private static void ShowContextEntries()
-    {
-        var entries = ContextStore.ListEntries();
-        if (entries.Count == 0)
-        {
-            AnsiConsole.MarkupLine("[dim]No stored context entries for this session.[/]\n");
-            return;
-        }
-
-        var table = new Table();
-        table.AddColumn("Id");
-        table.AddColumn("Source");
-        table.AddColumn("Size");
-        table.AddColumn("Preview");
-
-        foreach (var entry in entries)
-        {
-            var preview = entry.Preview.Replace("\r\n", "\n").Replace('\n', ' ');
-            if (preview.Length > 90)
-                preview = preview[..90] + "...";
-
-            table.AddRow(
-                $"[bold]{entry.Id.EscapeMarkup()}[/]",
-                entry.Source.EscapeMarkup(),
-                $"{entry.Length:N0}",
-                preview.EscapeMarkup());
-        }
-
-        AnsiConsole.Write(table);
-        AnsiConsole.WriteLine();
-    }
-
-    private static void HandleContextRead(string arg)
-    {
-        if (string.IsNullOrWhiteSpace(arg))
-        {
-            AnsiConsole.MarkupLine("[yellow]Usage:[/] /context read <id> [[query]]\n");
-            return;
-        }
-
-        var parts = arg.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var id = parts[0];
-        var query = parts.Length > 1 ? parts[1] : null;
-        AnsiConsole.WriteLine(ContextStore.Read(id, query));
-        AnsiConsole.WriteLine();
-    }
-
-    private static void HandleContextDelete(string id)
-    {
-        if (string.IsNullOrWhiteSpace(id))
-        {
-            AnsiConsole.MarkupLine("[yellow]Usage:[/] /context delete <id>\n");
-            return;
-        }
-
-        var deleted = ContextStore.Delete(id, out var message);
-        AnsiConsole.MarkupLine(deleted
-            ? $"[dim]{message.EscapeMarkup()}[/]\n"
-            : $"[yellow]{message.EscapeMarkup()}[/]\n");
-    }
-
-    private static void HandleContextDrop(string arg, List<ChatMessage> history)
-    {
-        if (!int.TryParse(arg, out var count) || count <= 0)
-        {
-            AnsiConsole.MarkupLine("[yellow]Usage:[/] /context drop <count>\n");
-            return;
-        }
-
-        var removed = 0;
-        for (var i = history.Count - 1; i >= 0 && removed < count; i--)
-        {
-            if (history[i].Role == "system")
-                continue;
-
-            history.RemoveAt(i);
-            removed++;
-        }
-
-        AnsiConsole.MarkupLine($"[dim]Removed {removed:N0} recent non-system message(s).[/]\n");
-    }
-
-    private static void ClearChatHistory(List<ChatMessage> history)
-    {
-        var sys = history.FirstOrDefault(m => m.Role == "system");
-        history.Clear();
-        if (sys != null)
-            history.Add(sys);
-    }
-
     private static string[]? ResolveTools(string[]? cliTools, AgentConfig config)
     {
         // CLI flag takes highest priority
@@ -1223,7 +716,7 @@ Conversation:
 
     private async Task<int> RunComplete(string[] args)
     {
-        var opts = ParseArgs(args);
+        var opts = CliParser.ParseArgs(args);
         string? prompt = opts.Positional?.FirstOrDefault();
 
         if (string.IsNullOrEmpty(prompt))
@@ -1286,7 +779,7 @@ Conversation:
                     history.Add(new ChatMessage("system", systemPrompt));
                 history.Add(new ChatMessage("user", promptWithEditorContext));
                 var (response, tokenCount) = await RunWithEscapeCancel(ct => client.ChatWithToolsAsync(history, ct));
-                var ctxEstimate = EstimateContextSize(history);
+                var ctxEstimate = ContextCommandHandler.EstimateContextSize(history);
                 AnsiConsole.MarkupLine($"\n[dim]({tokenCount} tokens, {ctxEstimate} context)[/]");
             }
             else
@@ -2779,228 +2272,5 @@ Conversation:
         }
         catch { }
         return files;
-    }
-}
-
-internal class CliArgs
-{
-    public List<string>? Positional { get; set; }
-    public string? SystemPrompt { get; set; }
-    public string? Model { get; set; }
-    public string? Profile { get; set; }
-    public string? BaseUrl { get; set; }
-    public string? ApiKey { get; set; }
-    public bool NoStream { get; set; }
-    public string[]? Tools { get; set; }
-    public bool? Thinking { get; set; }
-    public float? Temperature { get; set; }
-    public int? MaxTokens { get; set; }
-}
-
-internal static class VscodeContext
-{
-    private const int MaxInlineTextChars = 24000;
-    private const int MaxLineChars = 4000;
-
-    private static string? _lastEditorContext = null;
-
-    public static string? FilePath => ReadSnapshot().FilePath ?? NormalizePath(GetFirstEnv("SIF_VSCODE_FILE", "VSCODE_ACTIVE_FILE"));
-    public static string? Line => ReadSnapshot().Line ?? GetFirstEnv("SIF_VSCODE_LINE", "SIF_VSCODE_SELECTION_START_LINE", "VSCODE_ACTIVE_LINE");
-    public static string? Column => ReadSnapshot().Column ?? GetFirstEnv("SIF_VSCODE_COLUMN", "SIF_VSCODE_SELECTION_START_COLUMN", "VSCODE_ACTIVE_COLUMN");
-    public static string? SelectedText => ReadSnapshot().SelectedText
-        ?? DecodeText(GetFirstEnv("SIF_VSCODE_SELECTED_TEXT_B64"), isBase64: true)
-        ?? DecodeText(GetFirstEnv("SIF_VSCODE_SELECTED_TEXT", "VSCODE_SELECTED_TEXT"), isBase64: false);
-
-    public static bool IsRunningInVscodeTerminal()
-    {
-        return string.Equals(Environment.GetEnvironmentVariable("TERM_PROGRAM"), "vscode", StringComparison.OrdinalIgnoreCase)
-            || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("VSCODE_IPC_HOOK_CLI"))
-            || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("VSCODE_PID"))
-            || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SIF_VSCODE_CONTEXT_FILE"));
-    }
-
-    public static string AppendToUserMessage(string message)
-    {
-        if (!IsRunningInVscodeTerminal())
-            return message;
-
-        var block = BuildMessageBlock();
-        if (string.IsNullOrWhiteSpace(block))
-            return message;
-
-        // Only include editor context if it changed since the last turn
-        if (block == _lastEditorContext)
-            return message;
-
-        _lastEditorContext = block;
-        return message + "\n\n" + block;
-    }
-
-    public static string GetDisplayValue(string? value)
-    {
-        return string.IsNullOrWhiteSpace(value) ? "[dim]not provided[/]" : value.EscapeMarkup();
-    }
-
-    private static string? BuildMessageBlock()
-    {
-        var snapshot = ReadSnapshot();
-        var file = snapshot.FilePath ?? NormalizePath(GetFirstEnv("SIF_VSCODE_FILE", "VSCODE_ACTIVE_FILE"));
-        var line = snapshot.Line ?? GetFirstEnv("SIF_VSCODE_LINE", "SIF_VSCODE_SELECTION_START_LINE", "VSCODE_ACTIVE_LINE");
-        var column = snapshot.Column ?? GetFirstEnv("SIF_VSCODE_COLUMN", "SIF_VSCODE_SELECTION_START_COLUMN", "VSCODE_ACTIVE_COLUMN");
-        var selectedText = snapshot.SelectedText
-            ?? DecodeText(GetFirstEnv("SIF_VSCODE_SELECTED_TEXT_B64"), isBase64: true)
-            ?? DecodeText(GetFirstEnv("SIF_VSCODE_SELECTED_TEXT", "VSCODE_SELECTED_TEXT"), isBase64: false);
-        var currentLine = TryReadLine(file, line);
-
-        if (string.IsNullOrWhiteSpace(file) &&
-            string.IsNullOrWhiteSpace(line) &&
-            string.IsNullOrWhiteSpace(column) &&
-            string.IsNullOrWhiteSpace(selectedText))
-            return null;
-
-        var sb = new StringBuilder();
-        sb.AppendLine("<editor_context source=\"vscode\">");
-        if (!string.IsNullOrWhiteSpace(file))
-            sb.AppendLine($"Open file: {file}");
-        if (!string.IsNullOrWhiteSpace(line) || !string.IsNullOrWhiteSpace(column))
-            sb.AppendLine($"Cursor: line {ValueOrUnknown(line)}, column {ValueOrUnknown(column)}");
-        if (!string.IsNullOrWhiteSpace(currentLine))
-            sb.AppendLine($"Current line: {currentLine}");
-        if (!string.IsNullOrWhiteSpace(selectedText))
-        {
-            sb.AppendLine("Selected text:");
-            sb.AppendLine(TrimText(selectedText, MaxInlineTextChars));
-        }
-        sb.AppendLine("</editor_context>");
-
-        var roslynContext = RoslynTools.BuildAmbientContext(file, line);
-        if (!string.IsNullOrWhiteSpace(roslynContext))
-        {
-            sb.AppendLine();
-            sb.AppendLine(roslynContext);
-        }
-
-        return sb.ToString().TrimEnd();
-    }
-
-    private static string? TryReadLine(string? file, string? line)
-    {
-        if (string.IsNullOrWhiteSpace(file) || !int.TryParse(line, out var lineNumber) || lineNumber <= 0)
-            return null;
-
-        try
-        {
-            var path = Path.IsPathRooted(file) ? file : Path.GetFullPath(file, Environment.CurrentDirectory);
-            if (!File.Exists(path))
-                return null;
-
-            var current = 1;
-            foreach (var text in File.ReadLines(path))
-            {
-                if (current == lineNumber)
-                    return TrimText(text, MaxLineChars);
-                current++;
-            }
-        }
-        catch
-        {
-            return null;
-        }
-
-        return null;
-    }
-
-    private static EditorSnapshot ReadSnapshot()
-    {
-        var path = Environment.GetEnvironmentVariable("SIF_VSCODE_CONTEXT_FILE");
-        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
-            return EditorSnapshot.Empty;
-
-        try
-        {
-            using var doc = JsonDocument.Parse(File.ReadAllText(path));
-            var root = doc.RootElement;
-            return new EditorSnapshot(
-                NormalizePath(GetJsonString(root, "file")),
-                GetJsonString(root, "line"),
-                GetJsonString(root, "column"),
-                GetJsonString(root, "selectedText"));
-        }
-        catch
-        {
-            return EditorSnapshot.Empty;
-        }
-    }
-
-    private static string? GetJsonString(JsonElement root, string propertyName)
-    {
-        if (!root.TryGetProperty(propertyName, out var value))
-            return null;
-
-        return value.ValueKind switch
-        {
-            JsonValueKind.String => value.GetString(),
-            JsonValueKind.Number => value.GetRawText(),
-            _ => null
-        };
-    }
-
-    private static string ValueOrUnknown(string? value)
-    {
-        return string.IsNullOrWhiteSpace(value) ? "unknown" : value;
-    }
-
-    private static string? GetFirstEnv(params string[] names)
-    {
-        foreach (var name in names)
-        {
-            var value = Environment.GetEnvironmentVariable(name);
-            if (!string.IsNullOrWhiteSpace(value))
-                return value;
-        }
-
-        return null;
-    }
-
-    private static string? DecodeText(string? value, bool isBase64)
-    {
-        if (string.IsNullOrEmpty(value))
-            return null;
-
-        if (!isBase64)
-            return value.Replace("\\r\\n", "\n").Replace("\\n", "\n");
-
-        try
-        {
-            return Encoding.UTF8.GetString(Convert.FromBase64String(value));
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private static string? NormalizePath(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            return null;
-
-        if (Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.IsFile)
-            return uri.LocalPath;
-
-        return value;
-    }
-
-    private static string TrimText(string value, int maxChars)
-    {
-        if (value.Length <= maxChars)
-            return value;
-
-        return value[..maxChars] + $"\n...[truncated {value.Length - maxChars:N0} chars]";
-    }
-
-    private sealed record EditorSnapshot(string? FilePath, string? Line, string? Column, string? SelectedText)
-    {
-        public static EditorSnapshot Empty { get; } = new(null, null, null, null);
     }
 }
