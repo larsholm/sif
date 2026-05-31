@@ -13,6 +13,15 @@ namespace sif.agent;
 /// </summary>
 internal static class ToolRegistry
 {
+    private static readonly HashSet<string> TextFileExtensions = new(StringComparer.Ordinal)
+    {
+        ".cs", ".json", ".xml", ".txt", ".md", ".yaml", ".yml", ".sh", ".bash", ".py", ".js", ".ts", ".go", ".rs",
+        ".java", ".c", ".cpp", ".h", ".hpp", ".html", ".css", ".sql", ".toml", ".ini", ".cfg", ".conf", ".env",
+        ".nuspec", ".csproj", ".sln", ".editorconfig", ".gitignore", ".rb", ".php", ".pl", ".lua", ".swift", ".kt",
+        ".scala", ".r", ".m", ".mm", ".dart", ".v", ".sv", ".vhd", ".vhdl", ".asm", ".s", ".S", ".tex", ".bib",
+        ".csv", ".log", ".diff", ".patch", ".properties", ".gradle"
+    };
+
     public static List<OpenAI.Chat.ChatTool> GetTools(string[] enabled) => ToolSchemas.GetTools(enabled);
 
     public static async Task<string> ExecuteAsync(string toolName, string argumentsJson, CancellationToken cancellationToken = default)
@@ -20,30 +29,31 @@ internal static class ToolRegistry
         if (!JsonArgs.TryParseObject(argumentsJson, out var argsDoc, out var argsError))
             return $"Error: Tool '{toolName}' expected JSON object arguments. {argsError}";
 
-        argsDoc.Dispose();
-
-        return toolName switch
+        using (argsDoc)
         {
-            "bash" => await RunBashAsync(argumentsJson, cancellationToken),
-            "read" => RunRead(argumentsJson),
-            "edit" => RunEdit(argumentsJson),
-            "write" => RunWrite(argumentsJson),
-            "sleep" => await RunSleepAsync(argumentsJson, cancellationToken),
-            "serve" => RunServe(argumentsJson),
-            "ctx_index" => RunContextIndex(argumentsJson),
-            "ctx_search" => RunContextSearch(argumentsJson),
-            "ctx_read" => RunContextRead(argumentsJson),
-            "ctx_stats" => ContextStore.Stats(),
-            "roslyn_find_symbols" => await RunRoslynFindSymbols(argumentsJson),
-            "roslyn_get_diagnostics" => await RunRoslynGetDiagnostics(argumentsJson),
-            _ => $"Error: Unknown tool '{toolName}'"
-        };
+            var root = argsDoc.RootElement;
+
+            return toolName switch
+            {
+                "bash" => await RunBashAsync(root, cancellationToken),
+                "read" => RunRead(root),
+                "edit" => RunEdit(root),
+                "write" => RunWrite(root),
+                "sleep" => await RunSleepAsync(root, cancellationToken),
+                "serve" => RunServe(root),
+                "ctx_index" => RunContextIndex(root),
+                "ctx_search" => RunContextSearch(root),
+                "ctx_read" => RunContextRead(root),
+                "ctx_stats" => ContextStore.Stats(),
+                "roslyn_find_symbols" => await RunRoslynFindSymbols(root),
+                "roslyn_get_diagnostics" => await RunRoslynGetDiagnostics(root),
+                _ => $"Error: Unknown tool '{toolName}'"
+            };
+        }
     }
 
-    private static string RunContextIndex(string argsJson)
+    private static string RunContextIndex(JsonElement root)
     {
-        using var doc = JsonDocument.Parse(argsJson);
-        var root = doc.RootElement;
         var source = JsonArgs.String(root, "manual", "source", "name", "title", "label");
         var content = JsonArgs.String(root, "", "content", "text", "data", "value", "blob");
         if (string.IsNullOrEmpty(content))
@@ -51,10 +61,8 @@ internal static class ToolRegistry
         return ContextStore.StoreAndDescribe(source, content);
     }
 
-    private static string RunContextSearch(string argsJson)
+    private static string RunContextSearch(JsonElement root)
     {
-        using var doc = JsonDocument.Parse(argsJson);
-        var root = doc.RootElement;
         var query = JsonArgs.String(root, "", "query", "q", "search", "term", "text");
         var limit = JsonArgs.Int(root, 8, "limit", "max", "maxResults", "max_results");
         if (string.IsNullOrEmpty(query))
@@ -62,10 +70,8 @@ internal static class ToolRegistry
         return ContextStore.Search(query, limit);
     }
 
-    private static string RunContextRead(string argsJson)
+    private static string RunContextRead(JsonElement root)
     {
-        using var doc = JsonDocument.Parse(argsJson);
-        var root = doc.RootElement;
         var id = JsonArgs.String(root, "", "id", "contextId", "context_id", "key", "handle");
         var query = JsonArgs.String(root, "", "query", "q", "search", "focus");
         var maxChars = JsonArgs.Int(root, 32000, "maxChars", "max_chars", "limit", "max", "chars");
@@ -74,11 +80,8 @@ internal static class ToolRegistry
         return ContextStore.Read(id, query, maxChars);
     }
 
-    private static async Task<string> RunRoslynFindSymbols(string argsJson)
+    private static async Task<string> RunRoslynFindSymbols(JsonElement root)
     {
-        using var doc = JsonDocument.Parse(argsJson);
-        var root = doc.RootElement;
-
         // Accept solutionPath, projectPath, or path (camelCase or snake_case)
         var path = JsonArgs.String(root, "", "solutionPath", "solution_path", "projectPath", "project_path", "project", "path", "file");
             
@@ -89,21 +92,16 @@ internal static class ToolRegistry
         return await RoslynTools.FindSymbolsAsync(path, name);
     }
 
-    private static async Task<string> RunRoslynGetDiagnostics(string argsJson)
+    private static async Task<string> RunRoslynGetDiagnostics(JsonElement root)
     {
-        using var doc = JsonDocument.Parse(argsJson);
-        var root = doc.RootElement;
-
         // Accept multiple parameter name formats: camelCase, snake_case, or projectFilePath
         var projectPath = JsonArgs.String(root, "", "path", "file", "project", "projectPath", "project_path", "projectFilePath", "solutionPath", "solution_path");
 
         return await RoslynTools.GetDiagnosticsAsync(projectPath);
     }
 
-    private static async Task<string> RunSleepAsync(string argsJson, CancellationToken cancellationToken)
+    private static async Task<string> RunSleepAsync(JsonElement root, CancellationToken cancellationToken)
     {
-        using var doc = JsonDocument.Parse(argsJson);
-        var root = doc.RootElement;
         var seconds = JsonArgs.Double(root, 0, "seconds", "second", "duration", "delay", "time");
         if (seconds == 0 && JsonArgs.Double(root, 0, "ms", "milliseconds") is var milliseconds && milliseconds > 0)
             seconds = milliseconds / 1000;
@@ -119,15 +117,10 @@ internal static class ToolRegistry
         return $"Slept for {seconds:0.###} seconds.";
     }
 
-    private static string RunServe(string argsJson)
+    private static string RunServe(JsonElement root)
     {
         try
         {
-            if (string.IsNullOrWhiteSpace(argsJson))
-                return "Error: serve tool requires a JSON arguments object.";
-
-            using var doc = JsonDocument.Parse(argsJson);
-            var root = doc.RootElement;
             var pathArg = JsonArgs.String(root, "", "path", "dir", "directory", "root", "folder");
             var path = ResolvePath(pathArg ?? "");
             var bind = JsonArgs.String(root, "127.0.0.1", "bind", "host", "address");
@@ -247,10 +240,8 @@ internal static class ToolRegistry
         return null;
     }
 
-    private static async Task<string> RunBashAsync(string argsJson, CancellationToken cancellationToken)
+    private static async Task<string> RunBashAsync(JsonElement root, CancellationToken cancellationToken)
     {
-        using var doc = JsonDocument.Parse(argsJson);
-        var root = doc.RootElement;
         var command = JsonArgs.String(root, "", "command", "cmd", "script", "shell", "input");
         if (string.IsNullOrWhiteSpace(command))
             return "Error: command is required.";
@@ -545,10 +536,8 @@ internal static class ToolRegistry
         return bashScriptPath;
     }
 
-    private static string RunRead(string argsJson)
+    private static string RunRead(JsonElement root)
     {
-        using var doc = JsonDocument.Parse(argsJson);
-        var root = doc.RootElement;
         var path = ResolvePath(JsonArgs.String(root, "", "path", "file", "filePath", "file_path", "filename"));
         var skiplines = JsonArgs.Int(root, 0, "skiplines", "skipLines", "skip_lines", "skip", "offset");
         var limit = JsonArgs.Int(root, 1000, "limit", "lines", "maxLines", "max_lines", "max");
@@ -561,9 +550,8 @@ internal static class ToolRegistry
             return $"Error: File not found: {path}";
 
         var ext = Path.GetExtension(path).ToLowerInvariant();
-        var textExts = new HashSet<string> { ".cs", ".json", ".xml", ".txt", ".md", ".yaml", ".yml", ".sh", ".bash", ".py", ".js", ".ts", ".go", ".rs", ".java", ".c", ".cpp", ".h", ".hpp", ".html", ".css", ".sql", ".toml", ".ini", ".cfg", ".conf", ".env", ".nuspec", ".csproj", ".sln", ".editorconfig", ".gitignore", ".rb", ".php", ".pl", ".lua", ".swift", ".kt", ".scala", ".r", ".m", ".mm", ".dart", ".v", ".sv", ".vhd", ".vhdl", ".asm", ".s", ".S", ".tex", ".bib", ".csv", ".log", ".diff", ".patch", ".properties", ".gradle" };
 
-        if (textExts.Contains(ext) || path.Contains(".gitignore") || path.Contains(".editorconfig") || path.Contains("Makefile") || path.Contains("Dockerfile") || path.Contains("Vagrantfile"))
+        if (TextFileExtensions.Contains(ext) || path.Contains(".gitignore") || path.Contains(".editorconfig") || path.Contains("Makefile") || path.Contains("Dockerfile") || path.Contains("Vagrantfile"))
         {
             var lines = File.ReadAllLines(path);
             if (lines.Length > skiplines) lines = lines.Skip(skiplines).ToArray();
@@ -575,10 +563,8 @@ internal static class ToolRegistry
         return $"Binary file ({ext}, {size:N0} bytes)";
     }
 
-    private static string RunEdit(string argsJson)
+    private static string RunEdit(JsonElement root)
     {
-        using var doc = JsonDocument.Parse(argsJson);
-        var root = doc.RootElement;
         var path = ResolvePath(JsonArgs.String(root, "", "path", "file", "filePath", "file_path", "filename"));
 
         // Accept multiple parameter name formats: camelCase or snake_case
@@ -653,10 +639,8 @@ internal static class ToolRegistry
         return count;
     }
 
-    private static string RunWrite(string argsJson)
+    private static string RunWrite(JsonElement root)
     {
-        using var doc = JsonDocument.Parse(argsJson);
-        var root = doc.RootElement;
         var path = ResolvePath(JsonArgs.String(root, "", "path", "file", "filePath", "file_path", "filename"));
         var content = JsonArgs.String(root, "", "content", "text", "data", "body", "value");
 

@@ -5,8 +5,18 @@ namespace sif.agent;
 /// </summary>
 internal static class ToolSchemas
 {
+    private static readonly object CacheLock = new();
+    private static readonly Dictionary<string, OpenAI.Chat.ChatTool[]> CachedTools = new(StringComparer.Ordinal);
+
     public static List<OpenAI.Chat.ChatTool> GetTools(string[] enabled)
     {
+        var cacheKey = GetCacheKey(enabled);
+        lock (CacheLock)
+        {
+            if (CachedTools.TryGetValue(cacheKey, out var cached))
+                return [.. cached];
+        }
+
         var tools = new List<OpenAI.Chat.ChatTool>();
 
         if (enabled.Contains("tool_catalog"))
@@ -250,6 +260,20 @@ internal static class ToolSchemas
             ));
         }
 
-        return tools;
+        lock (CacheLock)
+        {
+            if (CachedTools.TryGetValue(cacheKey, out var cached))
+                return [.. cached];
+
+            CachedTools[cacheKey] = [.. tools];
+            return tools;
+        }
+    }
+
+    private static string GetCacheKey(string[] enabled)
+    {
+        return string.Join('\n', enabled
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(tool => tool, StringComparer.Ordinal));
     }
 }
