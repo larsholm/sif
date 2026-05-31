@@ -16,7 +16,7 @@ function Require-Command {
 Require-Command dotnet
 
 $packageId = "sif.agent"
-$packageVersion = "1.0.1"
+$packageVersion = "2026.5.31"
 $extensionId = "sif.sif-vscode"
 $extensionVersion = "0.1.0"
 $archiveUrl = "$($RepoUrl.TrimEnd('/'))/archive/refs/heads/$Ref.zip"

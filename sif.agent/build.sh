@@ -46,7 +46,7 @@ cat > /tmp/sif-pack/sif.agent.nuspec << 'NUSPEC'
 <package xmlns="http://schemas.microsoft.com/packaging/2012/06/nuspec.xsd">
   <metadata>
     <id>sif.agent</id>
-    <version>1.0.1</version>
+    <version>2026.5.31</version>
     <authors>sif</authors>
     <license type="expression">MIT</license>
     <readme>README.md</readme>
@@ -62,8 +62,8 @@ NUSPEC
 
 # Create the package using zip (nupkg is just a zip with specific structure)
 cd /tmp/sif-pack
-rm -f sif.agent.1.0.1.nupkg
-PACKAGE_VERSION=1.0.1
+rm -f sif.agent.2026.5.31.nupkg
+PACKAGE_VERSION=2026.5.31
 PACKAGE_ID=sif.agent
 PACKAGE_DIR="$ROOT_DIR/sif.agent/nupkg"
 
