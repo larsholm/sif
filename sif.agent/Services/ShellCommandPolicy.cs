@@ -14,19 +14,53 @@ internal static class ShellCommandPolicy
 
     public static string GetFirstCommandWord(string command)
     {
-        var trimmed = command.TrimStart();
-        if (trimmed.Length == 0)
+        if (string.IsNullOrWhiteSpace(command))
             return "";
 
-        if (trimmed[0] is '"' or '\'')
+        // Split by ';' to handle compound commands like `var=$(cmd); real_cmd`.
+        // Within each part, track parenthesis depth to skip subshell values.
+        foreach (var part in command.Split(';'))
         {
-            var quote = trimmed[0];
-            var end = trimmed.IndexOf(quote, 1);
-            return end > 1 ? trimmed[1..end] : trimmed.Trim(quote);
+            var words = part.Split([' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+            var depth = 0;
+
+            foreach (var word in words)
+            {
+                if (depth > 0)
+                {
+                    foreach (var ch in word)
+                    {
+                        if (ch == '(') depth++;
+                        else if (ch == ')') depth--;
+                    }
+                    continue;
+                }
+
+                // Skip shell variable assignments like VAR=value or VAR=$(subshell)
+                var eqIdx = word.IndexOf('=');
+                if (eqIdx > 0 && word[..eqIdx].All(c => char.IsLetterOrDigit(c) || c == '_'))
+                {
+                    foreach (var ch in word[(eqIdx + 1)..])
+                    {
+                        if (ch == '(') depth++;
+                        else if (ch == ')') depth--;
+                    }
+                    if (depth < 0) depth = 0;
+                    continue;
+                }
+
+                if (word[0] is '"' or '\'')
+                {
+                    var quote = word[0];
+                    var end = word.IndexOf(quote, 1);
+                    return end > 1 ? word[1..end] : word.Trim(quote);
+                }
+
+                return word;
+            }
         }
 
-        return trimmed.Split([' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
-            .FirstOrDefault() ?? "";
+        return "";
     }
 
     public static HashSet<string> GetAllowedShellCommands()

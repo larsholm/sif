@@ -57,6 +57,8 @@ internal static class ChatResponseParsing
         var text = (ex.Message + "\n" + response).ToLowerInvariant();
         return text.Contains("failed to parse input", StringComparison.Ordinal) ||
                text.Contains("failed to parse tool call", StringComparison.Ordinal) ||
+               text.Contains("failed to parse tool call arguments", StringComparison.Ordinal) ||
+               text.Contains("attempting to parse an empty input", StringComparison.Ordinal) ||
                text.Contains("<tool_call>", StringComparison.Ordinal) ||
                text.Contains("<function=", StringComparison.Ordinal);
     }
