@@ -4,6 +4,37 @@ namespace sif.agent;
 
 internal static class JsonArgs
 {
+    public static bool TryParseObject(string? json, out JsonDocument document, out string error)
+    {
+        document = null!;
+
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            error = "Arguments were empty.";
+            return false;
+        }
+
+        try
+        {
+            document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind == JsonValueKind.Object)
+            {
+                error = "";
+                return true;
+            }
+
+            error = $"Expected a JSON object, received {document.RootElement.ValueKind}.";
+            document.Dispose();
+            document = null!;
+            return false;
+        }
+        catch (JsonException ex)
+        {
+            error = ex.Message;
+            return false;
+        }
+    }
+
     public static string String(JsonElement root, string defaultValue, params string[] names)
     {
         return TryString(root, out var value, names) ? value : defaultValue;

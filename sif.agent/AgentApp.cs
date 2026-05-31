@@ -416,7 +416,7 @@ internal class AgentApp
             catch (Exception ex)
             {
                 var debugPath = DebugLog.Save("chat-loop", ex, "during conversation");
-                AnsiConsole.MarkupLine($"[red]Error:[/] {ex.Message.EscapeMarkup()}");
+                AnsiConsole.MarkupLine($"[red]Error:[/] {AgentErrorFormatter.ToUserMessage(ex).EscapeMarkup()}");
                 AnsiConsole.MarkupLine($"[dim]Debug saved to {debugPath.EscapeMarkup()}[/]\n");
                 RollbackToLastUserMessage(history);
             }
@@ -1299,7 +1299,7 @@ Conversation:
         catch (Exception ex)
         {
             var debugPath = DebugLog.Save("complete", ex, prompt?.Trim().Take(100).ToString() ?? "no prompt");
-            AnsiConsole.MarkupLine($"[red]Error:[/] {ex.Message.EscapeMarkup()}");
+            AnsiConsole.MarkupLine($"[red]Error:[/] {AgentErrorFormatter.ToUserMessage(ex).EscapeMarkup()}");
             AnsiConsole.MarkupLine($"[dim]Debug saved to {debugPath.EscapeMarkup()}[/]");
             return 1;
         }

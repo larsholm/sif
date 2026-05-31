@@ -68,6 +68,17 @@ public sealed class ToolRegistryArgumentTests
     }
 
     [Theory]
+    [InlineData("")]
+    [InlineData("not json")]
+    [InlineData("[]")]
+    public async Task ToolsReturnErrorsForNonObjectArguments(string arguments)
+    {
+        var result = await ToolRegistry.ExecuteAsync("roslyn_get_diagnostics", arguments);
+
+        Assert.Contains("expected JSON object arguments", result);
+    }
+
+    [Theory]
     [InlineData("ctx_search", """{"q":"anything","max":"1"}""", "No context hits")]
     [InlineData("ctx_read", """{"contextId":"missing","max_chars":"10"}""", "context id not found")]
     public async Task ContextToolsAcceptCommonAliases(string tool, string arguments, string expected)

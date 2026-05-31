@@ -163,6 +163,7 @@ internal class AgentClient
         int totalTokens = 0;
         int totalOutputTokens = 0;
         var totalTime = TimeSpan.Zero;
+        var malformedToolCallRetries = 0;
 
         while (true)
             {
@@ -173,7 +174,22 @@ internal class AgentClient
                 ApplyThinkingOptions(opts);
 
                 var sw = System.Diagnostics.Stopwatch.StartNew();
-                var result = await _chatClient.CompleteChatAsync(messages, opts, cancellationToken);
+                ClientResult<OpenAI.Chat.ChatCompletion> result;
+                try
+                {
+                    result = await _chatClient.CompleteChatAsync(messages, opts, cancellationToken);
+                }
+                catch (ClientResultException ex) when (malformedToolCallRetries == 0 && IsProviderToolParseError(ex))
+                {
+                    malformedToolCallRetries++;
+                    sw.Stop();
+                    AnsiConsole.MarkupLine("\n[yellow]Provider rejected a malformed tool call; retrying once with stricter tool-call instructions.[/]");
+                    messages.Add(OpenAI.Chat.ChatMessage.CreateSystemMessage(
+                        "The previous completion was rejected because the tool call was malformed. Retry once. " +
+                        "If you need a tool, call the provided function directly with a valid JSON object for arguments. " +
+                        "Do not emit XML, <tool_call>, <function>, or <parameter> tags."));
+                    continue;
+                }
                 sw.Stop();
 
                 var usage = result.Value.Usage;
@@ -402,37 +418,44 @@ internal class AgentClient
     private string RunToolCatalog(string argsJson)
     {
         var enabled = new List<string>();
-        using var doc = JsonDocument.Parse(argsJson);
-        foreach (var name in JsonArgs.StringArray(doc.RootElement, "enable", "tools", "tool", "names"))
+        if (!JsonArgs.TryParseObject(argsJson, out var doc, out var argsError))
+            return $"Error: tool_catalog expected JSON object arguments. {argsError}";
+
+        using (doc)
         {
-            if (string.IsNullOrWhiteSpace(name))
-                continue;
-
-            if (_availableLocalTools.Contains(name))
+            foreach (var name in JsonArgs.StringArray(doc.RootElement, "enable", "tools", "tool", "names"))
             {
-                _activeLocalTools.Add(name);
-                enabled.Add(name);
+                if (string.IsNullOrWhiteSpace(name))
+                    continue;
+
+                if (_availableLocalTools.Contains(name))
+                {
+                    _activeLocalTools.Add(name);
+                    enabled.Add(name);
+                }
             }
+
+            var optional = _availableLocalTools
+                .Except(_activeLocalTools, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(t => t, StringComparer.OrdinalIgnoreCase)
+                .Select(t => $"{t}: {DescribeTool(t)}");
+
+            var sb = new StringBuilder();
+            if (enabled.Count > 0)
+                sb.AppendLine("Enabled: " + string.Join(", ", enabled));
+            sb.AppendLine("Active: " + string.Join(", ", _activeLocalTools.OrderBy(t => t, StringComparer.OrdinalIgnoreCase)));
+            sb.AppendLine("Optional tools:");
+            var optionalText = string.Join('\n', optional);
+            sb.AppendLine(string.IsNullOrWhiteSpace(optionalText) ? "(none)" : optionalText);
+            return sb.ToString().TrimEnd();
         }
-
-        var optional = _availableLocalTools
-            .Except(_activeLocalTools, StringComparer.OrdinalIgnoreCase)
-            .OrderBy(t => t, StringComparer.OrdinalIgnoreCase)
-            .Select(t => $"{t}: {DescribeTool(t)}");
-
-        var sb = new StringBuilder();
-        if (enabled.Count > 0)
-            sb.AppendLine("Enabled: " + string.Join(", ", enabled));
-        sb.AppendLine("Active: " + string.Join(", ", _activeLocalTools.OrderBy(t => t, StringComparer.OrdinalIgnoreCase)));
-        sb.AppendLine("Optional tools:");
-        var optionalText = string.Join('\n', optional);
-        sb.AppendLine(string.IsNullOrWhiteSpace(optionalText) ? "(none)" : optionalText);
-        return sb.ToString().TrimEnd();
     }
 
     private async Task<string> RunContextSummarize(string argsJson)
     {
-        using var doc = JsonDocument.Parse(argsJson);
+        if (!JsonArgs.TryParseObject(argsJson, out var doc, out var argsError))
+            return $"Error: ctx_summarize expected JSON object arguments. {argsError}";
+        using var _ = doc;
         var root = doc.RootElement;
         var id = JsonArgs.String(root, "", "id", "contextId", "context_id", "key", "handle");
         var focus = JsonArgs.String(root, "", "focus", "query", "topic", "summaryFocus", "summary_focus");
@@ -553,17 +576,32 @@ internal class AgentClient
 
     private static bool IsJsonObject(string text)
     {
-        if (string.IsNullOrWhiteSpace(text))
+        if (!JsonArgs.TryParseObject(text, out var doc, out _))
             return false;
 
+        using (doc)
+            return true;
+    }
+
+    private static bool IsProviderToolParseError(ClientResultException ex)
+    {
+        var response = TryReadRawResponse(ex);
+        var text = (ex.Message + "\n" + response).ToLowerInvariant();
+        return text.Contains("failed to parse input", StringComparison.Ordinal) ||
+               text.Contains("failed to parse tool call", StringComparison.Ordinal) ||
+               text.Contains("<tool_call>", StringComparison.Ordinal) ||
+               text.Contains("<function=", StringComparison.Ordinal);
+    }
+
+    private static string TryReadRawResponse(ClientResultException ex)
+    {
         try
         {
-            using var doc = JsonDocument.Parse(text);
-            return doc.RootElement.ValueKind == JsonValueKind.Object;
+            return ex.GetRawResponse()?.Content.ToString() ?? "";
         }
-        catch (JsonException)
+        catch
         {
-            return false;
+            return "";
         }
     }
 

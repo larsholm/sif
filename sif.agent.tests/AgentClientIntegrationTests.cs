@@ -160,6 +160,34 @@ public sealed class AgentClientIntegrationTests
         Assert.Contains("path is required", MessageText(toolMessage));
     }
 
+    [Fact]
+    public async Task ChatWithToolsRetriesProviderToolParseFailureOnce()
+    {
+        await using var server = new ChatCompletionStub();
+        var parseFailure = """
+            {"error":{"code":500,"message":"Failed to parse input at pos 221: </think>\n\n<tool_call>\n<function=bash>\n<parameter=command>\necho bad\n</parameter>\n</function>\n</tool_call>","type":"server_error"}}
+            """;
+        server.Enqueue(500, parseFailure);
+        server.Enqueue(500, parseFailure);
+        server.Enqueue(500, parseFailure);
+        server.Enqueue(500, parseFailure);
+        server.Enqueue(ChatResponse("""{"role":"assistant","content":"recovered"}"""));
+
+        var client = new AgentClient(TestConfig(server.BaseUrl, ConfiguredDefaultModel()), ["bash"]);
+        var history = new List<ChatMessage> { new("user", "check shell") };
+
+        var (response, _) = await WithTimeout(client.ChatWithToolsAsync(history));
+
+        Assert.Equal("recovered", response);
+        Assert.Equal(5, server.Requests.Count);
+
+        var secondMessages = server.Requests[^1].Json.RootElement.GetProperty("messages").EnumerateArray().ToArray();
+        Assert.Contains(secondMessages, message =>
+            message.GetProperty("role").GetString() == "system" &&
+            MessageText(message).Contains("malformed", StringComparison.OrdinalIgnoreCase) &&
+            MessageText(message).Contains("valid JSON object", StringComparison.OrdinalIgnoreCase));
+    }
+
     private static AgentConfig TestConfig(string baseUrl, string model)
     {
         return new AgentConfig
@@ -242,7 +270,7 @@ public sealed class AgentClientIntegrationTests
     private sealed class ChatCompletionStub : IAsyncDisposable
     {
         private readonly HttpListener _listener = new();
-        private readonly Queue<string> _responses = new();
+        private readonly Queue<StubResponse> _responses = new();
         private readonly CancellationTokenSource _cts = new();
         private readonly Task _loop;
 
@@ -260,7 +288,12 @@ public sealed class AgentClientIntegrationTests
 
         public void Enqueue(string responseJson)
         {
-            _responses.Enqueue(responseJson);
+            Enqueue(responseJson.Contains("\"error\"", StringComparison.Ordinal) ? 500 : 200, responseJson);
+        }
+
+        public void Enqueue(int statusCode, string responseJson)
+        {
+            _responses.Enqueue(new StubResponse(statusCode, responseJson));
         }
 
         public async ValueTask DisposeAsync()
@@ -304,12 +337,12 @@ public sealed class AgentClientIntegrationTests
 
             var response = _responses.Count > 0
                 ? _responses.Dequeue()
-                : """{"error":{"message":"No stub response queued"}}""";
+                : new StubResponse(500, """{"error":{"message":"No stub response queued"}}""");
 
-            context.Response.StatusCode = response.Contains("\"error\"", StringComparison.Ordinal) ? 500 : 200;
+            context.Response.StatusCode = response.StatusCode;
             context.Response.ContentType = "application/json";
 
-            var bytes = Encoding.UTF8.GetBytes(response);
+            var bytes = Encoding.UTF8.GetBytes(response.Body);
             context.Response.ContentLength64 = bytes.Length;
             await context.Response.OutputStream.WriteAsync(bytes);
             context.Response.Close();
@@ -324,4 +357,5 @@ public sealed class AgentClientIntegrationTests
     }
 
     private sealed record CapturedRequest(string Path, JsonDocument Json);
+    private sealed record StubResponse(int StatusCode, string Body);
 }

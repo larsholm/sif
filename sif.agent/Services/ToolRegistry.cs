@@ -266,6 +266,11 @@ internal static class ToolRegistry
 
     public static async Task<string> ExecuteAsync(string toolName, string argumentsJson, CancellationToken cancellationToken = default)
     {
+        if (!JsonArgs.TryParseObject(argumentsJson, out var argsDoc, out var argsError))
+            return $"Error: Tool '{toolName}' expected JSON object arguments. {argsError}";
+
+        argsDoc.Dispose();
+
         return toolName switch
         {
             "bash" => await RunBashAsync(argumentsJson, cancellationToken),
