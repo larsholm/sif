@@ -5,6 +5,7 @@
 </p>
 
 `sif` is a lightweight BYOK coding assistant written in C#. It works with OpenAI-compatible APIs, local model servers, and a small set of built-in tools for reading, editing, searching, serving, and inspecting local context.
+
 **C# is a first-class citizen** — the built-in Roslyn tools let the agent analyze solutions and projects directly using the .NET Compiler Platform.
 
 ## Highlights
@@ -287,7 +288,8 @@ sif models remove ollama
 During a chat session you can list and switch profiles inline. Switching clears the current conversation:
 
 ```text
-/model              # list profiles and show the current one
+/model              # select a profile interactively
+/model list         # list profiles and show the current one
 /model switch local # switch to the "local" profile
 /model local        # shorthand for switching
 ```
@@ -315,7 +317,8 @@ During an interactive chat session:
 | `/q`, `/quit`, `/exit` | Exit the chat session |
 | `/clear` | Clear conversation history, keeping the system prompt |
 | `/sys <prompt>` | Change the system prompt |
-| `/model` | List model profiles and show the current one |
+| `/model` | Select a model profile interactively |
+| `/model list` | List model profiles and show the current one |
 | `/model <name>` | Switch to a model profile (clears conversation) |
 | `/context` | Show chat history and stored context summary |
 | `/context full` | Show full stored message contents sent before the next user message |

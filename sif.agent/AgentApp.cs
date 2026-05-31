@@ -432,8 +432,17 @@ internal class AgentApp
 
         if (string.IsNullOrWhiteSpace(rest))
         {
-            // List profiles
-            ShowModelProfiles(config);
+            var selectedProfile = PromptForModelProfile(config);
+            if (selectedProfile is null)
+                return (newClient, shouldRestart);
+
+            if (string.Equals(selectedProfile, config.CurrentProfile ?? "default", StringComparison.Ordinal))
+            {
+                AnsiConsole.MarkupLine("[dim]Already using selected profile.[/]\n");
+                return (newClient, shouldRestart);
+            }
+
+            (newClient, shouldRestart) = await SwitchProfileAndCreateClient(selectedProfile, config, tools, mcpService, skillsCount);
             return (newClient, shouldRestart);
         }
 
@@ -455,11 +464,7 @@ internal class AgentApp
                 }
                 if (TrySwitchProfile(config, name))
                 {
-                    shouldRestart = true;
-                    // Create new client with the profile's settings
-                    newClient = new AgentClient(config, tools, mcpService);
-                    await ShowSwitchedModelHeader(config, tools, mcpService, skillsCount);
-                    AnsiConsole.MarkupLine("[dim]Conversation cleared. Start a new message to continue.[/]\n");
+                    (newClient, shouldRestart) = await CreateClientAfterProfileSwitch(config, tools, mcpService, skillsCount);
                 }
                 else
                 {
@@ -467,18 +472,15 @@ internal class AgentApp
                 }
                 break;
             case "help":
-                AnsiConsole.MarkupLine("[bold]/model[/]             List model profiles and show current one");
-                AnsiConsole.MarkupLine("[bold]/model list[/]        Same as /model");
+                AnsiConsole.MarkupLine("[bold]/model[/]             Select a model profile interactively");
+                AnsiConsole.MarkupLine("[bold]/model list[/]        List model profiles and show current one");
                 AnsiConsole.MarkupLine("[bold]/model switch <n>[/]  Switch to profile <name> (clears conversation)\n");
                 break;
             default:
                 // Treat unknown subcommand as a profile name to switch to
                 if (TrySwitchProfile(config, subcommand))
                 {
-                    shouldRestart = true;
-                    newClient = new AgentClient(config, tools, mcpService);
-                    await ShowSwitchedModelHeader(config, tools, mcpService, skillsCount);
-                    AnsiConsole.MarkupLine("[dim]Conversation cleared. Start a new message to continue.[/]\n");
+                    (newClient, shouldRestart) = await CreateClientAfterProfileSwitch(config, tools, mcpService, skillsCount);
                 }
                 else
                 {
@@ -488,6 +490,54 @@ internal class AgentApp
         }
 
         return (newClient, shouldRestart);
+    }
+
+    private static string? PromptForModelProfile(AgentConfig config)
+    {
+        var profiles = config.Profiles;
+        if (profiles.Count == 0)
+        {
+            ShowModelProfiles(config);
+            return null;
+        }
+
+        if (Console.IsInputRedirected || Console.IsOutputRedirected)
+        {
+            ShowModelProfiles(config);
+            return null;
+        }
+
+        var current = config.CurrentProfile ?? "default";
+        var choices = profiles.Keys
+            .OrderBy(name => string.Equals(name, current, StringComparison.Ordinal) ? 0 : 1)
+            .ThenBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return AnsiConsole.Prompt(
+            new SelectionPrompt<string>()
+                .Title($"Model profile [dim](current: {current.EscapeMarkup()})[/]")
+                .PageSize(12)
+                .MoreChoicesText("[grey](Move up and down to show more profiles)[/]")
+                .AddChoices(choices));
+    }
+
+    private static async Task<(AgentClient? newClient, bool shouldRestart)> SwitchProfileAndCreateClient(string name, AgentConfig config, string[]? tools, McpService? mcpService, int skillsCount)
+    {
+        if (!TrySwitchProfile(config, name))
+        {
+            AnsiConsole.MarkupLine($"[red]Profile '{name.EscapeMarkup()}' not found. Use '/model list' to see profiles.[/]");
+            return (null, false);
+        }
+
+        return await CreateClientAfterProfileSwitch(config, tools, mcpService, skillsCount);
+    }
+
+    private static async Task<(AgentClient newClient, bool shouldRestart)> CreateClientAfterProfileSwitch(AgentConfig config, string[]? tools, McpService? mcpService, int skillsCount)
+    {
+        var newClient = new AgentClient(config, tools, mcpService);
+        await ShowSwitchedModelHeader(config, tools, mcpService, skillsCount);
+        AnsiConsole.MarkupLine("[dim]Conversation cleared. Start a new message to continue.[/]\n");
+        return (newClient, true);
     }
 
     /// <summary>
@@ -553,7 +603,7 @@ internal class AgentApp
 
         AnsiConsole.Write(table);
         AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine("[dim]/model <name> to change the active profile[/]\n");
+        AnsiConsole.MarkupLine("[dim]/model to select a profile, /model list to show this table[/]\n");
     }
 
     private static void ShowChatHelp()
@@ -564,7 +614,8 @@ internal class AgentApp
         table.AddRow("[bold]/quit[/] or [bold]/exit[/]", "Exit the chat session");
         table.AddRow("[bold]/clear[/]", "Clear conversation history and keep the system prompt");
         table.AddRow("[bold]/sys <prompt>[/]", "Change the system prompt");
-        table.AddRow("[bold]/model[/]", "List model profiles and show current one");
+        table.AddRow("[bold]/model[/]", "Select a model profile interactively");
+        table.AddRow("[bold]/model list[/]", "List model profiles and show current one");
         table.AddRow("[bold]/model <name>[/]", "Switch to a model profile (clears conversation)");
         table.AddRow("[bold]/context[/]", "Show chat history and stored context summary");
         table.AddRow("[bold]/context full[/]", "Show full stored message contents sent before the next user message");
