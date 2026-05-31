@@ -721,13 +721,7 @@ internal static class ToolRegistry
                 return;
         }
 
-        var warning = $"""
-            ⚠️  Warning: {fileName} is not in a git repository.
-            It's recommended to track files with git before {operation.ToLower()}ing them.
-            To create a git repo in this directory:
-              cd {dir}
-              git init
-            """;
+        var warning = $"⚠️  Warning: {fileName} is not in a git repository.";
         AnsiConsole.MarkupLine($"[yellow]{warning.EscapeMarkup()}[/]");
     }
 }
