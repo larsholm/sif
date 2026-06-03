@@ -728,26 +728,26 @@ internal class AgentApp
         if (tools is not { Length: > 0 })
             return null;
 
-        var descriptions = new Dictionary<string, string>
-        {
-            { "bash", "Run an allowed shell command using Bash on Unix-like systems or PowerShell on Windows" },
-            { "read", "Read file contents" },
-            { "edit", "Replace exact text in a file" },
-            { "write", "Create or overwrite a file" },
-            { "sleep", "Pause briefly before continuing or retrying" },
-            { "serve", "Start a local static HTTP server for a directory" },
-            { "roslyn", "Analyze C# code using Roslyn (find symbols, get diagnostics)" },
-            { "context", "Store and search large tool results out-of-band" },
-            { "ctx", "Store and search large tool results out-of-band" },
-        };
+        // var descriptions = new Dictionary<string, string>
+        // {
+        //     { "bash", "Run an allowed shell command using Bash on Unix-like systems or PowerShell on Windows" },
+        //     { "read", "Read file contents" },
+        //     { "edit", "Replace exact text in a file" },
+        //     { "write", "Create or overwrite a file" },
+        //     { "sleep", "Pause briefly before continuing or retrying" },
+        //     { "serve", "Start a local static HTTP server for a directory" },
+        //     { "roslyn", "Analyze C# code using Roslyn (find symbols, get diagnostics)" },
+        //     { "context", "Store and search large tool results out-of-band" },
+        //     { "ctx", "Store and search large tool results out-of-band" },
+        // };
 
-        var toolList = tools.Select(t => descriptions.TryGetValue(t, out var d) ? d : t)
-            .Aggregate((a, b) => $"{a}, {b}");
+        // var toolList = tools.Select(t => descriptions.TryGetValue(t, out var d) ? d : t)
+        //     .Aggregate((a, b) => $"{a}, {b}");
 
-        return $"You are Sif, a helpful assistant, with access to these tools: {toolList}. " +
+        return $"You are Sif, a helpful assistant, with access to these tools: {string.Join(", ", tools)}. " +
                $"Current working directory: {Environment.CurrentDirectory}. " +               
                "\n\nUse tools proactively: " +
-               "\n- Use 'bash' with platform-appropriate commands: ls/grep/find on Unix-like systems, or dir/Select-String/Get-ChildItem on Windows" +
+               "\n- Use 'bash' with commands: " + (Environment.OSVersion.Platform == PlatformID.Win32NT ? "dir/Select-String/Get-ChildItem" : "ls/grep/find") +
                "\n- Use 'read' to view file contents" +
                "\n- Use 'edit' to modify files" +
                "\n- Use 'write' to create new files" +
@@ -760,8 +760,10 @@ internal class AgentApp
                (tools.Any(t => t.Equals("roslyn", StringComparison.OrdinalIgnoreCase))
                    ? "\n- Use 'roslyn_find_symbols' to find symbols in a C# solution" +
                      "\n- Use 'roslyn_get_diagnostics' to get diagnostic issues in a C# project"
-                   : "") +
-               "\nAfter using tools, summarize your key findings in your final answer. Important details from tool results should be restated in natural language so they persist in the conversation history.";
+                   : "") + 
+                //"\nNever use JS for greenfield projects." +   
+                "\nAfter using tools, summarize your key findings in your final answer. Important details from tool results should be restated in natural language so they persist in the conversation history.";
+               
     }
 
     private async Task<int> RunComplete(string[] args)
