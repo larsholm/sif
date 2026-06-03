@@ -61,6 +61,26 @@ public sealed class GeneralBehaviorTests
         Assert.DoesNotContain("write", names);
     }
 
+    [Fact]
+    public void AgentConfigAppliesModelTimeoutValue()
+    {
+        var config = new AgentConfig();
+
+        config.ApplyValue("MODEL_TIMEOUT_SECONDS", "300");
+
+        Assert.Equal(300, config.ModelTimeoutSeconds);
+    }
+
+    [Fact]
+    public void CliParserReadsModelTimeoutAliases()
+    {
+        var opts = CliParser.ParseArgs(["--timeout", "240"]);
+        var aliasOpts = CliParser.ParseArgs(["--model-timeout=300"]);
+
+        Assert.Equal(240, opts.ModelTimeoutSeconds);
+        Assert.Equal(300, aliasOpts.ModelTimeoutSeconds);
+    }
+
     [Theory]
     [InlineData("bash", "{}", "command is required")]
     [InlineData("read", "{}", "path is required")]

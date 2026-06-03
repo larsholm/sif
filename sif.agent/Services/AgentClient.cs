@@ -30,18 +30,19 @@ internal class AgentClient
         var apiKey = string.IsNullOrEmpty(config.ApiKey) ? "" : config.ApiKey;
 
         OpenAIClient openAIClient;
+        var clientOptions = new OpenAI.OpenAIClientOptions();
+        if (config.ModelTimeoutSeconds is > 0)
+            clientOptions.NetworkTimeout = TimeSpan.FromSeconds(config.ModelTimeoutSeconds.Value);
 
         if (!endpoint.Contains("openai.com", StringComparison.OrdinalIgnoreCase))
         {
             var localApiKey = string.IsNullOrWhiteSpace(apiKey) ? "local-api-key" : apiKey;
-            openAIClient = new OpenAIClient(new ApiKeyCredential(localApiKey), new OpenAI.OpenAIClientOptions
-            {
-                Endpoint = new Uri(endpoint)
-            });
+            clientOptions.Endpoint = new Uri(endpoint);
+            openAIClient = new OpenAIClient(new ApiKeyCredential(localApiKey), clientOptions);
         }
         else
         {
-            openAIClient = new OpenAIClient(apiKey);
+            openAIClient = new OpenAIClient(new ApiKeyCredential(apiKey), clientOptions);
         }
 
         _chatClient = openAIClient.GetChatClient(config.Model);

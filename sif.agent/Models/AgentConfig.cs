@@ -9,13 +9,14 @@ namespace sif.agent;
 /// </summary>
 internal class AgentConfig
 {
-    public const int DefaultCompactionThreshold = 60000;
+    public const int DefaultCompactionThreshold = 100000;
 
     public string BaseUrl { get; set; } = "http://localhost:1234/v1";
     public string? ApiKey { get; set; }
     public string Model { get; set; } = "qwen3.6-27b-autoround";
     public int? MaxTokens { get; set; }
     public float? Temperature { get; set; }
+    public int? ModelTimeoutSeconds { get; set; }
     public string[]? Tools { get; set; }
     public string[]? ShellAllowedCommands { get; set; }
     public bool? ThinkingEnabled { get; set; } = true;
@@ -36,7 +37,7 @@ internal class AgentConfig
     /// <summary>
     /// Named model profiles for easy switching between local/cloud backends.
     /// If populated, <see cref="CurrentProfile"/> determines which profile's
-    /// BaseUrl, ApiKey, Model, Temperature, and MaxTokens are active.
+    /// BaseUrl, ApiKey, Model, Temperature, MaxTokens, and timeout are active.
     /// </summary>
     public Dictionary<string, ModelProfile> Profiles { get; set; } = new();
     /// <summary>
@@ -73,7 +74,7 @@ internal class AgentConfig
     /// <summary>
     /// Build config from optional overrides (command-line takes priority).
     /// </summary>
-    public static AgentConfig Build(string? baseUrl, string? apiKey, string? model, float? temperature = null, int? maxTokens = null)
+    public static AgentConfig Build(string? baseUrl, string? apiKey, string? model, float? temperature = null, int? maxTokens = null, int? modelTimeoutSeconds = null)
     {
         var config = Load();
 
@@ -87,6 +88,8 @@ internal class AgentConfig
             config.Temperature = temperature;
         if (maxTokens.HasValue)
             config.MaxTokens = maxTokens;
+        if (modelTimeoutSeconds.HasValue)
+            config.ModelTimeoutSeconds = modelTimeoutSeconds;
 
         return config;
     }
@@ -115,6 +118,7 @@ internal class AgentConfig
                     config.Model = loaded.Model;
                     config.MaxTokens = loaded.MaxTokens;
                     config.Temperature = loaded.Temperature;
+                    config.ModelTimeoutSeconds = loaded.ModelTimeoutSeconds;
                     config.Tools = loaded.Tools;
                     config.ShellAllowedCommands = loaded.ShellAllowedCommands;
                     config.ThinkingEnabled = loaded.ThinkingEnabled;
@@ -139,6 +143,7 @@ internal class AgentConfig
                             Model = config.Model,
                             Temperature = config.Temperature,
                             MaxTokens = config.MaxTokens,
+                            ModelTimeoutSeconds = config.ModelTimeoutSeconds,
                             ThinkingEnabled = config.ThinkingEnabled ?? true,
                             CompactionThreshold = config.CompactionThresholdConfigured ? config.CompactionThreshold : null
                         };
@@ -175,6 +180,8 @@ internal class AgentConfig
             config.MaxTokens = envMax;
         if (float.TryParse(Environment.GetEnvironmentVariable("AGENT_TEMPERATURE"), out var envTemp))
             config.Temperature = envTemp;
+        if (int.TryParse(Environment.GetEnvironmentVariable("AGENT_MODEL_TIMEOUT_SECONDS"), out var envModelTimeout))
+            config.ModelTimeoutSeconds = envModelTimeout;
         if (Environment.GetEnvironmentVariable("AGENT_TOOLS") is { Length: > 0 } envTools)
             config.Tools = envTools.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (bool.TryParse(Environment.GetEnvironmentVariable("AGENT_THINKING_ENABLED"), out var envThinking))
@@ -236,6 +243,7 @@ internal class AgentConfig
             Model = Model,
             Temperature = Temperature,
             MaxTokens = MaxTokens,
+            ModelTimeoutSeconds = ModelTimeoutSeconds,
             ThinkingEnabled = ThinkingEnabled ?? true
         };
     }
@@ -255,6 +263,7 @@ internal class AgentConfig
             Model = profile.Model;
             Temperature = profile.Temperature;
             MaxTokens = profile.MaxTokens;
+            ModelTimeoutSeconds = profile.ModelTimeoutSeconds;
             ThinkingEnabled = profile.ThinkingEnabled;
 
             // Apply per-profile compaction threshold if set, otherwise keep global
@@ -304,6 +313,13 @@ internal class AgentConfig
             case "AGENT_TEMPERATURE":
                 if (float.TryParse(value, out var temperature))
                     config.Temperature = temperature;
+                break;
+            case "MODEL_TIMEOUT_SECONDS":
+            case "AGENT_MODEL_TIMEOUT_SECONDS":
+            case "TIMEOUT_SECONDS":
+            case "AGENT_TIMEOUT_SECONDS":
+                if (int.TryParse(value, out var modelTimeoutSeconds))
+                    config.ModelTimeoutSeconds = modelTimeoutSeconds;
                 break;
             case "THINKING_ENABLED":
             case "AGENT_THINKING_ENABLED":

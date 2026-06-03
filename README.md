@@ -247,6 +247,7 @@ sif config --set MODEL=llama3.2
 sif config --set TOOLS=bash,read,edit,write,context
 sif config --set THINKING_ENABLED=true
 sif config --set COMPACTION_THRESHOLD=60000
+sif config --set MODEL_TIMEOUT_SECONDS=300
 ```
 
 Configuration is loaded from `~/.sif/sif-agent.json`, then overridden by environment variables, then overridden by CLI flags.
@@ -259,6 +260,7 @@ Configuration is loaded from `~/.sif/sif-agent.json`, then overridden by environ
 | `AGENT_TOOLS` | Comma-separated list of tools | default tool set |
 | `AGENT_MAX_TOKENS` | Maximum output tokens | model default |
 | `AGENT_TEMPERATURE` | Sampling temperature | model default |
+| `AGENT_MODEL_TIMEOUT_SECONDS` | Model request network timeout in seconds | SDK default |
 | `AGENT_THINKING_ENABLED` | Enable model thinking or reasoning display | `true` |
 | `AGENT_COMPACTION_THRESHOLD` | Chat-history token threshold for automatic compaction; `0` disables it | auto from model context window when available, otherwise `60000` |
 
@@ -274,7 +276,7 @@ sif models
 
 # Add a profile
 sif models add ollama --url http://localhost:11434/v1 --model llama3.2
-sif models add local --url http://localhost:8020/v1 --model qwen3.6-27b-autoround --compact 60000
+sif models add local --url http://localhost:8020/v1 --model qwen3.6-27b-autoround --compact 60000 --timeout 300
 
 # Switch the active profile
 sif models switch ollama
@@ -283,7 +285,7 @@ sif models switch ollama
 sif models remove ollama
 ```
 
-`sif models add` accepts `--url`/`-u`, `--model`/`-m`, `--key`/`-k`, and `--compact` (per-profile compaction threshold; falls back to the global setting when omitted).
+`sif models add` accepts `--url`/`-u`, `--model`/`-m`, `--key`/`-k`, `--compact` (per-profile compaction threshold; falls back to the global setting when omitted), and `--timeout` (per-profile model request timeout in seconds).
 
 During a chat session you can list and switch profiles inline. Switching clears the current conversation:
 
@@ -304,6 +306,7 @@ During a chat session you can list and switch profiles inline. Switching clears 
 | `-s, --system` | System prompt |
 | `-t, --temperature` | Sampling temperature |
 | `-max, --max-tokens` | Maximum output tokens |
+| `--timeout` | Model request network timeout in seconds |
 | `-n, --no-stream` | Disable streaming output |
 | `--tools` | Enable tools, comma-separated |
 | `--thinking` | Enable model thinking or reasoning display |

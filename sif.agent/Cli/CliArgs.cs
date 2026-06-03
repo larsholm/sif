@@ -16,4 +16,5 @@ internal class CliArgs
     public bool? Thinking { get; set; }
     public float? Temperature { get; set; }
     public int? MaxTokens { get; set; }
+    public int? ModelTimeoutSeconds { get; set; }
 }

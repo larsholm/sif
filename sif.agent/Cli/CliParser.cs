@@ -22,6 +22,7 @@ internal static class CliParser
                 else if (pendingFlag == "-k" || pendingFlag == "--api-key") opts.ApiKey = arg;
                 else if (pendingFlag == "-t" || pendingFlag == "--temperature") opts.Temperature = float.TryParse(arg, out var t) ? t : null;
                 else if (pendingFlag == "-max" || pendingFlag == "--max-tokens") opts.MaxTokens = int.TryParse(arg, out var m) ? m : null;
+                else if (pendingFlag == "--timeout" || pendingFlag == "--model-timeout") opts.ModelTimeoutSeconds = int.TryParse(arg, out var timeout) ? timeout : null;
                 else if (pendingFlag == "--tools") opts.Tools = arg.Split(',').Select(s => s.Trim()).ToArray();
                 else if (pendingFlag == "--thinking") opts.Thinking = ParseThinkingArg(arg);
                 else if (pendingFlag == "-p" || pendingFlag == "--profile") opts.Profile = arg;
@@ -29,7 +30,7 @@ internal static class CliParser
                 continue;
             }
 
-            if (arg is "-s" or "--system" or "-m" or "--model" or "-u" or "--base-url" or "-k" or "--api-key" or "--tools" or "--thinking" or "-t" or "--temperature" or "-max" or "--max-tokens" or "-p" or "--profile")
+            if (arg is "-s" or "--system" or "-m" or "--model" or "-u" or "--base-url" or "-k" or "--api-key" or "--tools" or "--thinking" or "-t" or "--temperature" or "-max" or "--max-tokens" or "--timeout" or "--model-timeout" or "-p" or "--profile")
             {
                 nextIsValue = true;
                 pendingFlag = arg;
@@ -48,6 +49,10 @@ internal static class CliParser
                 opts.Profile = arg[(arg.StartsWith("-p ") ? 3 : 10)..].Trim();
             else if (arg.StartsWith("--thinking "))
                 opts.Thinking = ParseThinkingArg(arg["--thinking ".Length..].Trim());
+            else if (arg.StartsWith("--timeout "))
+                opts.ModelTimeoutSeconds = int.TryParse(arg["--timeout ".Length..].Trim(), out var timeout) ? timeout : null;
+            else if (arg.StartsWith("--model-timeout "))
+                opts.ModelTimeoutSeconds = int.TryParse(arg["--model-timeout ".Length..].Trim(), out var timeout) ? timeout : null;
             else if (arg is "-n" or "--no-stream")
                 opts.NoStream = true;
             else if (arg.StartsWith("-s="))
@@ -78,6 +83,10 @@ internal static class CliParser
                 opts.MaxTokens = int.TryParse(arg[5..], out var m) ? m : null;
             else if (arg.StartsWith("--max-tokens="))
                 opts.MaxTokens = int.TryParse(arg[13..], out var m2) ? m2 : null;
+            else if (arg.StartsWith("--timeout="))
+                opts.ModelTimeoutSeconds = int.TryParse(arg["--timeout=".Length..], out var timeout) ? timeout : null;
+            else if (arg.StartsWith("--model-timeout="))
+                opts.ModelTimeoutSeconds = int.TryParse(arg["--model-timeout=".Length..], out var timeout) ? timeout : null;
             else if (arg.StartsWith("--tools="))
                 opts.Tools = arg[8..].Split(',').Select(s => s.Trim()).ToArray();
             else if (arg.StartsWith("--thinking="))

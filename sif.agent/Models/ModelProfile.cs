@@ -29,6 +29,9 @@ internal class ModelProfile
     /// <summary>Maximum tokens to generate. Null means server default.</summary>
     public int? MaxTokens { get; set; }
 
+    /// <summary>Network timeout for model requests in seconds. Null means SDK default.</summary>
+    public int? ModelTimeoutSeconds { get; set; }
+
     /// <summary>Enable model thinking/reasoning when the backend exposes it.</summary>
     public bool ThinkingEnabled { get; set; } = true;
 
@@ -48,7 +51,7 @@ internal class ModelProfile
     /// <summary>
     /// Build a merged AgentConfig from this profile, optionally overridden by CLI args and environment.
     /// </summary>
-    public AgentConfig ToConfig(string? overrideBaseUrl = null, string? overrideApiKey = null, string? overrideModel = null, float? overrideTemperature = null, int? overrideMaxTokens = null)
+    public AgentConfig ToConfig(string? overrideBaseUrl = null, string? overrideApiKey = null, string? overrideModel = null, float? overrideTemperature = null, int? overrideMaxTokens = null, int? overrideModelTimeoutSeconds = null)
     {
         var config = new AgentConfig();
         config.BaseUrl = overrideBaseUrl ?? BaseUrl;
@@ -56,6 +59,7 @@ internal class ModelProfile
         config.Model = overrideModel ?? Model;
         config.Temperature = overrideTemperature ?? Temperature;
         config.MaxTokens = overrideMaxTokens ?? MaxTokens;
+        config.ModelTimeoutSeconds = overrideModelTimeoutSeconds ?? ModelTimeoutSeconds;
         config.ThinkingEnabled = ThinkingEnabled;
 
         // Apply per-profile compaction threshold if set

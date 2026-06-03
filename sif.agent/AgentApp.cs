@@ -120,6 +120,7 @@ internal class AgentApp
         AnsiConsole.WriteLine("  -s, --system <text>    System prompt");
         AnsiConsole.WriteLine("  -t, --temperature <v>  Sampling temperature");
         AnsiConsole.WriteLine("  -max, --max-tokens <v> Max tokens to generate");
+        AnsiConsole.WriteLine("  --timeout <seconds>    Model request network timeout");
         AnsiConsole.WriteLine("  -n, --no-stream        Disable streaming output");
         AnsiConsole.WriteLine("  --tools <list>         Enable tools: bash,edit,read,write,sleep,serve,context,roslyn (comma-separated)");
         AnsiConsole.WriteLine("  --thinking <true|false> Enable model thinking/reasoning");
@@ -132,6 +133,7 @@ internal class AgentApp
         AnsiConsole.WriteLine("  AGENT_THINKING_ENABLED - Enable model thinking/reasoning");
         AnsiConsole.WriteLine("  AGENT_MAX_TOKENS - Max tokens to generate");
         AnsiConsole.WriteLine("  AGENT_TEMPERATURE - Sampling temperature");
+        AnsiConsole.WriteLine("  AGENT_MODEL_TIMEOUT_SECONDS - Model request network timeout");
         AnsiConsole.WriteLine("  AGENT_COMPACTION_THRESHOLD - Chat-history token threshold for compaction (0 disables)");
         AnsiConsole.WriteLine("  AGENT_AUTO_UPDATE_ENABLED - Check for updates on startup");
         AnsiConsole.WriteLine("  AGENT_AUTO_UPDATE_SOURCE - Optional tool source for updates (defaults to nuget.org)");
@@ -143,7 +145,7 @@ internal class AgentApp
         if (ShouldRunFirstLaunchSetup(opts))
             await RunSetupWizard(firstLaunch: true);
 
-        var config = AgentConfig.Build(opts.BaseUrl, opts.ApiKey, opts.Model, opts.Temperature, opts.MaxTokens);
+        var config = AgentConfig.Build(opts.BaseUrl, opts.ApiKey, opts.Model, opts.Temperature, opts.MaxTokens, opts.ModelTimeoutSeconds);
 
         // Apply profile overrides if a profile is specified or active
         if (!string.IsNullOrEmpty(opts.Profile))
@@ -157,6 +159,7 @@ internal class AgentApp
                 if (!string.IsNullOrEmpty(opts.Model)) config.Model = opts.Model;
                 if (opts.Temperature.HasValue) config.Temperature = opts.Temperature;
                 if (opts.MaxTokens.HasValue) config.MaxTokens = opts.MaxTokens;
+                if (opts.ModelTimeoutSeconds.HasValue) config.ModelTimeoutSeconds = opts.ModelTimeoutSeconds;
             }
             else
             {
@@ -585,6 +588,7 @@ internal class AgentApp
         table.AddColumn("Model");
         table.AddColumn("Base URL");
         table.AddColumn("Compact");
+        table.AddColumn("Timeout");
         table.AddColumn("Active");
 
         foreach (var (name, profile) in profiles.OrderBy(p => p.Key))
@@ -593,11 +597,15 @@ internal class AgentApp
             var compactLabel = profile.CompactionThreshold.HasValue
                 ? $"{profile.CompactionThreshold.Value / 1000:0.0}k"
                 : "global";
+            var timeoutLabel = profile.ModelTimeoutSeconds.HasValue
+                ? $"{profile.ModelTimeoutSeconds.Value}s"
+                : "SDK default";
             table.AddRow(
                 isActive ? $"[bold]{name.EscapeMarkup()}[/]" : name.EscapeMarkup(),
                 profile.Model.EscapeMarkup(),
                 profile.BaseUrl.EscapeMarkup(),
                 compactLabel.EscapeMarkup(),
+                timeoutLabel.EscapeMarkup(),
                 isActive ? "[green]✓[/]" : "");
         }
 
@@ -793,7 +801,7 @@ internal class AgentApp
             return 1;
         }
 
-        var config = AgentConfig.Build(opts.BaseUrl, opts.ApiKey, opts.Model, opts.Temperature, opts.MaxTokens);
+        var config = AgentConfig.Build(opts.BaseUrl, opts.ApiKey, opts.Model, opts.Temperature, opts.MaxTokens, opts.ModelTimeoutSeconds);
         if (opts.Thinking.HasValue)
             config.ThinkingEnabled = opts.Thinking;
 
@@ -896,7 +904,8 @@ internal class AgentApp
             opts.Tools is { Length: > 0 } ||
             opts.Thinking.HasValue ||
             opts.Temperature.HasValue ||
-            opts.MaxTokens.HasValue)
+            opts.MaxTokens.HasValue ||
+            opts.ModelTimeoutSeconds.HasValue)
         {
             return false;
         }
@@ -914,6 +923,7 @@ internal class AgentApp
             "AGENT_TOOLS",
             "AGENT_MAX_TOKENS",
             "AGENT_TEMPERATURE",
+            "AGENT_MODEL_TIMEOUT_SECONDS",
             "AGENT_THINKING_ENABLED"
         ];
 
@@ -1085,6 +1095,8 @@ internal class AgentApp
             header += $"[dim] ${modelInfo.OutputPricePerMillion.Value:F2}/M[/]";
         if (modelInfo.ContextLength.HasValue && config.CompactionThreshold > 0)
             header += $"[dim], ctx-window: {modelInfo.ContextLength.Value:N0}, compact: {config.CompactionThreshold:N0}[/]";
+        if (config.ModelTimeoutSeconds.HasValue)
+            header += $"[dim], timeout: {config.ModelTimeoutSeconds.Value}s[/]";
         if (tools?.Length > 0)
             header += $"[dim], tools: {string.Join(", ", tools)}[/]";
         if (skillsCount > 0)
@@ -1303,6 +1315,7 @@ internal class AgentApp
             ("AGENT_MODEL", "Model", config.Model),
             ("AGENT_MAX_TOKENS", "Max Tokens", config.MaxTokens?.ToString() ?? "default"),
             ("AGENT_TEMPERATURE", "Temperature", config.Temperature?.ToString() ?? "default"),
+            ("AGENT_MODEL_TIMEOUT_SECONDS", "Model timeout", config.ModelTimeoutSeconds?.ToString() ?? "SDK default"),
             ("AGENT_THINKING_ENABLED", "Thinking", config.ThinkingEnabled?.ToString() ?? "default"),
             ("AGENT_COMPACTION_THRESHOLD", "Compaction threshold", config.CompactionThreshold.ToString()),
             ("AGENT_AUTO_UPDATE_ENABLED", "Auto-update", config.AutoUpdateEnabled.ToString()),
@@ -1579,6 +1592,7 @@ internal class AgentApp
         table.AddColumn("Base URL");
         table.AddColumn("API Key");
         table.AddColumn("Compact");
+        table.AddColumn("Timeout");
         table.AddColumn("Active");
 
         foreach (var (name, profile) in profiles.OrderBy(p => p.Key))
@@ -1590,6 +1604,9 @@ internal class AgentApp
             var compactLabel = profile.CompactionThreshold.HasValue
                 ? $"{profile.CompactionThreshold.Value / 1000:0.0}k"
                 : "[dim]global[/]";
+            var timeoutLabel = profile.ModelTimeoutSeconds.HasValue
+                ? $"{profile.ModelTimeoutSeconds.Value}s"
+                : "[dim]SDK default[/]";
 
             table.AddRow(
                 isActive ? $"[bold]{name.EscapeMarkup()}[/]" : name.EscapeMarkup(),
@@ -1597,13 +1614,14 @@ internal class AgentApp
                 profile.BaseUrl.EscapeMarkup(),
                 maskedKey,
                 compactLabel,
+                timeoutLabel,
                 isActive ? "[green]✓[/]" : "");
         }
 
         AnsiConsole.Write(table);
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine("[dim]Use 'sif models switch <name>' to change the active profile.[/]");
-        AnsiConsole.MarkupLine("[dim]Use 'sif models add <name> --url <url> --model <model> [--compact <tokens>]' to add a profile.[/]");
+        AnsiConsole.MarkupLine("[dim]Use 'sif models add <name> --url <url> --model <model> [--compact <tokens>] [--timeout <seconds>]' to add a profile.[/]");
         AnsiConsole.MarkupLine("[dim]Use 'sif models remove <name>' to delete a profile.[/]");
     }
 
@@ -1611,13 +1629,14 @@ internal class AgentApp
     {
         if (args.Length == 0)
         {
-            AnsiConsole.MarkupLine("[yellow]Usage: sif models add <name> --url <url> --model <model> [--key <key>] [--compact <threshold>][/]");
+            AnsiConsole.MarkupLine("[yellow]Usage: sif models add <name> --url <url> --model <model> [--key <key>] [--compact <threshold>] [--timeout <seconds>][/]");
             return 1;
         }
 
         var name = args[0];
         string? baseUrl = null, apiKey = null, model = null;
         int? compactThreshold = null;
+        int? modelTimeoutSeconds = null;
         bool nextIsValue = false;
         string? pendingFlag = null;
 
@@ -1633,11 +1652,15 @@ internal class AgentApp
                 {
                     if (int.TryParse(args[i], out var compact)) compactThreshold = compact;
                 }
+                else if (pendingFlag == "--timeout" || pendingFlag == "--model-timeout")
+                {
+                    if (int.TryParse(args[i], out var timeout)) modelTimeoutSeconds = timeout;
+                }
                 pendingFlag = null;
                 continue;
             }
 
-            if (args[i] is "--url" or "-u" or "--key" or "-k" or "--model" or "-m" or "--compact" or "--compact-threshold")
+            if (args[i] is "--url" or "-u" or "--key" or "-k" or "--model" or "-m" or "--compact" or "--compact-threshold" or "--timeout" or "--model-timeout")
             {
                 nextIsValue = true;
                 pendingFlag = args[i];
@@ -1659,6 +1682,16 @@ internal class AgentApp
             {
                 var val = args[i]["--compact-threshold=".Length..];
                 if (int.TryParse(val, out var compact)) compactThreshold = compact;
+            }
+            else if (args[i].StartsWith("--timeout="))
+            {
+                var val = args[i]["--timeout=".Length..];
+                if (int.TryParse(val, out var timeout)) modelTimeoutSeconds = timeout;
+            }
+            else if (args[i].StartsWith("--model-timeout="))
+            {
+                var val = args[i]["--model-timeout=".Length..];
+                if (int.TryParse(val, out var timeout)) modelTimeoutSeconds = timeout;
             }
         }
 
@@ -1687,6 +1720,7 @@ internal class AgentApp
             Model = model,
             Temperature = null,
             MaxTokens = null,
+            ModelTimeoutSeconds = modelTimeoutSeconds,
             ThinkingEnabled = true,
             CompactionThreshold = compactThreshold
         };
