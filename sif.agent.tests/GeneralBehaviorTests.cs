@@ -81,6 +81,74 @@ public sealed class GeneralBehaviorTests
         Assert.Equal(300, aliasOpts.ModelTimeoutSeconds);
     }
 
+    [Fact]
+    public void AgentConfigMigratesLegacyProfilesToProviders()
+    {
+        var config = JsonSerializer.Deserialize<AgentConfig>("""
+            {
+              "Profiles": {
+                "default": {
+                  "Name": "default",
+                  "BaseUrl": "http://localhost:11434/v1/",
+                  "ApiKey": "test-key",
+                  "Model": "llama3.2",
+                  "ModelTimeoutSeconds": 240,
+                  "UseSecureApiKeyStorage": true
+                }
+              },
+              "CurrentProfile": "default"
+            }
+            """, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+        Assert.NotNull(config);
+        Assert.True(AgentConfig.NormalizeProfiles(config));
+        Assert.True(config.SwitchProfile("default"));
+
+        Assert.Equal("http://localhost:11434/v1", config.BaseUrl);
+        Assert.Equal("test-key", config.ApiKey);
+        Assert.Equal("llama3.2", config.Model);
+        Assert.Equal(240, config.ModelTimeoutSeconds);
+        Assert.True(config.UseSecureApiKeyStorage);
+        Assert.True(config.Providers.ContainsKey("default"));
+        Assert.Null(config.Profiles["default"].BaseUrl);
+    }
+
+    [Fact]
+    public void AgentConfigSwitchProfileUsesProviderSettings()
+    {
+        var config = new AgentConfig
+        {
+            Providers =
+            {
+                ["local"] = new ProviderConfig
+                {
+                    Name = "local",
+                    BaseUrl = "http://localhost:8020/v1",
+                    ApiKey = "provider-key",
+                    TimeoutSeconds = 300
+                }
+            },
+            Profiles =
+            {
+                ["qwen"] = new ModelProfile
+                {
+                    Name = "qwen",
+                    Provider = "local",
+                    Model = "qwen3.6",
+                    Temperature = 0.2f
+                }
+            }
+        };
+
+        Assert.True(config.SwitchProfile("qwen"));
+
+        Assert.Equal("http://localhost:8020/v1", config.BaseUrl);
+        Assert.Equal("provider-key", config.ApiKey);
+        Assert.Equal("qwen3.6", config.Model);
+        Assert.Equal(0.2f, config.Temperature);
+        Assert.Equal(300, config.ModelTimeoutSeconds);
+    }
+
     [Theory]
     [InlineData("bash", "{}", "command is required")]
     [InlineData("read", "{}", "path is required")]

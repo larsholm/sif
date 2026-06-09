@@ -49,15 +49,16 @@ public sealed class DefaultProfileLiveIntegrationTests
         if (!loaded.Profiles.TryGetValue("default", out var profile))
             throw new InvalidOperationException("No default model profile is configured.");
 
-        var config = profile.ToConfig();
+        var config = profile.ToConfig(loaded.Providers);
         config.CurrentProfile = "default";
+        config.Providers = loaded.Providers;
         config.Profiles = loaded.Profiles;
         config.Tools = loaded.Tools;
         config.ShellAllowedCommands = loaded.ShellAllowedCommands;
         config.McpServers = loaded.McpServers;
         config.Values = loaded.Values;
 
-        if (profile.UseSecureApiKeyStorage && string.IsNullOrEmpty(config.ApiKey))
+        if (config.UseSecureApiKeyStorage && string.IsNullOrEmpty(config.ApiKey))
         {
             var credentialStore = SecureCredentialStoreFactory.Create();
             var secureKey = credentialStore.RetrieveAsync("api-key-default").GetAwaiter().GetResult();

@@ -555,7 +555,10 @@ internal class AgentApp
 
         config.Save();
         var profile = config.Profiles[name];
-        AnsiConsole.MarkupLine($"[green]Switched to profile '{name.EscapeMarkup()}': {profile.Model.EscapeMarkup()} @ {profile.BaseUrl.EscapeMarkup()}[/]");
+        string? providerUrl = null;
+        if (!string.IsNullOrEmpty(profile.Provider) && config.Providers.TryGetValue(profile.Provider, out var prov))
+            providerUrl = prov.BaseUrl;
+        AnsiConsole.MarkupLine($"[green]Switched to profile '{name.EscapeMarkup()}': {profile.Model.EscapeMarkup()} @ {providerUrl?.EscapeMarkup() ?? "(none)"}[/]");
         return true;
     }
 
@@ -586,26 +589,24 @@ internal class AgentApp
         var table = new Table();
         table.AddColumn("Name");
         table.AddColumn("Model");
-        table.AddColumn("Base URL");
+        table.AddColumn("Provider");
         table.AddColumn("Compact");
-        table.AddColumn("Timeout");
         table.AddColumn("Active");
 
         foreach (var (name, profile) in profiles.OrderBy(p => p.Key))
         {
             var isActive = name == current;
+            var providerLabel = !string.IsNullOrEmpty(profile.Provider) && config.Providers.TryGetValue(profile.Provider, out var prov)
+                ? prov.DisplayLabel.EscapeMarkup()
+                : "[dim](none)[/]";
             var compactLabel = profile.CompactionThreshold.HasValue
                 ? $"{profile.CompactionThreshold.Value / 1000:0.0}k"
                 : "global";
-            var timeoutLabel = profile.ModelTimeoutSeconds.HasValue
-                ? $"{profile.ModelTimeoutSeconds.Value}s"
-                : "SDK default";
             table.AddRow(
                 isActive ? $"[bold]{name.EscapeMarkup()}[/]" : name.EscapeMarkup(),
                 profile.Model.EscapeMarkup(),
-                profile.BaseUrl.EscapeMarkup(),
+                providerLabel,
                 compactLabel.EscapeMarkup(),
-                timeoutLabel.EscapeMarkup(),
                 isActive ? "[green]✓[/]" : "");
         }
 
@@ -1474,21 +1475,21 @@ internal class AgentApp
             case "migrate":
                 bool migrationsPerformed = false;
 
-                // Migrate profiles
-                foreach (var profile in config.Profiles.Values)
+                // Migrate providers (API keys are now stored on providers, not profiles)
+                foreach (var provider in config.Providers.Values)
                 {
-                    if (!string.IsNullOrEmpty(profile.ApiKey))
+                    if (!string.IsNullOrEmpty(provider.ApiKey))
                     {
-                        var success = await credentialStore.StoreAsync($"api-key-{profile.Name}", profile.ApiKey);
+                        var success = await credentialStore.StoreAsync($"api-key-{provider.Name}", provider.ApiKey);
                         if (success)
                         {
-                            profile.ApiKey = null;
-                            profile.UseSecureApiKeyStorage = true;
+                            provider.ApiKey = null;
+                            provider.UseSecureApiKeyStorage = true;
                             migrationsPerformed = true;
                         }
                         else
                         {
-                            AnsiConsole.MarkupLine($"[red]✗ Failed to migrate API key for profile '{profile.Name}'[/]");
+                            AnsiConsole.MarkupLine($"[red]✗ Failed to migrate API key for provider '{provider.Name}'[/]");
                         }
                     }
                 }
@@ -1528,9 +1529,9 @@ internal class AgentApp
                 table.AddColumn("Secure");
                 
                 table.AddRow("Global", "default", config.UseSecureApiKeyStorage ? "[green]Yes[/]" : "[red]No[/]");
-                foreach(var p in config.Profiles.Values)
+                foreach(var p in config.Providers.Values)
                 {
-                    table.AddRow("Profile", p.Name, p.UseSecureApiKeyStorage ? "[green]Yes[/]" : "[red]No[/]");
+                    table.AddRow("Provider", p.Name, p.UseSecureApiKeyStorage ? "[green]Yes[/]" : "[red]No[/]");
                 }
                 AnsiConsole.Write(table);
                 return 0;
@@ -1589,32 +1590,22 @@ internal class AgentApp
         var table = new Table();
         table.AddColumn("Name");
         table.AddColumn("Model");
-        table.AddColumn("Base URL");
-        table.AddColumn("API Key");
+        table.AddColumn("Provider");
         table.AddColumn("Compact");
-        table.AddColumn("Timeout");
         table.AddColumn("Active");
 
         foreach (var (name, profile) in profiles.OrderBy(p => p.Key))
         {
             var isActive = (config.CurrentProfile ?? "default") == name;
-            var maskedKey = string.IsNullOrEmpty(profile.ApiKey)
-                ? "[dim](none)[/]"
-                : new string('*', Math.Min(profile.ApiKey.Length, 8));
             var compactLabel = profile.CompactionThreshold.HasValue
                 ? $"{profile.CompactionThreshold.Value / 1000:0.0}k"
                 : "[dim]global[/]";
-            var timeoutLabel = profile.ModelTimeoutSeconds.HasValue
-                ? $"{profile.ModelTimeoutSeconds.Value}s"
-                : "[dim]SDK default[/]";
 
             table.AddRow(
                 isActive ? $"[bold]{name.EscapeMarkup()}[/]" : name.EscapeMarkup(),
                 profile.Model.EscapeMarkup(),
-                profile.BaseUrl.EscapeMarkup(),
-                maskedKey,
+                profile.Provider?.EscapeMarkup() ?? "[dim](none)[/]",
                 compactLabel,
-                timeoutLabel,
                 isActive ? "[green]✓[/]" : "");
         }
 
@@ -1712,15 +1703,23 @@ internal class AgentApp
                 return 1;
         }
 
+        // Create or update the provider
+        var providerName = name;
+        config.Providers[providerName] = new ProviderConfig
+        {
+            Name = providerName,
+            BaseUrl = baseUrl.TrimEnd('/'),
+            ApiKey = string.IsNullOrEmpty(apiKey) ? null : apiKey,
+            TimeoutSeconds = modelTimeoutSeconds
+        };
+
         config.Profiles[name] = new ModelProfile
         {
             Name = name,
-            BaseUrl = baseUrl.TrimEnd('/'),
-            ApiKey = string.IsNullOrEmpty(apiKey) ? null : apiKey,
+            Provider = providerName,
             Model = model,
             Temperature = null,
             MaxTokens = null,
-            ModelTimeoutSeconds = modelTimeoutSeconds,
             ThinkingEnabled = true,
             CompactionThreshold = compactThreshold
         };

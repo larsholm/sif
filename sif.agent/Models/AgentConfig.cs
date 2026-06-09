@@ -35,13 +35,16 @@ internal class AgentConfig
     /// </summary>
     public string? AutoUpdateSource { get; set; }
     /// <summary>
-    /// Named model profiles for easy switching between local/cloud backends.
-    /// If populated, <see cref="CurrentProfile"/> determines which profile's
-    /// BaseUrl, ApiKey, Model, Temperature, MaxTokens, and timeout are active.
+    /// Named provider configurations (API endpoints) that can be shared across multiple models.
+    /// </summary>
+    public Dictionary<string, ProviderConfig> Providers { get; set; } = new();
+    /// <summary>
+    /// Named model profiles for easy switching between models.
+    /// Each profile references a provider by name via <see cref="ModelProfile.Provider"/>.
     /// </summary>
     public Dictionary<string, ModelProfile> Profiles { get; set; } = new();
     /// <summary>
-    /// Name of the currently active profile. If null or empty, the flat
+    /// Name of the currently active model profile. If null or empty, the flat
     /// properties (BaseUrl, Model, etc.) are used instead.
     /// </summary>
     public string? CurrentProfile { get; set; }
@@ -129,29 +132,12 @@ internal class AgentConfig
                     config.AutoUpdateSource = loaded.AutoUpdateSource;
                     config.McpServers = loaded.McpServers ?? new();
                     config.Values = loaded.Values ?? new();
+                    config.Providers = loaded.Providers ?? new();
                     config.Profiles = loaded.Profiles ?? new();
                     config.CurrentProfile = loaded.CurrentProfile;
 
-                    // Migrate legacy flat config into a "default" profile if no profiles exist yet
-                    if (config.Profiles.Count == 0 && config.CurrentProfile == null)
-                    {
-                        config.Profiles["default"] = new ModelProfile
-                        {
-                            Name = "default",
-                            BaseUrl = config.BaseUrl,
-                            ApiKey = config.ApiKey,
-                            Model = config.Model,
-                            Temperature = config.Temperature,
-                            MaxTokens = config.MaxTokens,
-                            ModelTimeoutSeconds = config.ModelTimeoutSeconds,
-                            ThinkingEnabled = config.ThinkingEnabled ?? true,
-                            CompactionThreshold = config.CompactionThresholdConfigured ? config.CompactionThreshold : null
-                        };
-                        config.CurrentProfile = "default";
-
-                        // Persist the migration so we don't repeat it on every load
+                    if (NormalizeProfiles(config))
                         config.Save();
-                    }
                 }
             }
             catch
@@ -221,16 +207,13 @@ internal class AgentConfig
     {
         if (!string.IsNullOrEmpty(CurrentProfile) && Profiles.TryGetValue(CurrentProfile, out var profile))
         {
-            // If the profile uses secure storage, load it now
-            if (profile.UseSecureApiKeyStorage && string.IsNullOrEmpty(profile.ApiKey))
+            // If the profile's provider uses secure storage, load it now
+            ProviderConfig? provider = null;
+            if (!string.IsNullOrEmpty(profile.Provider) && Providers.TryGetValue(profile.Provider, out var p))
             {
-                var credentialStore = SecureCredentialStoreFactory.Create();
-                var secureKey = credentialStore.RetrieveAsync($"api-key-{CurrentProfile}").GetAwaiter().GetResult();
-                if (!string.IsNullOrEmpty(secureKey))
-                {
-                    profile.ApiKey = secureKey;
-                }
+                provider = p;
             }
+            LoadProviderApiKeyFromSecureStorage(profile, provider);
             return profile;
         }
 
@@ -238,33 +221,47 @@ internal class AgentConfig
         return new ModelProfile
         {
             Name = CurrentProfile ?? "default",
+            Provider = null,
             BaseUrl = BaseUrl,
             ApiKey = ApiKey,
             Model = Model,
             Temperature = Temperature,
             MaxTokens = MaxTokens,
             ModelTimeoutSeconds = ModelTimeoutSeconds,
+            UseSecureApiKeyStorage = UseSecureApiKeyStorage,
             ThinkingEnabled = ThinkingEnabled ?? true
         };
     }
 
     /// <summary>
     /// Switch to a named profile and update flat properties to match.
+    /// Resolves provider settings from <see cref="Providers"/> if the profile references a provider.
     /// If the profile has a per-profile CompactionThreshold, it overrides the global one.
     /// </summary>
     public bool SwitchProfile(string name)
     {
         if (Profiles.TryGetValue(name, out var profile))
         {
+            // Resolve provider settings
+            ProviderConfig? provider = null;
+            if (!string.IsNullOrEmpty(profile.Provider) && Providers.TryGetValue(profile.Provider, out var p))
+            {
+                provider = p;
+            }
+            LoadProviderApiKeyFromSecureStorage(profile, provider);
+
             CurrentProfile = name;
-            BaseUrl = profile.BaseUrl;
-            if (!string.IsNullOrEmpty(profile.ApiKey))
+            BaseUrl = provider?.BaseUrl ?? profile.BaseUrl ?? BaseUrl;
+            if (provider != null && !string.IsNullOrEmpty(provider.ApiKey))
+                ApiKey = provider.ApiKey;
+            else if (provider == null && !string.IsNullOrEmpty(profile.ApiKey))
                 ApiKey = profile.ApiKey;
             Model = profile.Model;
             Temperature = profile.Temperature;
             MaxTokens = profile.MaxTokens;
-            ModelTimeoutSeconds = profile.ModelTimeoutSeconds;
+            ModelTimeoutSeconds = provider?.TimeoutSeconds ?? profile.ModelTimeoutSeconds;
             ThinkingEnabled = profile.ThinkingEnabled;
+            UseSecureApiKeyStorage = provider?.UseSecureApiKeyStorage ?? profile.UseSecureApiKeyStorage;
 
             // Apply per-profile compaction threshold if set, otherwise keep global
             if (profile.CompactionThreshold.HasValue)
@@ -275,6 +272,87 @@ internal class AgentConfig
             return true;
         }
         return false;
+    }
+
+    internal static bool NormalizeProfiles(AgentConfig config)
+    {
+        var changed = false;
+
+        if (config.Profiles.Count == 0 && string.IsNullOrEmpty(config.CurrentProfile))
+        {
+            config.Providers["default"] = new ProviderConfig
+            {
+                Name = "default",
+                BaseUrl = config.BaseUrl,
+                ApiKey = config.ApiKey,
+                UseSecureApiKeyStorage = config.UseSecureApiKeyStorage,
+                TimeoutSeconds = config.ModelTimeoutSeconds
+            };
+            config.Profiles["default"] = new ModelProfile
+            {
+                Name = "default",
+                Provider = "default",
+                Model = config.Model,
+                Temperature = config.Temperature,
+                MaxTokens = config.MaxTokens,
+                ThinkingEnabled = config.ThinkingEnabled ?? true,
+                CompactionThreshold = config.CompactionThresholdConfigured ? config.CompactionThreshold : null
+            };
+            config.CurrentProfile = "default";
+            return true;
+        }
+
+        foreach (var (name, profile) in config.Profiles)
+        {
+            if (string.IsNullOrWhiteSpace(profile.Name))
+            {
+                profile.Name = name;
+                changed = true;
+            }
+
+            if (string.IsNullOrWhiteSpace(profile.Provider) && !string.IsNullOrWhiteSpace(profile.BaseUrl))
+            {
+                var providerName = name;
+                config.Providers[providerName] = new ProviderConfig
+                {
+                    Name = providerName,
+                    BaseUrl = profile.BaseUrl.TrimEnd('/'),
+                    ApiKey = profile.ApiKey,
+                    UseSecureApiKeyStorage = profile.UseSecureApiKeyStorage,
+                    TimeoutSeconds = profile.ModelTimeoutSeconds
+                };
+                profile.Provider = providerName;
+                profile.BaseUrl = null;
+                profile.ApiKey = null;
+                profile.UseSecureApiKeyStorage = false;
+                profile.ModelTimeoutSeconds = null;
+                changed = true;
+            }
+        }
+
+        if (string.IsNullOrEmpty(config.CurrentProfile) && config.Profiles.Count > 0)
+        {
+            config.CurrentProfile = config.Profiles.ContainsKey("default")
+                ? "default"
+                : config.Profiles.Keys.First();
+            changed = true;
+        }
+
+        return changed;
+    }
+
+    private static void LoadProviderApiKeyFromSecureStorage(ModelProfile profile, ProviderConfig? provider)
+    {
+        if (provider == null || !provider.UseSecureApiKeyStorage || !string.IsNullOrEmpty(provider.ApiKey))
+            return;
+
+        var credentialStore = SecureCredentialStoreFactory.Create();
+        var secureKey = credentialStore.RetrieveAsync($"api-key-{provider.Name}").GetAwaiter().GetResult();
+        if (string.IsNullOrEmpty(secureKey) && !string.IsNullOrEmpty(profile.Name))
+            secureKey = credentialStore.RetrieveAsync($"api-key-{profile.Name}").GetAwaiter().GetResult();
+
+        if (!string.IsNullOrEmpty(secureKey))
+            provider.ApiKey = secureKey;
     }
 
     public void ApplyValue(string key, string value)
@@ -362,14 +440,16 @@ internal class AgentConfig
         if (!Directory.Exists(dir))
             Directory.CreateDirectory(dir);
 
-        // If using secure storage, don't save API key in plaintext
-        foreach (var profile in Profiles.Values.Where(p => p.UseSecureApiKeyStorage && !string.IsNullOrEmpty(p.ApiKey)))
+        // If using secure storage, don't save API key in plaintext for providers
+        var providerKeyBackups = new Dictionary<string, string>();
+        foreach (var provider in Providers.Values.Where(p => p.UseSecureApiKeyStorage && !string.IsNullOrEmpty(p.ApiKey)))
         {
             var credentialStore = SecureCredentialStoreFactory.Create();
-            var success = credentialStore.StoreAsync($"api-key-{profile.Name}", profile.ApiKey!).GetAwaiter().GetResult();
+            var success = credentialStore.StoreAsync($"api-key-{provider.Name}", provider.ApiKey!).GetAwaiter().GetResult();
             if (success)
             {
-                profile.ApiKey = null;
+                providerKeyBackups[provider.Name] = provider.ApiKey!;
+                provider.ApiKey = null;
             }
         }
 
@@ -394,7 +474,11 @@ internal class AgentConfig
 
         File.WriteAllText(ConfigPath, json);
 
-        // Restore API key in memory if it was backed up
+        // Restore API keys in memory
+        foreach (var (name, key) in providerKeyBackups)
+        {
+            Providers[name].ApiKey = key;
+        }
         if (apiKeyBackup != null)
         {
             ApiKey = apiKeyBackup;
