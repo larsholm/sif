@@ -755,7 +755,7 @@ internal class AgentApp
         return $"You are Sif, a helpful assistant, with access to these tools: {string.Join(", ", tools)}. " +
                $"Current working directory: {Environment.CurrentDirectory}. " +               
                "\n\nUse tools proactively: " +
-               "\n- Use 'bash' with commands: " + (Environment.OSVersion.Platform == PlatformID.Win32NT ? "dir/Select-String/Get-ChildItem" : "ls/grep/find") +
+               "\n- Use 'bash' with commands like " + (Environment.OSVersion.Platform == PlatformID.Win32NT ? "dir/Select-String/Get-ChildItem" : "ls/grep/find") +
                "\n- Use 'read' to view file contents" +
                "\n- Use 'edit' to modify files" +
                "\n- Use 'write' to create new files" +
