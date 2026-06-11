@@ -149,6 +149,68 @@ public sealed class GeneralBehaviorTests
         Assert.Equal(300, config.ModelTimeoutSeconds);
     }
 
+    [Fact]
+    public void AgentConfigMigratesProviderModelTimeoutAlias()
+    {
+        var config = JsonSerializer.Deserialize<AgentConfig>("""
+            {
+              "Providers": {
+                "default": {
+                  "Name": "default",
+                  "BaseUrl": "http://localhost:8020/v1",
+                  "ModelTimeoutSeconds": 600
+                }
+              },
+              "Profiles": {
+                "default": {
+                  "Name": "default",
+                  "Provider": "default",
+                  "Model": "qwen3.6"
+                }
+              },
+              "CurrentProfile": "default"
+            }
+            """, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+        Assert.NotNull(config);
+        Assert.True(AgentConfig.NormalizeProfiles(config));
+        Assert.True(config.SwitchProfile("default"));
+
+        Assert.Equal(600, config.Providers["default"].TimeoutSeconds);
+        Assert.Null(config.Providers["default"].ModelTimeoutSeconds);
+        Assert.Equal(600, config.ModelTimeoutSeconds);
+    }
+
+    [Fact]
+    public void AgentConfigSwitchProfileKeepsExistingGlobalTimeoutWhenProfileHasNone()
+    {
+        var config = new AgentConfig
+        {
+            ModelTimeoutSeconds = 300,
+            Providers =
+            {
+                ["local"] = new ProviderConfig
+                {
+                    Name = "local",
+                    BaseUrl = "http://localhost:8020/v1"
+                }
+            },
+            Profiles =
+            {
+                ["qwen"] = new ModelProfile
+                {
+                    Name = "qwen",
+                    Provider = "local",
+                    Model = "qwen3.6"
+                }
+            }
+        };
+
+        Assert.True(config.SwitchProfile("qwen"));
+
+        Assert.Equal(300, config.ModelTimeoutSeconds);
+    }
+
     [Theory]
     [InlineData("bash", "{}", "command is required")]
     [InlineData("read", "{}", "path is required")]

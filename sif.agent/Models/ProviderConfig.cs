@@ -23,6 +23,10 @@ internal class ProviderConfig
     /// <summary>Network timeout for requests to this provider in seconds. Null means SDK default.</summary>
     public int? TimeoutSeconds { get; set; }
 
+    /// <summary>Legacy/misnamed provider timeout field read from older configs.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? ModelTimeoutSeconds { get; set; }
+
     /// <summary>
     /// Short display label (auto-generated from Name and BaseUrl).
     /// Not persisted to the config file.

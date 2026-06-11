@@ -259,7 +259,7 @@ internal class AgentConfig
             Model = profile.Model;
             Temperature = profile.Temperature;
             MaxTokens = profile.MaxTokens;
-            ModelTimeoutSeconds = provider?.TimeoutSeconds ?? profile.ModelTimeoutSeconds;
+            ModelTimeoutSeconds = provider?.TimeoutSeconds ?? provider?.ModelTimeoutSeconds ?? profile.ModelTimeoutSeconds ?? ModelTimeoutSeconds;
             ThinkingEnabled = profile.ThinkingEnabled;
             UseSecureApiKeyStorage = provider?.UseSecureApiKeyStorage ?? profile.UseSecureApiKeyStorage;
 
@@ -326,6 +326,16 @@ internal class AgentConfig
                 profile.ApiKey = null;
                 profile.UseSecureApiKeyStorage = false;
                 profile.ModelTimeoutSeconds = null;
+                changed = true;
+            }
+        }
+
+        foreach (var provider in config.Providers.Values)
+        {
+            if (!provider.TimeoutSeconds.HasValue && provider.ModelTimeoutSeconds.HasValue)
+            {
+                provider.TimeoutSeconds = provider.ModelTimeoutSeconds;
+                provider.ModelTimeoutSeconds = null;
                 changed = true;
             }
         }

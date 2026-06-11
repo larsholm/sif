@@ -90,7 +90,7 @@ internal class ModelProfile
 
         config.BaseUrl = overrideBaseUrl ?? provider?.BaseUrl ?? BaseUrl ?? string.Empty;
         config.ApiKey = overrideApiKey ?? provider?.ApiKey ?? ApiKey;
-        config.ModelTimeoutSeconds = overrideTimeoutSeconds ?? provider?.TimeoutSeconds ?? ModelTimeoutSeconds;
+        config.ModelTimeoutSeconds = overrideTimeoutSeconds ?? provider?.TimeoutSeconds ?? provider?.ModelTimeoutSeconds ?? ModelTimeoutSeconds;
         config.UseSecureApiKeyStorage = provider?.UseSecureApiKeyStorage ?? UseSecureApiKeyStorage;
 
         config.Model = overrideModel ?? Model;
