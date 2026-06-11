@@ -128,6 +128,15 @@ internal static class VscodeContext
         {
             using var doc = JsonDocument.Parse(File.ReadAllText(path));
             var root = doc.RootElement;
+
+            // Ignore snapshots from another VS Code window/project: the context
+            // file may be shared, so only trust it when its workspace overlaps
+            // with the directory this agent is running in.
+            var workspaceFolder = NormalizePath(GetJsonString(root, "workspaceFolder"));
+            if (!string.IsNullOrWhiteSpace(workspaceFolder)
+                && !PathsOverlap(workspaceFolder, Environment.CurrentDirectory))
+                return EditorSnapshot.Empty;
+
             return new EditorSnapshot(
                 NormalizePath(GetJsonString(root, "file")),
                 GetJsonString(root, "line"),
@@ -137,6 +146,28 @@ internal static class VscodeContext
         catch
         {
             return EditorSnapshot.Empty;
+        }
+    }
+
+    private static bool PathsOverlap(string a, string b)
+    {
+        return IsWithinOrEqual(a, b) || IsWithinOrEqual(b, a);
+    }
+
+    private static bool IsWithinOrEqual(string candidate, string root)
+    {
+        try
+        {
+            var candidateFull = Path.TrimEndingDirectorySeparator(Path.GetFullPath(candidate));
+            var rootFull = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+            var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
+            return string.Equals(candidateFull, rootFull, comparison)
+                || candidateFull.StartsWith(rootFull + Path.DirectorySeparatorChar, comparison);
+        }
+        catch
+        {
+            return false;
         }
     }
 

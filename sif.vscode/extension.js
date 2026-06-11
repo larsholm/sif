@@ -8,8 +8,14 @@ let statusItem;
 let lastEditorPayload;
 
 function activate(context) {
-  const contextFile = path.join(context.globalStorageUri.fsPath, 'editor-context.json');
-  fs.mkdirSync(context.globalStorageUri.fsPath, { recursive: true });
+  // Use workspace-scoped storage so each window gets its own context file;
+  // globalStorageUri is shared across windows and lets them overwrite each other.
+  const storageDir = (context.storageUri ?? context.globalStorageUri).fsPath;
+  const fileName = context.storageUri
+    ? 'editor-context.json'
+    : `editor-context-${vscode.env.sessionId}.json`;
+  const contextFile = path.join(storageDir, fileName);
+  fs.mkdirSync(storageDir, { recursive: true });
   context.environmentVariableCollection.replace('SIF_VSCODE_CONTEXT_FILE', contextFile);
 
   const update = () => writeEditorContext(contextFile);
