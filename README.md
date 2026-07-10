@@ -147,7 +147,7 @@ When chat history grows past the compaction threshold, `sif` summarizes older me
 
 Interactive chats are saved under `~/.sif/conversations/` after every context update, including user messages, assistant responses, tool results, clears, system-prompt changes, and compaction. Their referenced large-context blobs are retained under `~/.sif/context/`, so `ctx_*` handles continue to work after a resume. If `sif` exits unexpectedly, the next chat startup offers to resume the most recent unfinished session.
 
-Use `/resume` in an interactive chat to list saved sessions. That list reads only lightweight session metadata; the message history is loaded only after you select one with `/resume <id>` (full IDs and unique ID prefixes work). A normally exited session remains available for later resume as well.
+Use `/resume` in an interactive chat to choose a saved session with the arrow keys. That menu reads only lightweight session metadata; the message history is loaded only after you select one. `/resume <id>` also works with full IDs and unique ID prefixes. A normally exited session remains available for later resume as well.
 
 The `diagnostics` tool is for inspecting sif's runtime state only. It is not a debugger and does not launch, attach to, or manage .NET debug adapter sessions. There is also a legacy `debug` tool alias for the same diagnostics behavior.
 

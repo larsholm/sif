@@ -277,10 +277,10 @@ internal class AgentApp
                 {
                     var id = trimmed.Length == "/resume".Length ? "" : trimmed["/resume".Length..].Trim();
                     if (string.IsNullOrWhiteSpace(id))
-                    {
-                        ShowResumeHistory();
-                    }
-                    else if (ConversationStore.TryOpen(id, out var resumedConversation, out var resumedHistory, out var resumeError))
+                        id = SelectResumeConversation() ?? "";
+
+                    var resumeError = "";
+                    if (!string.IsNullOrWhiteSpace(id) && ConversationStore.TryOpen(id, out var resumedConversation, out var resumedHistory, out resumeError))
                     {
                         conversation.Close();
                         conversation = resumedConversation!;
@@ -288,7 +288,7 @@ internal class AgentApp
                         conversation.Save(history);
                         AnsiConsole.MarkupLine($"[dim]Resumed {conversation.Session.Id.EscapeMarkup()} ({history.Count:N0} messages). The current context is now auto-saved.[/]\n");
                     }
-                    else
+                    else if (!string.IsNullOrWhiteSpace(id))
                     {
                         AnsiConsole.MarkupLine($"[yellow]{resumeError.EscapeMarkup()}[/]\n");
                     }
@@ -883,7 +883,7 @@ internal class AgentApp
         table.AddColumn("Description");
         table.AddRow("[bold]/quit[/] or [bold]/exit[/]", "Exit the chat session");
         table.AddRow("[bold]/clear[/]", "Clear conversation history and keep the system prompt");
-        table.AddRow("[bold]/resume[/]", "List saved conversations without loading their histories");
+        table.AddRow("[bold]/resume[/]", "Select a saved conversation without loading histories first");
         table.AddRow("[bold]/resume <id>[/]", "Load a saved conversation by its full or unique id prefix");
         table.AddRow("[bold]/sys <prompt>[/]", "Change the system prompt");
         table.AddRow("[bold]/model[/]", "Select a model profile interactively");
@@ -910,7 +910,7 @@ internal class AgentApp
         AnsiConsole.WriteLine();
     }
 
-    private static void ShowResumeHistory()
+    private static string? SelectResumeConversation()
     {
         // ConversationStore.List reads only compact session metadata. The message
         // payload is loaded later, only for the selected /resume <id> command.
@@ -918,36 +918,35 @@ internal class AgentApp
         if (sessions.Count == 0)
         {
             AnsiConsole.MarkupLine("[dim]No saved conversations yet.[/]\n");
-            return;
+            return null;
         }
 
-        var table = new Table();
-        table.Title("[green]Saved Conversations[/]");
-        table.AddColumn("Id");
-        table.AddColumn("Updated (UTC)");
-        table.AddColumn("Messages");
-        table.AddColumn("State");
-        table.AddColumn("Preview");
+        var choices = sessions
+            .Select(session => new ResumeChoice(session, FormatResumeChoice(session)))
+            .Append(new ResumeChoice(null, "[dim]Cancel[/]"))
+            .ToList();
+        var selected = AnsiConsole.Prompt(
+            new SelectionPrompt<ResumeChoice>()
+                .Title("[green]Choose a saved conversation[/] [dim](↑/↓ then Enter)[/]")
+                .PageSize(Math.Min(12, choices.Count))
+                .UseConverter(choice => choice.Label)
+                .AddChoices(choices));
 
-        foreach (var session in sessions)
-        {
-            var updatedAt = DateTimeOffset.TryParse(session.UpdatedAt, out var timestamp)
-                ? timestamp.ToString("yyyy-MM-dd HH:mm")
-                : session.UpdatedAt;
-            var state = session.Status.Equals("active", StringComparison.OrdinalIgnoreCase)
-                ? "[yellow]unfinished[/]"
-                : "closed";
-            table.AddRow(
-                session.Id.EscapeMarkup(),
-                updatedAt.EscapeMarkup(),
-                session.MessageCount.ToString("N0"),
-                state,
-                session.Preview.EscapeMarkup());
-        }
-
-        AnsiConsole.Write(table);
-        AnsiConsole.MarkupLine("[dim]Use /resume <id> to load one. Histories are loaded only after you choose a session.[/]\n");
+        return selected.Session?.Id;
     }
+
+    private static string FormatResumeChoice(ConversationSession session)
+    {
+        var updatedAt = DateTimeOffset.TryParse(session.UpdatedAt, out var timestamp)
+            ? timestamp.ToString("yyyy-MM-dd HH:mm") + " UTC"
+            : session.UpdatedAt;
+        var state = session.Status.Equals("active", StringComparison.OrdinalIgnoreCase)
+            ? "[yellow]unfinished[/]"
+            : "[dim]closed[/]";
+        return $"[bold]{session.Id.EscapeMarkup()}[/]  {state}  [dim]{updatedAt.EscapeMarkup()} · {session.MessageCount:N0} messages · {session.Preview.EscapeMarkup()}[/]";
+    }
+
+    private sealed record ResumeChoice(ConversationSession? Session, string Label);
 
     private static void HandleDebugCommand(string command)
     {
