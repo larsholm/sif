@@ -225,6 +225,10 @@ internal class AgentClient
                                 toolResult = $"Error: Tool '{toolName}' not found.";
                             }
                         }
+                        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                        {
+                            throw;
+                        }
                         catch (Exception ex)
                         {
                             AnsiConsole.WriteException(ex);
