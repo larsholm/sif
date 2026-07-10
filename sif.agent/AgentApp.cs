@@ -186,7 +186,7 @@ internal class AgentApp
         var skills = SkillStore.Load();
 
         AnsiConsole.MarkupLine(BuildChatHeader(config, modelInfo, tools, mcpService, skills.Count));
-        AnsiConsole.MarkupLine("Type [bold]/quit[/] or [bold]/exit[/] to quit, [bold]/clear[/] to reset conversation, [bold]/context[/] to inspect context, [bold]/help[/] for help.");
+        AnsiConsole.MarkupLine("Type [bold]/quit[/] or [bold]/exit[/] to quit, [bold]/clear[/] to reset conversation, [bold]/resume[/] for saved chats, [bold]/context[/] to inspect context, [bold]/help[/] for help.");
         AnsiConsole.MarkupLine("[dim]While the agent is working, 'btw <comment>' waits for the next tool call; any other comment interrupts.[/]");
         AnsiConsole.MarkupLine("[dim]Press Ctrl+C to exit.[/]\n");
 
@@ -194,6 +194,32 @@ internal class AgentApp
         var initialSystemPrompt = BuildInitialSystemPrompt(opts.SystemPrompt, tools, skills);
         if (!string.IsNullOrWhiteSpace(initialSystemPrompt))
             history.Add(new ChatMessage("system", initialSystemPrompt));
+
+        // Conversation metadata is cheap to inspect, while full histories are
+        // only read after the user elects to resume one.
+        ConversationStore conversation;
+        var interruptedConversation = ConversationStore.FindMostRecentActive();
+        if (interruptedConversation != null && AnsiConsole.Confirm(
+                $"[yellow]An unfinished chat from {interruptedConversation.UpdatedAt.EscapeMarkup()} was found. Resume it?[/]", true))
+        {
+            if (ConversationStore.TryOpen(interruptedConversation.Id, out var resumedConversation, out var resumedHistory, out var resumeError))
+            {
+                conversation = resumedConversation!;
+                history = resumedHistory!;
+                AnsiConsole.MarkupLine($"[dim]Resumed {conversation.Session.Id.EscapeMarkup()} ({history.Count:N0} messages).[/]\n");
+            }
+            else
+            {
+                AnsiConsole.MarkupLine($"[yellow]{resumeError.EscapeMarkup()} Starting a new chat instead.[/]\n");
+                conversation = ConversationStore.Create(config.Model);
+                conversation.Save(history);
+            }
+        }
+        else
+        {
+            conversation = ConversationStore.Create(config.Model);
+            conversation.Save(history);
+        }
 
         bool running = true;
         var files = new Lazy<List<string>>(GetFiles);
@@ -221,6 +247,7 @@ internal class AgentApp
                 else if (trimmed == "/clear")
                 {
                     ContextCommandHandler.ClearChatHistory(history);
+                    conversation.Save(history);
                     AnsiConsole.MarkupLine("[dim]Conversation cleared.[/]\n");
                 }
                 else if (trimmed.StartsWith("/sys "))
@@ -230,11 +257,13 @@ internal class AgentApp
                     var idx = history.FindIndex(m => m.Role == "system");
                     if (idx >= 0) history[idx] = new ChatMessage("system", effectiveSys);
                     else history.Insert(0, new ChatMessage("system", effectiveSys));
+                    conversation.Save(history);
                     AnsiConsole.MarkupLine("[dim]System prompt updated.[/]\n");
                 }
                 else if (trimmed == "/context" || trimmed.StartsWith("/context "))
                 {
                     ContextCommandHandler.Handle(trimmed, history, tools, ShowChatHelp);
+                    conversation.Save(history);
                 }
                 else if (trimmed == "/debug" || trimmed.StartsWith("/debug "))
                 {
@@ -244,7 +273,27 @@ internal class AgentApp
                 {
                     ShowVscodeContext();
                 }
-            else if (trimmed == "/help")
+                else if (trimmed == "/resume" || trimmed.StartsWith("/resume "))
+                {
+                    var id = trimmed.Length == "/resume".Length ? "" : trimmed["/resume".Length..].Trim();
+                    if (string.IsNullOrWhiteSpace(id))
+                    {
+                        ShowResumeHistory();
+                    }
+                    else if (ConversationStore.TryOpen(id, out var resumedConversation, out var resumedHistory, out var resumeError))
+                    {
+                        conversation.Close();
+                        conversation = resumedConversation!;
+                        history = resumedHistory!;
+                        conversation.Save(history);
+                        AnsiConsole.MarkupLine($"[dim]Resumed {conversation.Session.Id.EscapeMarkup()} ({history.Count:N0} messages). The current context is now auto-saved.[/]\n");
+                    }
+                    else
+                    {
+                        AnsiConsole.MarkupLine($"[yellow]{resumeError.EscapeMarkup()}[/]\n");
+                    }
+                }
+                else if (trimmed == "/help")
                 {
                     ShowChatHelp();
                 }
@@ -262,6 +311,7 @@ internal class AgentApp
                             var initialSys = BuildInitialSystemPrompt(null, tools, skills);
                             if (!string.IsNullOrWhiteSpace(initialSys))
                                 history.Add(new ChatMessage("system", initialSys));
+                            conversation.Save(history);
                         }
                     }
                 }
@@ -274,6 +324,7 @@ internal class AgentApp
 
             var historyContent = PrepareUserMessageForHistory(trimmed, tools);
             history.Add(new ChatMessage("user", historyContent));
+            conversation.Save(history);
 
             IReadOnlyList<string> queuedSteeringComments = [];
             try
@@ -281,7 +332,7 @@ internal class AgentApp
                 if (tools?.Length > 0)
                 {
                     AnsiConsole.Write(new Markup("[green]agent>[/] "));
-                    var turn = await RunWithChatControls((ct, mailbox) => client.ChatWithToolsAsync(history, ct, mailbox.TakeAll));
+                    var turn = await RunWithChatControls((ct, mailbox) => client.ChatWithToolsAsync(history, ct, mailbox.TakeAll, () => conversation.Save(history)));
                     var (response, tokenCount) = turn.Result;
                     queuedSteeringComments = turn.PendingComments;
                     var ctxEstimate = ContextCommandHandler.EstimateContextSize(history);
@@ -309,6 +360,7 @@ internal class AgentApp
                     await UiService.DisplayMarkdown(response);
                     AnsiConsole.WriteLine();
                     history.Add(new ChatMessage("assistant", response));
+                    conversation.Save(history);
                 }
                 else
                 {
@@ -317,6 +369,7 @@ internal class AgentApp
                     var (response, tokenCount) = turn.Result;
                     queuedSteeringComments = turn.PendingComments;
                     history.Add(new ChatMessage("assistant", response));
+                    conversation.Save(history);
                     var ctxEstimate = ContextCommandHandler.EstimateContextSize(history);
                     AnsiConsole.MarkupLine($"[dim]\n({tokenCount} tokens, {ctxEstimate} context)[/]\n");
                 }
@@ -324,6 +377,7 @@ internal class AgentApp
             catch (SteeringCommentException ex)
             {
                 RollbackAfterLastUserMessage(history);
+                conversation.Save(history);
                 pendingInput = $"User steering comment: {ex.Comment}";
                 AnsiConsole.MarkupLine("[dim]Resuming with your steering comment...[/]\n");
                 continue;
@@ -334,6 +388,7 @@ internal class AgentApp
                 // Remove all messages from the last user message onward,
                 // including any partial tool calls/results that were added
                 RollbackToLastUserMessage(history);
+                conversation.Save(history);
             }
             catch (Exception ex)
             {
@@ -341,6 +396,7 @@ internal class AgentApp
                 AnsiConsole.MarkupLine($"[red]Error:[/] {AgentErrorFormatter.ToUserMessage(ex).EscapeMarkup()}");
                 AnsiConsole.MarkupLine($"[dim]Debug saved to {debugPath.EscapeMarkup()}[/]\n");
                 RollbackToLastUserMessage(history);
+                conversation.Save(history);
             }
 
             if (queuedSteeringComments.Count > 0)
@@ -348,8 +404,10 @@ internal class AgentApp
 
             // Check if we should compact the conversation history
             _ = await HistoryCompactor.MaybeCompactAsync(history, client, config, HasContextTool(tools));
+            conversation.Save(history);
         }
 
+        conversation.Close();
         AnsiConsole.MarkupLine("\n[dim]Goodbye![/]");
         return 0;
     }
@@ -825,6 +883,8 @@ internal class AgentApp
         table.AddColumn("Description");
         table.AddRow("[bold]/quit[/] or [bold]/exit[/]", "Exit the chat session");
         table.AddRow("[bold]/clear[/]", "Clear conversation history and keep the system prompt");
+        table.AddRow("[bold]/resume[/]", "List saved conversations without loading their histories");
+        table.AddRow("[bold]/resume <id>[/]", "Load a saved conversation by its full or unique id prefix");
         table.AddRow("[bold]/sys <prompt>[/]", "Change the system prompt");
         table.AddRow("[bold]/model[/]", "Select a model profile interactively");
         table.AddRow("[bold]/model list[/]", "List model profiles and show current one");
@@ -848,6 +908,45 @@ internal class AgentApp
         table.AddRow("[bold]/debug list[/]", "Show recent error entries");
         AnsiConsole.Write(table);
         AnsiConsole.WriteLine();
+    }
+
+    private static void ShowResumeHistory()
+    {
+        // ConversationStore.List reads only compact session metadata. The message
+        // payload is loaded later, only for the selected /resume <id> command.
+        var sessions = ConversationStore.List();
+        if (sessions.Count == 0)
+        {
+            AnsiConsole.MarkupLine("[dim]No saved conversations yet.[/]\n");
+            return;
+        }
+
+        var table = new Table();
+        table.Title("[green]Saved Conversations[/]");
+        table.AddColumn("Id");
+        table.AddColumn("Updated (UTC)");
+        table.AddColumn("Messages");
+        table.AddColumn("State");
+        table.AddColumn("Preview");
+
+        foreach (var session in sessions)
+        {
+            var updatedAt = DateTimeOffset.TryParse(session.UpdatedAt, out var timestamp)
+                ? timestamp.ToString("yyyy-MM-dd HH:mm")
+                : session.UpdatedAt;
+            var state = session.Status.Equals("active", StringComparison.OrdinalIgnoreCase)
+                ? "[yellow]unfinished[/]"
+                : "closed";
+            table.AddRow(
+                session.Id.EscapeMarkup(),
+                updatedAt.EscapeMarkup(),
+                session.MessageCount.ToString("N0"),
+                state,
+                session.Preview.EscapeMarkup());
+        }
+
+        AnsiConsole.Write(table);
+        AnsiConsole.MarkupLine("[dim]Use /resume <id> to load one. Histories are loaded only after you choose a session.[/]\n");
     }
 
     private static void HandleDebugCommand(string command)

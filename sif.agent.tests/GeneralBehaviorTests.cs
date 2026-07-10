@@ -1,11 +1,71 @@
 using System.Text.Json;
 using sif.agent;
+using sif.agent.Services;
 using Xunit;
 
 namespace sif.agent.tests;
 
 public sealed class GeneralBehaviorTests
 {
+    [Fact]
+    public void ConversationStorePersistsAndRestoresConversationHistory()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "sif-conversations-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = ConversationStore.Create(root, "test-model");
+            var history = new List<ChatMessage>
+            {
+                new("system", "Be concise."),
+                new("user", "Remember this task."),
+                new("assistant", "I will.")
+            };
+
+            store.Save(history);
+
+            var summary = Assert.Single(ConversationStore.List(root));
+            Assert.Equal(store.Session.Id, summary.Id);
+            Assert.Equal("active", summary.Status);
+            Assert.Equal(3, summary.MessageCount);
+            Assert.Equal("Remember this task.", summary.Preview);
+            Assert.Equal("test-model", summary.Model);
+
+            Assert.True(ConversationStore.TryOpen(root, store.Session.Id[5..], out var reopened, out var restored, out var error), error);
+            Assert.NotNull(reopened);
+            Assert.Equal(history.Select(message => (message.Role, message.Content)), restored!.Select(message => (message.Role, message.Content)));
+
+            reopened!.Close();
+            Assert.Equal("closed", Assert.Single(ConversationStore.List(root)).Status);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ConversationListUsesMetadataWithoutLoadingHistory()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "sif-conversations-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = ConversationStore.Create(root, null);
+            store.Save([new ChatMessage("user", "Saved message")]);
+            File.Delete(Path.Combine(root, store.Session.Id, "history.json"));
+
+            var summary = Assert.Single(ConversationStore.List(root));
+            Assert.Equal(store.Session.Id, summary.Id);
+            Assert.False(ConversationStore.TryOpen(root, store.Session.Id, out _, out _, out var error));
+            Assert.Contains("no history file", error, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
     [Fact]
     public void ChatMessageNormalizesRoleAndPreservesContent()
     {

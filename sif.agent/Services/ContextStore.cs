@@ -27,7 +27,7 @@ internal static class ContextStore
     private const int PreviewLength = 800;
     private static readonly object Lock = new();
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = false };
-    private static readonly string SessionId = DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmss");
+    private static string SessionId = DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmss") + "_" + Guid.NewGuid().ToString("N")[..12];
 
     private static string RootParentPath
     {
@@ -193,6 +193,25 @@ internal static class ContextStore
     }
 
     public static string GetRootPath() => RootPath;
+
+    /// <summary>
+    /// Associates the active context store with a saved conversation. This keeps
+    /// ctx_* handles usable after that conversation is resumed in a later process.
+    /// </summary>
+    public static void UseSession(string sessionId)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId) || sessionId.Any(ch => !char.IsLetterOrDigit(ch) && ch is not '_' and not '-'))
+            throw new ArgumentException("Invalid context session id.", nameof(sessionId));
+
+        lock (Lock)
+            SessionId = sessionId;
+    }
+
+    public static string GetSessionId()
+    {
+        lock (Lock)
+            return SessionId;
+    }
 
     public static int CleanupPreviousSessions()
     {

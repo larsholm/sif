@@ -17,6 +17,7 @@
 - **MCP servers** - connect to Model Context Protocol servers over stdio, HTTP, streamable HTTP, or SSE.
 - **Context store** - large tool outputs are stored out-of-band and can be searched or read back by handle.
 - **History compaction** - long chats are summarized automatically using the model's advertised context window when available.
+- **Crash recovery and resume** - chat context is saved after every conversation update; restart and resume an interrupted session, or use `/resume` to pick a prior chat without loading every history first.
 - **VS Code context** - the companion extension exposes active editor, cursor, and selection context to `sif`.
 - **Skills** - reusable markdown instructions can be loaded from project or user skill folders.
 - **Persistent config** - store model, endpoint, tool, reasoning, and compaction settings in `~/.sif/sif-agent.json`.
@@ -141,6 +142,12 @@ sif
 When `context` is enabled, large local and MCP tool results are stored under `~/.sif/context/` and replaced in model context with a compact handle such as `ctx_abc123`. The model can then call `ctx_search` for focused snippets or `ctx_read` for a specific stored result. Defaults are sized for large local-model contexts: `read` returns up to 1,000 lines by default, shell output returns up to 24,000 characters, `ctx_read` returns up to 32,000 characters, and automatic context storage starts above 60,000 characters.
 
 When chat history grows past the compaction threshold, `sif` summarizes older messages, stores the raw compacted history and summary in the context store, and keeps the system prompt plus the most recent messages in active history. On startup, `sif` probes the configured `/models` endpoint for context-window metadata such as `context_length`, `context_window`, `max_model_len`, or `n_ctx`. If the provider reports a context window and the threshold is still the built-in default, compaction starts at about 60% of that window. Set `AGENT_COMPACTION_THRESHOLD` or `sif config --set COMPACTION_THRESHOLD=<tokens>` to override it, or set it to `0` to disable compaction.
+
+## Saved Conversations
+
+Interactive chats are saved under `~/.sif/conversations/` after every context update, including user messages, assistant responses, tool results, clears, system-prompt changes, and compaction. Their referenced large-context blobs are retained under `~/.sif/context/`, so `ctx_*` handles continue to work after a resume. If `sif` exits unexpectedly, the next chat startup offers to resume the most recent unfinished session.
+
+Use `/resume` in an interactive chat to list saved sessions. That list reads only lightweight session metadata; the message history is loaded only after you select one with `/resume <id>` (full IDs and unique ID prefixes work). A normally exited session remains available for later resume as well.
 
 The `diagnostics` tool is for inspecting sif's runtime state only. It is not a debugger and does not launch, attach to, or manage .NET debug adapter sessions. There is also a legacy `debug` tool alias for the same diagnostics behavior.
 

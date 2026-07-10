@@ -130,7 +130,8 @@ internal class AgentClient
     public async Task<(string Response, int TokenCount)> ChatWithToolsAsync(
         List<ChatMessage> history,
         CancellationToken cancellationToken = default,
-        Func<IReadOnlyList<string>>? takeSteeringComments = null)
+        Func<IReadOnlyList<string>>? takeSteeringComments = null,
+        Action? onHistoryChanged = null)
     {
         var messages = history.Select(m => ToRequestMessage(m)).ToList();
         int totalTokens = 0;
@@ -281,6 +282,7 @@ internal class AgentClient
                         // tool call inside the same request.
                         var toolCallContent = $"Tool call from prior turn: {toolName} with arguments: {argsJson}\nResult:\n{toolResult}";
                         history.Add(new ChatMessage("assistant", toolCallContent));
+                        onHistoryChanged?.Invoke();
                     }
 
                     if (takeSteeringComments?.Invoke() is { Count: > 0 } steeringComments)
@@ -289,6 +291,7 @@ internal class AgentClient
                         {
                             var steeringMessage = $"User steering comment: {comment}";
                             history.Add(new ChatMessage("user", steeringMessage));
+                            onHistoryChanged?.Invoke();
                             messages.Add(OpenAI.Chat.ChatMessage.CreateUserMessage(steeringMessage));
                         }
                     }
@@ -315,6 +318,7 @@ internal class AgentClient
                 }
                 
                 history.Add(new ChatMessage("assistant", cleanContent));
+                onHistoryChanged?.Invoke();
                 messages.Add(OpenAI.Chat.ChatMessage.CreateAssistantMessage(result.Value));
 
                 return (cleanContent, totalTokens);
