@@ -6,23 +6,31 @@ namespace sif.agent.Services;
 internal static class SteeringComment
 {
     /// <summary>
-    /// Accepts <c>btw &lt;comment&gt;</c> and <c>/btw &lt;comment&gt;</c>, ignoring case.
+    /// Parses <c>btw &lt;comment&gt;</c> and <c>/btw &lt;comment&gt;</c> as deferred
+    /// comments. Every other non-empty input is an immediate comment.
     /// </summary>
-    public static bool TryParse(string input, out string comment)
+    public static bool TryParse(string input, out string comment, out bool deferUntilToolCall)
     {
         var trimmed = input.Trim();
-        if (trimmed.StartsWith('/'))
-            trimmed = trimmed[1..].TrimStart();
-
-        if (!trimmed.StartsWith("btw", StringComparison.OrdinalIgnoreCase) ||
-            trimmed.Length == 3 ||
-            !char.IsWhiteSpace(trimmed[3]))
+        if (trimmed.Length == 0)
         {
             comment = string.Empty;
+            deferUntilToolCall = false;
             return false;
         }
 
-        comment = trimmed[3..].Trim();
-        return comment.Length > 0;
+        var command = trimmed.StartsWith('/') ? trimmed[1..].TrimStart() : trimmed;
+
+        if (command.StartsWith("btw", StringComparison.OrdinalIgnoreCase) &&
+            (command.Length == 3 || char.IsWhiteSpace(command[3])))
+        {
+            comment = command.Length == 3 ? string.Empty : command[3..].Trim();
+            deferUntilToolCall = comment.Length > 0;
+            return comment.Length > 0;
+        }
+
+        comment = trimmed;
+        deferUntilToolCall = false;
+        return true;
     }
 }

@@ -334,7 +334,7 @@ During an interactive chat session:
 | `/context clear-history` | Clear conversation history, keeping the system prompt |
 | `/context clear-store` | Delete stored context entries for this session |
 | `/context clear all` | Clear both chat history and stored context |
-| `btw <comment>` | While the agent is working, add a steering comment and immediately resume it |
+| `btw <comment>` | While the agent is working, queue a steering comment for the next tool call |
 | `/vscode` | Show detected VS Code terminal/editor context |
 | `/debug` | Show recent errors (saved to a log, survives `/clear`) |
 | `/debug latest` | Show full details of the most recent error |
@@ -343,7 +343,7 @@ During an interactive chat session:
 
 In chat input, press `Alt+Enter` to insert a newline. Long input lines wrap in place and can be edited with the arrow, Home, End, Backspace, and Delete keys.
 
-While the agent is working, type `btw <comment>` and press Enter. Sif cancels the current request, keeps the original task, and resumes with your comment as a new instruction. `/btw <comment>` is also accepted.
+While the agent is working, type `btw <comment>` (or `/btw <comment>`) and press Enter to queue a steering comment for the next tool call. Any other non-empty input interrupts the current request, keeps the original task, and resumes with that input as a new instruction. If no further tool call occurs, queued comments run immediately after the current turn.
 
 ## VS Code Context
 

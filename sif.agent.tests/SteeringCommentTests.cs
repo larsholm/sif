@@ -9,25 +9,39 @@ public sealed class SteeringCommentTests
     [InlineData("btw use the existing parser", "use the existing parser")]
     [InlineData("  BTW   keep the API stable  ", "keep the API stable")]
     [InlineData("/btw add a regression test", "add a regression test")]
-    public void TryParseAcceptsSteeringComments(string input, string expected)
+    public void TryParseQueuesBtwSteeringComments(string input, string expected)
     {
-        var parsed = SteeringComment.TryParse(input, out var comment);
+        var parsed = SteeringComment.TryParse(input, out var comment, out var deferUntilToolCall);
 
         Assert.True(parsed);
         Assert.Equal(expected, comment);
+        Assert.True(deferUntilToolCall);
+    }
+
+    [Theory]
+    [InlineData("use the existing parser")]
+    [InlineData("/model use a smaller model")]
+    [InlineData("btwNoSpace")]
+    public void TryParseTreatsNonBtwInputAsImmediateSteering(string input)
+    {
+        var parsed = SteeringComment.TryParse(input, out var comment, out var deferUntilToolCall);
+
+        Assert.True(parsed);
+        Assert.Equal(input, comment);
+        Assert.False(deferUntilToolCall);
     }
 
     [Theory]
     [InlineData("")]
+    [InlineData("   ")]
     [InlineData("btw")]
     [InlineData("btw    ")]
-    [InlineData("by the way, use the parser")]
-    [InlineData("btwNoSpace")]
-    public void TryParseRejectsNonCommandsOrEmptyComments(string input)
+    public void TryParseRejectsEmptyComments(string input)
     {
-        var parsed = SteeringComment.TryParse(input, out var comment);
+        var parsed = SteeringComment.TryParse(input, out var comment, out var deferUntilToolCall);
 
         Assert.False(parsed);
         Assert.Empty(comment);
+        Assert.False(deferUntilToolCall);
     }
 }

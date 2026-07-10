@@ -68,8 +68,12 @@ public sealed class AgentClientIntegrationTests
 
         var client = new AgentClient(TestConfig(server.BaseUrl, ConfiguredDefaultModel()), ["read"]);
         var history = new List<ChatMessage> { new("user", "read the note") };
+        var steeringComments = new Queue<IReadOnlyList<string>>();
+        steeringComments.Enqueue(["also check whether the note is empty"]);
 
-        var (response, tokenCount) = await WithTimeout(client.ChatWithToolsAsync(history));
+        var (response, tokenCount) = await WithTimeout(client.ChatWithToolsAsync(
+            history,
+            takeSteeringComments: () => steeringComments.Count > 0 ? steeringComments.Dequeue() : []));
 
         Assert.Equal("done", response);
         Assert.Equal(492, tokenCount);
@@ -85,11 +89,17 @@ public sealed class AgentClientIntegrationTests
             message.GetProperty("role").GetString() == "tool" &&
             message.GetProperty("tool_call_id").GetString() == "call_read_1" &&
             MessageText(message).Contains("tool result text", StringComparison.Ordinal));
+        Assert.Contains(secondMessages, message =>
+            message.GetProperty("role").GetString() == "user" &&
+            MessageText(message) == "User steering comment: also check whether the note is empty");
 
         Assert.Contains(history, message =>
             message.Role == "assistant" &&
             message.Content.Contains("Tool call from prior turn: read", StringComparison.Ordinal) &&
             message.Content.Contains("tool result text", StringComparison.Ordinal));
+        Assert.Contains(history, message =>
+            message.Role == "user" &&
+            message.Content == "User steering comment: also check whether the note is empty");
         Assert.Equal("done", history[^1].Content);
     }
 

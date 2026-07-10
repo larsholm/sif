@@ -187,7 +187,7 @@ internal class AgentApp
 
         AnsiConsole.MarkupLine(BuildChatHeader(config, modelInfo, tools, mcpService, skills.Count));
         AnsiConsole.MarkupLine("Type [bold]/quit[/] or [bold]/exit[/] to quit, [bold]/clear[/] to reset conversation, [bold]/context[/] to inspect context, [bold]/help[/] for help.");
-        AnsiConsole.MarkupLine("[dim]While the agent is working, type 'btw <comment>' and press Enter to steer it.[/]");
+        AnsiConsole.MarkupLine("[dim]While the agent is working, 'btw <comment>' waits for the next tool call; any other comment interrupts.[/]");
         AnsiConsole.MarkupLine("[dim]Press Ctrl+C to exit.[/]\n");
 
         var history = new List<ChatMessage>();
@@ -275,12 +275,15 @@ internal class AgentApp
             var historyContent = PrepareUserMessageForHistory(trimmed, tools);
             history.Add(new ChatMessage("user", historyContent));
 
+            IReadOnlyList<string> queuedSteeringComments = [];
             try
             {
                 if (tools?.Length > 0)
                 {
                     AnsiConsole.Write(new Markup("[green]agent>[/] "));
-                    var (response, tokenCount) = await RunWithChatControls(ct => client.ChatWithToolsAsync(history, ct));
+                    var turn = await RunWithChatControls((ct, mailbox) => client.ChatWithToolsAsync(history, ct, mailbox.TakeAll));
+                    var (response, tokenCount) = turn.Result;
+                    queuedSteeringComments = turn.PendingComments;
                     var ctxEstimate = ContextCommandHandler.EstimateContextSize(history);
                     AnsiConsole.MarkupLine($"[dim]\n({tokenCount} tokens, {ctxEstimate} context)[/]\n");
                 }
@@ -292,7 +295,9 @@ internal class AgentApp
                     if (useNonStream)
                         AnsiConsole.MarkupLine("[dim](thinking enabled, using non-streaming mode)[/]");
                     AnsiConsole.Write(new Markup("[green]agent>[/] "));
-                    var (response, reasoning) = await RunWithChatControls(ct => client.ChatAsync(history, ct));
+                    var turn = await RunWithChatControls((ct, _) => client.ChatAsync(history, ct));
+                    var (response, reasoning) = turn.Result;
+                    queuedSteeringComments = turn.PendingComments;
                     if (!string.IsNullOrEmpty(reasoning))
                     {
                         AnsiConsole.MarkupLine("");
@@ -308,7 +313,9 @@ internal class AgentApp
                 else
                 {
                     AnsiConsole.Write(new Markup("[green]agent>[/] "));
-                    var (response, tokenCount) = await RunWithChatControls(ct => client.ChatStreamingAsync(history, ct));
+                    var turn = await RunWithChatControls((ct, _) => client.ChatStreamingAsync(history, ct));
+                    var (response, tokenCount) = turn.Result;
+                    queuedSteeringComments = turn.PendingComments;
                     history.Add(new ChatMessage("assistant", response));
                     var ctxEstimate = ContextCommandHandler.EstimateContextSize(history);
                     AnsiConsole.MarkupLine($"[dim]\n({tokenCount} tokens, {ctxEstimate} context)[/]\n");
@@ -335,6 +342,9 @@ internal class AgentApp
                 AnsiConsole.MarkupLine($"[dim]Debug saved to {debugPath.EscapeMarkup()}[/]\n");
                 RollbackToLastUserMessage(history);
             }
+
+            if (queuedSteeringComments.Count > 0)
+                pendingInput = FormatSteeringComments(queuedSteeringComments);
 
             // Check if we should compact the conversation history
             _ = await HistoryCompactor.MaybeCompactAsync(history, client, config, HasContextTool(tools));
@@ -369,11 +379,12 @@ internal class AgentApp
     /// Runs a chat turn while accepting Escape cancellation and a <c>btw</c>
     /// steering comment from the terminal.
     /// </summary>
-    private static async Task<T> RunWithChatControls<T>(Func<CancellationToken, Task<T>> action)
+    private static async Task<(T Result, IReadOnlyList<string> PendingComments)> RunWithChatControls<T>(Func<CancellationToken, SteeringMailbox, Task<T>> action)
     {
         using var cts = new CancellationTokenSource();
-        var actionTask = action(cts.Token);
-        var controlTask = WatchChatControlsAsync(cts);
+        var mailbox = new SteeringMailbox();
+        var actionTask = action(cts.Token, mailbox);
+        var controlTask = WatchChatControlsAsync(cts, mailbox);
 
         try
         {
@@ -392,13 +403,25 @@ internal class AgentApp
                 throw new OperationCanceledException(cts.Token);
             }
 
-            return await actionTask;
+            var result = await actionTask;
+            // Stop the console watcher before draining its queue, so a comment
+            // typed as the turn finishes cannot be stranded in the mailbox.
+            cts.Cancel();
+            try { await controlTask; } catch { }
+            return (result, mailbox.TakeAll());
         }
         finally
         {
             cts.Cancel();
             try { await controlTask; } catch { }
         }
+    }
+
+    private static string FormatSteeringComments(IReadOnlyList<string> comments)
+    {
+        return comments.Count == 1
+            ? $"User steering comment: {comments[0]}"
+            : "User steering comments:\n" + string.Join("\n", comments.Select(comment => $"- {comment}"));
     }
 
     private static string PrepareUserMessageForHistory(string message, string[]? tools)
@@ -479,7 +502,7 @@ internal class AgentApp
         }
     }
 
-    private static async Task<string?> WatchChatControlsAsync(CancellationTokenSource cts)
+    private static async Task<string?> WatchChatControlsAsync(CancellationTokenSource cts, SteeringMailbox mailbox)
     {
         var input = new StringBuilder();
         bool promptShown = false;
@@ -504,13 +527,22 @@ internal class AgentApp
                             continue;
 
                         Console.WriteLine();
-                        if (SteeringComment.TryParse(input.ToString(), out var comment))
+                        if (SteeringComment.TryParse(input.ToString(), out var comment, out var deferUntilToolCall))
                         {
+                            if (deferUntilToolCall)
+                            {
+                                mailbox.Enqueue(comment);
+                                AnsiConsole.MarkupLine("[dim]Steering comment queued for the next tool call.[/]");
+                                input.Clear();
+                                promptShown = false;
+                                continue;
+                            }
+
                             cts.Cancel();
                             return comment;
                         }
 
-                        AnsiConsole.MarkupLine("[yellow]Use 'btw <comment>' to steer the agent, or Escape to cancel.[/]");
+                        AnsiConsole.MarkupLine("[yellow]Enter a steering comment, or Escape to cancel.[/]");
                         input.Clear();
                         promptShown = false;
                         continue;
@@ -565,6 +597,31 @@ internal class AgentApp
             : base("Agent turn was steered by the user.")
         {
             Comment = comment;
+        }
+    }
+
+    private sealed class SteeringMailbox
+    {
+        private readonly object _sync = new();
+        private readonly List<string> _comments = [];
+
+        public void Enqueue(string comment)
+        {
+            lock (_sync)
+                _comments.Add(comment);
+        }
+
+        public IReadOnlyList<string> TakeAll()
+        {
+            lock (_sync)
+            {
+                if (_comments.Count == 0)
+                    return [];
+
+                var comments = _comments.ToArray();
+                _comments.Clear();
+                return comments;
+            }
         }
     }
 
@@ -783,7 +840,8 @@ internal class AgentApp
         table.AddRow("[bold]/context clear-history[/]", "Clear conversation history and keep the system prompt");
         table.AddRow("[bold]/context clear-store[/]", "Delete stored context entries for this session");
         table.AddRow("[bold]/context clear all[/]", "Clear chat history and stored context");
-        table.AddRow("[bold]btw <comment>[/]", "While the agent is working, cancel and resume it with a steering comment");
+        table.AddRow("[bold]btw <comment>[/]", "While the agent is working, queue a steering comment for the next tool call");
+        table.AddRow("[bold]<comment>[/]", "While the agent is working, interrupt and resume with a steering comment");
         table.AddRow("[bold]/vscode[/]", "Show detected VS Code terminal/editor context");
         table.AddRow("[bold]/debug[/]", "Show recent errors (saved to log, survives /clear)");
         table.AddRow("[bold]/debug latest[/]", "Show full details of the most recent error");

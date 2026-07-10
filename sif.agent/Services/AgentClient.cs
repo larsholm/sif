@@ -127,7 +127,10 @@ internal class AgentClient
     /// Chat with tool calling support. Loops through tool calls until the model
     /// returns a text response. Returns (responseText, totalTokenCount).
     /// </summary>
-    public async Task<(string Response, int TokenCount)> ChatWithToolsAsync(List<ChatMessage> history, CancellationToken cancellationToken = default)
+    public async Task<(string Response, int TokenCount)> ChatWithToolsAsync(
+        List<ChatMessage> history,
+        CancellationToken cancellationToken = default,
+        Func<IReadOnlyList<string>>? takeSteeringComments = null)
     {
         var messages = history.Select(m => ToRequestMessage(m)).ToList();
         int totalTokens = 0;
@@ -280,7 +283,17 @@ internal class AgentClient
                         history.Add(new ChatMessage("assistant", toolCallContent));
                     }
 
-                    // Continue the loop to get the next response
+                    if (takeSteeringComments?.Invoke() is { Count: > 0 } steeringComments)
+                    {
+                        foreach (var comment in steeringComments)
+                        {
+                            var steeringMessage = $"User steering comment: {comment}";
+                            history.Add(new ChatMessage("user", steeringMessage));
+                            messages.Add(OpenAI.Chat.ChatMessage.CreateUserMessage(steeringMessage));
+                        }
+                    }
+
+                    // Continue the loop to get the next response.
                     continue;
                 }
 
