@@ -28,24 +28,13 @@ internal sealed class ConversationStore
     private string HistoryPath => Path.Combine(SessionPath, "history.json");
 
     public static ConversationStore Create(string? model = null)
-    {
-        var now = DateTimeOffset.UtcNow;
-        var session = new ConversationSession(
-            "chat_" + Guid.NewGuid().ToString("N")[..12],
-            now.ToString("O"),
-            now.ToString("O"),
-            ActiveStatus,
-            0,
-            "New conversation",
-            model,
-            ContextStore.GetSessionId());
-        var store = new ConversationStore(DefaultRootPath, session);
-        store.Save([]);
-        return store;
-    }
+        => Create(DefaultRootPath, model, Environment.CurrentDirectory);
 
-    // Test-only overload: production callers should use the default user data path.
+    // Test-only overloads: production callers should use the default user data path.
     internal static ConversationStore Create(string rootPath, string? model)
+        => Create(rootPath, model, Environment.CurrentDirectory);
+
+    internal static ConversationStore Create(string rootPath, string? model, string workingDirectory)
     {
         var now = DateTimeOffset.UtcNow;
         var session = new ConversationSession(
@@ -56,7 +45,8 @@ internal sealed class ConversationStore
             0,
             "New conversation",
             model,
-            ContextStore.GetSessionId());
+            ContextStore.GetSessionId(),
+            NormalizeDirectory(workingDirectory));
         var store = new ConversationStore(rootPath, session);
         store.Save([]);
         return store;
@@ -109,7 +99,15 @@ internal sealed class ConversationStore
     }
 
     public static ConversationSession? FindMostRecentActive()
-        => List().FirstOrDefault(session => string.Equals(session.Status, ActiveStatus, StringComparison.OrdinalIgnoreCase));
+        => FindMostRecentActive(DefaultRootPath, Environment.CurrentDirectory);
+
+    internal static ConversationSession? FindMostRecentActive(string rootPath, string workingDirectory)
+    {
+        var normalizedWorkingDirectory = NormalizeDirectory(workingDirectory);
+        return List(rootPath).FirstOrDefault(session =>
+            string.Equals(session.Status, ActiveStatus, StringComparison.OrdinalIgnoreCase) &&
+            IsSameDirectory(session.WorkingDirectory, normalizedWorkingDirectory));
+    }
 
     public static bool TryOpen(string id, out ConversationStore? store, out List<ChatMessage>? history, out string error)
         => TryOpen(DefaultRootPath, id, out store, out history, out error);
@@ -221,6 +219,27 @@ internal sealed class ConversationStore
 
     private static DateTimeOffset ParseTimestamp(string timestamp)
         => DateTimeOffset.TryParse(timestamp, out var value) ? value : DateTimeOffset.MinValue;
+
+    private static string NormalizeDirectory(string path)
+        => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+
+    private static bool IsSameDirectory(string? savedDirectory, string normalizedWorkingDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(savedDirectory))
+            return false;
+
+        try
+        {
+            return string.Equals(
+                NormalizeDirectory(savedDirectory),
+                normalizedWorkingDirectory,
+                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+    }
 }
 
 internal sealed record ConversationSession(
@@ -231,6 +250,7 @@ internal sealed record ConversationSession(
     int MessageCount,
     string Preview,
     string? Model,
-    string? ContextSessionId = null);
+    string? ContextSessionId = null,
+    string? WorkingDirectory = null);
 
 internal sealed record StoredChatMessage(string Role, string Content, string? ToolCallId);

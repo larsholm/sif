@@ -29,6 +29,7 @@ public sealed class GeneralBehaviorTests
             Assert.Equal(3, summary.MessageCount);
             Assert.Equal("Remember this task.", summary.Preview);
             Assert.Equal("test-model", summary.Model);
+            Assert.Equal(Path.TrimEndingDirectorySeparator(Path.GetFullPath(Environment.CurrentDirectory)), summary.WorkingDirectory);
 
             Assert.True(ConversationStore.TryOpen(root, store.Session.Id[5..], out var reopened, out var restored, out var error), error);
             Assert.NotNull(reopened);
@@ -36,6 +37,52 @@ public sealed class GeneralBehaviorTests
 
             reopened!.Close();
             Assert.Equal("closed", Assert.Single(ConversationStore.List(root)).Status);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ConversationRecoveryOnlyFindsActiveChatsFromTheSameFolder()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "sif-conversations-" + Guid.NewGuid().ToString("N"));
+        var currentFolder = Path.Combine(root, "project-a");
+        var otherFolder = Path.Combine(root, "project-b");
+        try
+        {
+            var matching = ConversationStore.Create(root, null, currentFolder);
+            ConversationStore.Create(root, null, otherFolder);
+
+            var found = ConversationStore.FindMostRecentActive(root, currentFolder + Path.DirectorySeparatorChar);
+
+            Assert.NotNull(found);
+            Assert.Equal(matching.Session.Id, found.Id);
+            Assert.Null(ConversationStore.FindMostRecentActive(root, Path.Combine(root, "project-c")));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ConversationRecoveryIgnoresLegacyChatsWithoutFolderMetadata()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "sif-conversations-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = ConversationStore.Create(root, null, Path.Combine(root, "project"));
+            var metadataPath = Path.Combine(root, store.Session.Id, "session.json");
+            var metadata = File.ReadAllText(metadataPath).Replace(
+                $",\"WorkingDirectory\":{JsonSerializer.Serialize(store.Session.WorkingDirectory)}",
+                "");
+            File.WriteAllText(metadataPath, metadata);
+
+            Assert.Null(ConversationStore.FindMostRecentActive(root, Path.Combine(root, "project")));
         }
         finally
         {
