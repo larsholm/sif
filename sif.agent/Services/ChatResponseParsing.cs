@@ -42,6 +42,34 @@ internal static class ChatResponseParsing
         return "";
     }
 
+    /// <summary>
+    /// Returns whether the raw response contains a non-empty <c>choices</c> array.
+    /// Local OpenAI-compatible servers (vLLM, llama.cpp, …) occasionally return a
+    /// response with an empty or missing <c>choices</c> array. The SDK's flattened
+    /// accessors (<c>Content</c>, <c>ToolCalls</c>, <c>Role</c>, …) all dereference
+    /// <c>Choices[0]</c> and would throw <see cref="ArgumentOutOfRangeException"/>.
+    /// Defaults to <c>true</c> when the response can't be parsed, so this never
+    /// suppresses an otherwise valid completion.
+    /// </summary>
+    public static bool HasChoices(ClientResult<OpenAI.Chat.ChatCompletion> result)
+    {
+        try
+        {
+            var json = result.GetRawResponse().Content.ToString();
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("choices", out var choices) &&
+                choices.ValueKind == JsonValueKind.Array)
+            {
+                return choices.GetArrayLength() > 0;
+            }
+        }
+        catch
+        {
+            // Couldn't parse — assume choices are present and let normal handling proceed.
+        }
+        return true;
+    }
+
     public static bool IsJsonObject(string text)
     {
         if (!JsonArgs.TryParseObject(text, out var doc, out _))

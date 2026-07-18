@@ -114,6 +114,9 @@ internal class AgentClient
         ApplyThinkingOptions(opts);
         var result = await _chatClient.CompleteChatAsync(messages, opts);
 
+        if (!ChatResponseParsing.HasChoices(result))
+            throw new InvalidOperationException("The model server returned an empty response (no choices).");
+
         string reasoningText = ChatResponseParsing.ExtractReasoningFromRawResponse(result);
         var contentText = ExtractText(result.Value.Content);
 
@@ -138,6 +141,7 @@ internal class AgentClient
         int totalOutputTokens = 0;
         var totalTime = TimeSpan.Zero;
         var malformedToolCallRetries = 0;
+        var emptyResponseRetries = 0;
 
         while (true)
             {
@@ -170,6 +174,23 @@ internal class AgentClient
                 totalTokens += usage?.TotalTokenCount ?? 0;
                 totalOutputTokens += usage?.OutputTokenCount ?? 0;
                 totalTime += sw.Elapsed;
+
+                // Guard against a degenerate completion with an empty `choices` array.
+                // The SDK's flattened accessors (.Content, .ToolCalls, …) dereference
+                // Choices[0] and would throw ArgumentOutOfRangeException. Retry once for
+                // a transient empty response, then surface a clear error.
+                if (!ChatResponseParsing.HasChoices(result))
+                {
+                    if (emptyResponseRetries == 0)
+                    {
+                        emptyResponseRetries++;
+                        AnsiConsole.MarkupLine("\n[yellow]Model returned an empty response (no choices); retrying once.[/]");
+                        continue;
+                    }
+                    throw new InvalidOperationException(
+                        "The model server returned an empty response (no choices) after a retry. " +
+                        "This usually means the local model failed to generate output; try again or check the server logs.");
+                }
 
                 // Extract reasoning from the raw response (vLLM/Qwen) or from content tags
                 string reasoningText = ChatResponseParsing.ExtractReasoningFromRawResponse(result);
@@ -335,6 +356,9 @@ internal class AgentClient
         var opts = new OpenAI.Chat.ChatCompletionOptions();
         ApplyThinkingOptions(opts);
         var result = await _chatClient.CompleteChatAsync(messages, opts, cancellationToken);
+
+        if (!ChatResponseParsing.HasChoices(result))
+            throw new InvalidOperationException("The model server returned an empty response (no choices).");
 
         string reasoningText = ChatResponseParsing.ExtractReasoningFromRawResponse(result);
         var contentText = ExtractText(result.Value.Content);
