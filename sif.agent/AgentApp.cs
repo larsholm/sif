@@ -2334,34 +2334,11 @@ internal class AgentApp
             var effectiveWidth = Math.Max(width - indent, 1);
             var text = sb.ToString();
             var lines = text.Split('\n');
-
-            int RowsForLine(string line) => Math.Max((line.Length + effectiveWidth - 1) / effectiveWidth, 1);
-
-            (int Row, int Column) CursorPosition()
-            {
-                var textUpToCursor = text.Substring(0, Math.Min(cursor, text.Length));
-                var cursorLine = textUpToCursor.Count(c => c == '\n');
-                var lastNewline = textUpToCursor.LastIndexOf('\n');
-                var colOnLine = lastNewline == -1
-                    ? textUpToCursor.Length
-                    : textUpToCursor.Length - lastNewline - 1;
-                var currentLineLength = lines[Math.Min(cursorLine, lines.Length - 1)].Length;
-
-                var row = 0;
-                for (int i = 0; i < cursorLine; i++)
-                    row += RowsForLine(lines[i]);
-
-                if (colOnLine == 0)
-                    return (row, indent);
-
-                if (colOnLine < currentLineLength && colOnLine % effectiveWidth == 0)
-                    return (row + (colOnLine / effectiveWidth), indent);
-
-                return (row + ((colOnLine - 1) / effectiveWidth), indent + ((colOnLine - 1) % effectiveWidth) + 1);
-            }
-
-            var visibleLines = lines.Sum(RowsForLine);
-            var cursorPosition = CursorPosition();
+            var wrappedLines = lines
+                .Select(line => TerminalInputLayout.WrapLine(line, effectiveWidth))
+                .ToList();
+            var visibleLines = wrappedLines.Sum(line => line.Count);
+            var cursorPosition = TerminalInputLayout.GetCursorPosition(text, cursor, effectiveWidth, indent);
 
             // Move from the old cursor position back to the top of the previous render.
             for (int i = 0; i < renderedCursorRow; i++)
@@ -2381,21 +2358,18 @@ internal class AgentApp
 
             // Re-render from scratch and wrap manually so long input lines have stable rows.
             AnsiConsole.Write(new Markup(PromptMarkup));
-            for (int i = 0; i < lines.Length; i++)
+            for (int i = 0; i < wrappedLines.Count; i++)
             {
-                var line = lines[i];
-                if (line.Length > 0)
+                var segments = wrappedLines[i];
+                for (int segmentIndex = 0; segmentIndex < segments.Count; segmentIndex++)
                 {
-                    for (int offset = 0; offset < line.Length; offset += effectiveWidth)
-                    {
-                        if (offset > 0)
-                            Console.Write("\n" + new string(' ', indent));
+                    if (segmentIndex > 0)
+                        Console.Write("\n" + new string(' ', indent));
 
-                        Console.Write(line.Substring(offset, Math.Min(effectiveWidth, line.Length - offset)));
-                    }
+                    Console.Write(segments[segmentIndex]);
                 }
 
-                if (i < lines.Length - 1) Console.Write("\n" + new string(' ', indent));
+                if (i < wrappedLines.Count - 1) Console.Write("\n" + new string(' ', indent));
             }
 
             for (int i = 0; i < visibleLines - cursorPosition.Row - 1; i++)
