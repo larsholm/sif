@@ -34,6 +34,8 @@ public sealed class SteeringCommentTests
     [Theory]
     [InlineData("")]
     [InlineData("   ")]
+    [InlineData("\t")]
+    [InlineData(" \t ")]
     [InlineData("btw")]
     [InlineData("btw    ")]
     public void TryParseRejectsEmptyComments(string input)

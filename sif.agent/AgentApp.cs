@@ -581,11 +581,21 @@ internal class AgentApp
 
                     if (key.Key == ConsoleKey.Enter)
                     {
-                        if (!promptShown)
+                        var submittedInput = input.ToString();
+                        if (string.IsNullOrWhiteSpace(submittedInput))
+                        {
+                            if (promptShown)
+                            {
+                                Console.WriteLine();
+                                input.Clear();
+                                promptShown = false;
+                            }
+
                             continue;
+                        }
 
                         Console.WriteLine();
-                        if (SteeringComment.TryParse(input.ToString(), out var comment, out var deferUntilToolCall))
+                        if (SteeringComment.TryParse(submittedInput, out var comment, out var deferUntilToolCall))
                         {
                             if (deferUntilToolCall)
                             {
