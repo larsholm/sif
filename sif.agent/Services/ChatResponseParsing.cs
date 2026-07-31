@@ -1,5 +1,7 @@
 using System.ClientModel;
 #pragma warning disable OPENAI001
+using System.Net.Http;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 
@@ -89,6 +91,75 @@ internal static class ChatResponseParsing
                text.Contains("attempting to parse an empty input", StringComparison.Ordinal) ||
                text.Contains("<tool_call>", StringComparison.Ordinal) ||
                text.Contains("<function=", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Returns whether a failed model request is safe to retry without changing
+    /// the conversation. This includes temporary provider statuses and transport
+    /// failures, but deliberately excludes malformed tool-call responses because
+    /// those need the stricter recovery prompt used by the agent loop.
+    /// </summary>
+    public static bool IsTransientModelFailure(Exception ex)
+    {
+        if (ex is ClientResultException clientEx)
+        {
+            if (IsProviderToolParseError(clientEx))
+                return false;
+
+            var status = TryGetStatus(clientEx);
+            if (status is 408 or 429 or 500 or 502 or 503 or 504)
+                return true;
+        }
+
+        if (ex is AggregateException aggregate &&
+            aggregate.InnerExceptions.Any(IsTransientModelFailure))
+        {
+            return true;
+        }
+
+        if (ex is HttpRequestException or SocketException or IOException or TaskCanceledException)
+            return true;
+
+        return ex.InnerException is not null && IsTransientModelFailure(ex.InnerException);
+    }
+
+    public static string DescribeTransientModelFailure(Exception ex)
+    {
+        if (TryFindClientResultException(ex) is { } clientEx && TryGetStatus(clientEx) is > 0 and var status)
+            return $"HTTP {status}";
+
+        return ex is TaskCanceledException || ex.InnerException is TaskCanceledException
+            ? "request timeout"
+            : "connection failure";
+    }
+
+    private static ClientResultException? TryFindClientResultException(Exception ex)
+    {
+        if (ex is ClientResultException clientEx)
+            return clientEx;
+
+        if (ex is AggregateException aggregate)
+        {
+            foreach (var inner in aggregate.InnerExceptions)
+            {
+                if (TryFindClientResultException(inner) is { } found)
+                    return found;
+            }
+        }
+
+        return ex.InnerException is null ? null : TryFindClientResultException(ex.InnerException);
+    }
+
+    private static int TryGetStatus(ClientResultException ex)
+    {
+        try
+        {
+            return ex.GetRawResponse()?.Status ?? 0;
+        }
+        catch
+        {
+            return 0;
+        }
     }
 
     public static string TryReadRawResponse(ClientResultException ex)

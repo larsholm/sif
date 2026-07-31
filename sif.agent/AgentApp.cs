@@ -395,8 +395,11 @@ internal class AgentApp
                 var debugPath = DebugLog.Save("chat-loop", ex, "during conversation");
                 AnsiConsole.MarkupLine($"[red]Error:[/] {AgentErrorFormatter.ToUserMessage(ex).EscapeMarkup()}");
                 AnsiConsole.MarkupLine($"[dim]Debug saved to {debugPath.EscapeMarkup()}[/]\n");
-                RollbackToLastUserMessage(history);
+                // Keep the original task and any completed tool results. Transient
+                // failures are retried inside AgentClient; if those retries are
+                // exhausted, the user can continue without losing task context.
                 conversation.Save(history);
+                AnsiConsole.MarkupLine("[dim]Task and completed tool progress kept in context; retry or type 'continue' when the provider is available.[/]\n");
             }
 
             if (queuedSteeringComments.Count > 0)

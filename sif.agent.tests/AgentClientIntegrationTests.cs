@@ -198,6 +198,58 @@ public sealed class AgentClientIntegrationTests
             MessageText(message).Contains("valid JSON object", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public async Task ChatWithToolsRecoversFromBadGatewayAndKeepsToolProgress()
+    {
+        var dir = CreateTempDirectory();
+        var file = Path.Combine(dir, "progress.txt");
+        await File.WriteAllTextAsync(file, "completed tool work");
+
+        await using var server = new ChatCompletionStub();
+        server.Enqueue(ChatResponse("""
+            {
+              "role": "assistant",
+              "content": null,
+              "tool_calls": [
+                {
+                  "id": "call_read_before_502",
+                  "type": "function",
+                  "function": {
+                    "name": "read",
+                    "arguments": "__ARGS__"
+                  }
+                }
+              ]
+            }
+            """.Replace("__ARGS__", JsonEncodedText.Encode($$"""{"path":"{{file}}"}""").ToString()), finishReason: "tool_calls"));
+
+        var badGateway = """{"error":{"message":"temporary upstream failure","code":502}}""";
+        // The OpenAI SDK makes four attempts before surfacing a 502 to Sif.
+        server.Enqueue(502, badGateway);
+        server.Enqueue(502, badGateway);
+        server.Enqueue(502, badGateway);
+        server.Enqueue(502, badGateway);
+        server.Enqueue(ChatResponse("""{"role":"assistant","content":"task completed after recovery"}"""));
+
+        var client = new AgentClient(TestConfig(server.BaseUrl, ConfiguredDefaultModel()), ["read"]);
+        var history = new List<ChatMessage> { new("user", "read the file and finish the task") };
+
+        var (response, _) = await WithTimeout(client.ChatWithToolsAsync(history));
+
+        Assert.Equal("task completed after recovery", response);
+        Assert.Equal(6, server.Requests.Count);
+        Assert.Contains(history, message =>
+            message.Role == "assistant" &&
+            message.Content.Contains("completed tool work", StringComparison.Ordinal));
+        Assert.Equal("task completed after recovery", history[^1].Content);
+
+        var recoveredRequest = server.Requests[^1].Json.RootElement;
+        var recoveredMessages = recoveredRequest.GetProperty("messages").EnumerateArray().ToArray();
+        Assert.Contains(recoveredMessages, message =>
+            message.GetProperty("role").GetString() == "tool" &&
+            MessageText(message).Contains("completed tool work", StringComparison.Ordinal));
+    }
+
     private static AgentConfig TestConfig(string baseUrl, string model)
     {
         return new AgentConfig

@@ -13,6 +13,7 @@ namespace sif.agent;
 /// </summary>
 internal class AgentClient
 {
+    private const int MaxTransientModelRetries = 2;
     private readonly OpenAI.Chat.ChatClient _chatClient;
     private readonly HashSet<string> _availableLocalTools = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _activeLocalTools = new(StringComparer.OrdinalIgnoreCase);
@@ -112,7 +113,7 @@ internal class AgentClient
 
         var opts = new OpenAI.Chat.ChatCompletionOptions();
         ApplyThinkingOptions(opts);
-        var result = await _chatClient.CompleteChatAsync(messages, opts);
+        var result = await CompleteChatWithRecoveryAsync(messages, opts, CancellationToken.None);
 
         if (!ChatResponseParsing.HasChoices(result))
             throw new InvalidOperationException("The model server returned an empty response (no choices).");
@@ -155,7 +156,7 @@ internal class AgentClient
                 ClientResult<OpenAI.Chat.ChatCompletion> result;
                 try
                 {
-                    result = await _chatClient.CompleteChatAsync(messages, opts, cancellationToken);
+                    result = await CompleteChatWithRecoveryAsync(messages, opts, cancellationToken);
                 }
                 catch (ClientResultException ex) when (malformedToolCallRetries == 0 && ChatResponseParsing.IsProviderToolParseError(ex))
                 {
@@ -355,7 +356,7 @@ internal class AgentClient
         var messages = history.Select(m => ToRequestMessage(m)).ToList();
         var opts = new OpenAI.Chat.ChatCompletionOptions();
         ApplyThinkingOptions(opts);
-        var result = await _chatClient.CompleteChatAsync(messages, opts, cancellationToken);
+        var result = await CompleteChatWithRecoveryAsync(messages, opts, cancellationToken);
 
         if (!ChatResponseParsing.HasChoices(result))
             throw new InvalidOperationException("The model server returned an empty response (no choices).");
@@ -368,6 +369,38 @@ internal class AgentClient
             reasoningText = ChatResponseParsing.ExtractThinking(contentText);
 
         return (ChatResponseParsing.StripThinkingTags(contentText), reasoningText);
+    }
+
+    /// <summary>
+    /// Retries temporary provider and transport failures in place. Keeping the
+    /// same request messages is important in tool mode: the model can continue
+    /// from tool results it already produced instead of restarting the task.
+    /// </summary>
+    private async Task<ClientResult<OpenAI.Chat.ChatCompletion>> CompleteChatWithRecoveryAsync(
+        IEnumerable<OpenAI.Chat.ChatMessage> messages,
+        OpenAI.Chat.ChatCompletionOptions options,
+        CancellationToken cancellationToken)
+    {
+        for (var retry = 0; ; retry++)
+        {
+            try
+            {
+                return await _chatClient.CompleteChatAsync(messages, options, cancellationToken);
+            }
+            catch (Exception ex) when (
+                !cancellationToken.IsCancellationRequested &&
+                retry < MaxTransientModelRetries &&
+                ChatResponseParsing.IsTransientModelFailure(ex))
+            {
+                var attempt = retry + 1;
+                var delay = TimeSpan.FromSeconds(attempt);
+                var reason = ChatResponseParsing.DescribeTransientModelFailure(ex);
+                AnsiConsole.MarkupLine(
+                    $"\n[yellow]Temporary model provider failure ({reason.EscapeMarkup()}); " +
+                    $"continuing this task in {delay.TotalSeconds:0}s ({attempt}/{MaxTransientModelRetries}).[/]");
+                await Task.Delay(delay, cancellationToken);
+            }
+        }
     }
 
     /// <summary>
