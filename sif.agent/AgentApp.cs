@@ -200,7 +200,7 @@ internal class AgentApp
         ConversationStore conversation;
         var interruptedConversation = ConversationStore.FindMostRecentActive();
         if (interruptedConversation != null && AnsiConsole.Confirm(
-                $"[yellow]An unfinished chat from {interruptedConversation.UpdatedAt.EscapeMarkup()} was found. Resume it?[/]", true))
+                $"[yellow]An unfinished chat from {interruptedConversation.UpdatedAt.EscapeMarkup()} was found. Resume it?[/]", false))
         {
             if (ConversationStore.TryOpen(interruptedConversation.Id, out var resumedConversation, out var resumedHistory, out var resumeError))
             {
