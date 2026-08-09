@@ -141,6 +141,10 @@ internal class AgentClient
         int totalTokens = 0;
         int totalOutputTokens = 0;
         var totalTime = TimeSpan.Zero;
+        var toolTime = TimeSpan.Zero;
+        int modelCalls = 0;
+        int toolCallCount = 0;
+        var turnSw = System.Diagnostics.Stopwatch.StartNew();
         var malformedToolCallRetries = 0;
         var emptyResponseRetries = 0;
 
@@ -175,6 +179,7 @@ internal class AgentClient
                 totalTokens += usage?.TotalTokenCount ?? 0;
                 totalOutputTokens += usage?.OutputTokenCount ?? 0;
                 totalTime += sw.Elapsed;
+                modelCalls++;
 
                 // Guard against a degenerate completion with an empty `choices` array.
                 // The SDK's flattened accessors (.Content, .ToolCalls, …) dereference
@@ -227,6 +232,7 @@ internal class AgentClient
                         var preview = argsJson.Length > 80 ? argsJson.Substring(0, 80) + "..." : argsJson;
                         AnsiConsole.MarkupLine($"\n[dim]Tool: {toolName.EscapeMarkup()} ({preview.EscapeMarkup()})[/]");
 
+                        var toolSw = System.Diagnostics.Stopwatch.StartNew();
                         string toolResult;
                         try
                         {
@@ -274,6 +280,10 @@ internal class AgentClient
                             AnsiConsole.MarkupLine($"[dim]Debug saved to {debugPath.EscapeMarkup()}[/]");
                         }
 
+                        toolSw.Stop();
+                        toolTime += toolSw.Elapsed;
+                        toolCallCount++;
+
                         if (!string.IsNullOrEmpty(normalizedCall.Warning))
                             toolResult = normalizedCall.Warning + "\n\n" + toolResult;
 
@@ -289,9 +299,9 @@ internal class AgentClient
 
                         // Display tool result
                         if (toolResult.Length > 8000)
-                            AnsiConsole.MarkupLine($"[dim]Result: {toolResult.Substring(0, 8000).EscapeMarkup()}... (truncated)[/]");
+                            AnsiConsole.MarkupLine($"[dim]Result ({toolSw.Elapsed.TotalSeconds:F1}s): {toolResult.Substring(0, 8000).EscapeMarkup()}... (truncated)[/]");
                         else
-                            AnsiConsole.MarkupLine($"[dim]Result: {toolResult.EscapeMarkup()}[/]");
+                            AnsiConsole.MarkupLine($"[dim]Result ({toolSw.Elapsed.TotalSeconds:F1}s): {toolResult.EscapeMarkup()}[/]");
 
                         // Truncate long results for the model
                         if (toolResult.Length > 120000)
@@ -329,10 +339,12 @@ internal class AgentClient
                 AnsiConsole.WriteLine();
                 
                 // Display TPS stats
+                turnSw.Stop();
                 if (totalTime.TotalSeconds > 0 && totalOutputTokens > 0)
                 {
                     var tps = totalOutputTokens / totalTime.TotalSeconds;
                     AnsiConsole.MarkupLine($"[dim]⚡ {totalOutputTokens:N0} output tokens in {totalTime.TotalSeconds:F1}s ({tps:F1} tps) | {totalTokens:N0} total tokens[/]");
+                    AnsiConsole.MarkupLine($"[dim]⏱ turn {turnSw.Elapsed.TotalSeconds:F1}s | model {totalTime.TotalSeconds:F1}s ({modelCalls} {(modelCalls == 1 ? "call" : "calls")}) | tools {toolTime.TotalSeconds:F1}s ({toolCallCount} {(toolCallCount == 1 ? "call" : "calls")})[/]");
                 }
                 else if (totalTokens > 0)
                 {
