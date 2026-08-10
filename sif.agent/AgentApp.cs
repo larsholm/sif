@@ -2319,6 +2319,81 @@ internal class AgentApp
         return (process.ExitCode, await outputTask, await errorTask);
     }
 
+    private readonly record struct SlashSuggestion(string Insert, string Display, string Description);
+
+    private static readonly (string Name, string Description, bool TakesArgs)[] ChatSlashCommands =
+    [
+        ("/help", "Show available commands", false),
+        ("/clear", "Clear conversation history and keep the system prompt", false),
+        ("/context", "Show chat history and stored context summary", true),
+        ("/model", "Select a model profile interactively, or switch by name", true),
+        ("/resume", "Load a saved conversation", true),
+        ("/sys", "Change the system prompt", true),
+        ("/vscode", "Show detected VS Code terminal/editor context", false),
+        ("/debug", "Show recent errors", true),
+        ("/quit", "Exit the chat session", false),
+        ("/exit", "Exit the chat session", false),
+    ];
+
+    private static readonly Dictionary<string, (string Name, string Description, bool TakesArgs)[]> ChatSlashSubcommands =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["/context"] =
+            [
+                ("stats", "Show chat history and stored context summary", false),
+                ("full", "Show full stored message contents", false),
+                ("list", "List stored context entries", false),
+                ("search", "Search stored context", true),
+                ("read", "Read a stored entry by id, optionally focused by query", true),
+                ("delete", "Delete a stored context entry", true),
+                ("drop", "Remove recent non-system chat messages", true),
+                ("clear", "Clear conversation history and keep the system prompt", false),
+                ("clear-history", "Clear conversation history and keep the system prompt", false),
+                ("clear-store", "Delete stored context entries for this session", false),
+                ("clear all", "Clear chat history and stored context", false),
+                ("help", "Show available commands", false),
+            ],
+            ["/model"] =
+            [
+                ("list", "List model profiles and show current one", false),
+            ],
+            ["/debug"] =
+            [
+                ("latest", "Show full details of the most recent error", false),
+                ("list", "Show recent error entries", false),
+            ],
+        };
+
+    private static List<SlashSuggestion> ComputeSlashSuggestions(string text)
+    {
+        if (text.Length == 0 || text[0] != '/' || text.Contains('\n'))
+            return [];
+
+        var firstSpace = text.IndexOf(' ');
+        if (firstSpace < 0)
+        {
+            return ChatSlashCommands
+                .Where(c => c.Name.StartsWith(text, StringComparison.OrdinalIgnoreCase))
+                .Select(c => new SlashSuggestion(c.Name + (c.TakesArgs ? " " : ""), c.Name, c.Description))
+                .Take(8)
+                .ToList();
+        }
+
+        var head = text[..firstSpace];
+        if (!ChatSlashSubcommands.TryGetValue(head, out var subs))
+            return [];
+
+        var rest = text[(firstSpace + 1)..].TrimStart();
+        return subs
+            .Where(s => s.Name.StartsWith(rest, StringComparison.OrdinalIgnoreCase))
+            .Select(s => new SlashSuggestion(
+                head + " " + s.Name + (s.TakesArgs ? " " : ""),
+                head + " " + s.Name,
+                s.Description))
+            .Take(8)
+            .ToList();
+    }
+
     private async Task<string?> ReadChatInputAsync(Lazy<List<string>> files, List<string> inputHistory)
     {
         const string PromptText = "> ";
@@ -2329,6 +2404,11 @@ internal class AgentApp
         string? historyDraft = null;
         int renderedRowCount = 1;
         int renderedCursorRow = 0;
+        var currentSuggestions = new List<SlashSuggestion>();
+        int suggestionIndex = 0;
+        bool suggestionNavigated = false;
+        bool suggestionsDismissed = false;
+        string lastSuggestionText = "";
 
         void Redraw()
         {
@@ -2336,6 +2416,18 @@ internal class AgentApp
             var indent = PromptText.Length; // visible characters in "> "
             var effectiveWidth = Math.Max(width - indent, 1);
             var text = sb.ToString();
+
+            if (text != lastSuggestionText)
+            {
+                lastSuggestionText = text;
+                suggestionsDismissed = false;
+                suggestionNavigated = false;
+                suggestionIndex = 0;
+            }
+            currentSuggestions = suggestionsDismissed ? [] : ComputeSlashSuggestions(text);
+            if (suggestionIndex >= currentSuggestions.Count)
+                suggestionIndex = 0;
+
             var lines = text.Split('\n');
             var wrappedLines = lines
                 .Select(line => TerminalInputLayout.WrapLine(line, effectiveWidth))
@@ -2375,14 +2467,28 @@ internal class AgentApp
                 if (i < wrappedLines.Count - 1) Console.Write("\n" + new string(' ', indent));
             }
 
-            for (int i = 0; i < visibleLines - cursorPosition.Row - 1; i++)
+            if (currentSuggestions.Count > 0)
+            {
+                var pad = currentSuggestions.Max(s => s.Display.Length) + 2;
+                for (int i = 0; i < currentSuggestions.Count; i++)
+                {
+                    var suggestion = currentSuggestions[i];
+                    var line = "  " + suggestion.Display.PadRight(pad) + suggestion.Description;
+                    if (line.Length > width)
+                        line = line[..width];
+                    Console.Write("\n" + (i == suggestionIndex ? "\x1b[1;36m" : "\x1b[2m") + line + "\x1b[0m");
+                }
+            }
+
+            var totalRows = visibleLines + currentSuggestions.Count;
+            for (int i = 0; i < totalRows - cursorPosition.Row - 1; i++)
                 Console.Write("\x1b[A");
 
             Console.Write("\r");
             for (int i = 0; i < cursorPosition.Column; i++)
                 Console.Write("\x1b[C");
 
-            renderedRowCount = visibleLines;
+            renderedRowCount = totalRows;
             renderedCursorRow = cursorPosition.Row;
         }
 
@@ -2473,6 +2579,19 @@ internal class AgentApp
                     continue;
                 }
 
+                void AcceptSuggestion()
+                {
+                    SetInput(currentSuggestions[suggestionIndex].Insert);
+                }
+
+                void ClearSuggestions()
+                {
+                    if (currentSuggestions.Count == 0)
+                        return;
+                    suggestionsDismissed = true;
+                    Redraw();
+                }
+
                 if (key.Key == ConsoleKey.Enter)
                 {
                     if (key.Modifiers.HasFlag(ConsoleModifiers.Alt))
@@ -2482,6 +2601,12 @@ internal class AgentApp
                         Redraw();
                         continue;
                     }
+                    if (currentSuggestions.Count > 0 && suggestionNavigated)
+                    {
+                        AcceptSuggestion();
+                        continue;
+                    }
+                    ClearSuggestions();
                     MoveCursorToRenderedBottom();
                     Console.WriteLine();
                     return sb.ToString();
@@ -2510,6 +2635,13 @@ internal class AgentApp
 
                 if (key.Key == ConsoleKey.UpArrow)
                 {
+                    if (currentSuggestions.Count > 0)
+                    {
+                        suggestionNavigated = true;
+                        suggestionIndex = (suggestionIndex - 1 + currentSuggestions.Count) % currentSuggestions.Count;
+                        Redraw();
+                        continue;
+                    }
                     if (inputHistory.Count > 0 && historyIndex > 0)
                     {
                         if (historyIndex == inputHistory.Count)
@@ -2523,6 +2655,13 @@ internal class AgentApp
 
                 if (key.Key == ConsoleKey.DownArrow)
                 {
+                    if (currentSuggestions.Count > 0)
+                    {
+                        suggestionNavigated = true;
+                        suggestionIndex = (suggestionIndex + 1) % currentSuggestions.Count;
+                        Redraw();
+                        continue;
+                    }
                     if (historyIndex < inputHistory.Count)
                     {
                         historyIndex++;
@@ -2567,11 +2706,24 @@ internal class AgentApp
 
                 if (key.Modifiers.HasFlag(ConsoleModifiers.Control) && key.Key == ConsoleKey.C)
                 {
+                    ClearSuggestions();
                     return null;
+                }
+
+                if (key.Key == ConsoleKey.Escape)
+                {
+                    ClearSuggestions();
+                    continue;
                 }
 
                 if (key.Key == ConsoleKey.Tab)
                 {
+                    if (currentSuggestions.Count > 0)
+                    {
+                        AcceptSuggestion();
+                        continue;
+                    }
+
                     // Find the word starting with # before the cursor
                     string currentText = sb.ToString();
                     int hashIdx = -1;
