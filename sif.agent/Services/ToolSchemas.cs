@@ -256,7 +256,7 @@ internal static class ToolSchemas
 
             tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
                 "roslyn_get_diagnostics",
-                "Get diagnostic issues in a C# project.",
+                "Get compiler errors and warnings in a C# project.",
                 BinaryData.FromString("""
                     {
                         "type": "object",

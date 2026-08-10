@@ -1286,7 +1286,7 @@ internal class AgentApp
             new TextPrompt<string>("Tools")
                 .DefaultValue(config.Tools is { Length: > 0 }
                     ? string.Join(",", config.Tools)
-                    : "bash,read,edit,write,sleep,serve,context,roslyn")
+                    : "bash,read,edit,write,sleep,serve,context")
                 .Validate(value => string.IsNullOrWhiteSpace(value)
                     ? ValidationResult.Error("[red]Enter at least one tool, or rerun with --tools for a custom set.[/]")
                     : ValidationResult.Success()));

@@ -136,6 +136,43 @@ public sealed class ToolRegistryArgumentTests
         Assert.Contains("Error", result);
     }
 
+    [Fact]
+    public async Task RoslynGetDiagnosticsFiltersSeverityAndReportsLoadFailures()
+    {
+        var dir = CreateTempDirectory();
+        await File.WriteAllTextAsync(Path.Combine(dir, "broken.csproj"), """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <TargetFramework>net10.0</TargetFramework>
+              </PropertyGroup>
+              <ItemGroup>
+                <ProjectReference Include="../missing/missing.csproj" />
+              </ItemGroup>
+            </Project>
+            """);
+        await File.WriteAllTextAsync(Path.Combine(dir, "Bad.cs"), """
+            using System;
+
+            namespace Demo;
+
+            public class Bad
+            {
+                public int Run() { return "not an int"; }
+            }
+            """);
+
+        var result = await ToolRegistry.ExecuteAsync(
+            "roslyn_get_diagnostics",
+            $$"""{"path":"{{dir}}"}""");
+
+        Assert.Contains("CS0029", result);
+        Assert.Contains("LoadFailures", result);
+        Assert.Contains("missing.csproj", result);
+        // Hidden-severity noise (e.g. CS8019 unnecessary using) must be filtered out.
+        Assert.DoesNotContain("Hidden", result);
+        Assert.DoesNotContain("CS8019", result);
+    }
+
     private static string CreateTempDirectory()
     {
         var dir = Path.Combine(Path.GetTempPath(), "sif-tests", Guid.NewGuid().ToString("N"));

@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using System.Text;
 using System.Text.Json;
 using Microsoft.CodeAnalysis;
@@ -12,6 +11,7 @@ namespace sif.agent.Services.Tools;
 public static class RoslynTools
 {
     private const int MaxAmbientDiagnostics = 20;
+    private const int MaxProjectDiagnostics = 200;
 
     private static string? GetDefaultSolutionOrProject()
     {
@@ -159,6 +159,26 @@ public static class RoslynTools
         };
     }
 
+    private static async Task<(IReadOnlyList<Project> Projects, IReadOnlyList<string> LoadFailures)> OpenProjectsAsync(
+        MSBuildWorkspace workspace, string path)
+    {
+        var loadFailures = new List<string>();
+        workspace.RegisterWorkspaceFailedHandler(e =>
+        {
+            if (e.Diagnostic.Kind == WorkspaceDiagnosticKind.Failure)
+            {
+                lock (loadFailures)
+                    loadFailures.Add(e.Diagnostic.Message);
+            }
+        });
+
+        var projects = path.EndsWith(".sln", StringComparison.OrdinalIgnoreCase)
+            ? (await workspace.OpenSolutionAsync(path)).Projects.ToArray()
+            : new[] { await workspace.OpenProjectAsync(path) };
+
+        return (projects, loadFailures);
+    }
+
     public static async Task<string> FindSymbolsAsync(string? path, string name)
     {
         path = ResolveSolutionOrProjectPath(path, out var error);
@@ -168,9 +188,7 @@ public static class RoslynTools
             return "Error: No solution or project file found.";
 
         using var workspace = MSBuildWorkspace.Create();
-        var projects = path.EndsWith(".sln", StringComparison.OrdinalIgnoreCase)
-            ? (await workspace.OpenSolutionAsync(path)).Projects
-            : ImmutableArray.Create(await workspace.OpenProjectAsync(path));
+        var (projects, loadFailures) = await OpenProjectsAsync(workspace, path);
 
         List<ISymbol> allSymbols = new();
         foreach (var project in projects)
@@ -179,14 +197,21 @@ public static class RoslynTools
             allSymbols.AddRange(symbols);
         }
 
-        var result = allSymbols.Select(s => new
+        var result = new
         {
-            Name = s.Name,
-            Kind = s.Kind.ToString(),
-            Location = s.Locations.FirstOrDefault()?.GetLineSpan().ToString() ?? "Unknown"
-        });
+            Symbols = allSymbols.Select(s => new
+            {
+                Name = s.Name,
+                Kind = s.Kind.ToString(),
+                Location = s.Locations.FirstOrDefault()?.GetLineSpan().ToString() ?? "Unknown"
+            }),
+            LoadFailures = loadFailures.Count > 0 ? loadFailures : null,
+            Note = allSymbols.Count == 0 && loadFailures.Count > 0
+                ? "No symbols found, but the workspace failed to load fully; the failures above may explain missing results."
+                : null
+        };
 
-        return JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true });
+        return JsonSerializer.Serialize(result, SerializerOptions);
     }
 
     public static async Task<string> GetDiagnosticsAsync(string? projectPath)
@@ -198,11 +223,10 @@ public static class RoslynTools
             return "Error: No solution or project file found.";
 
         using var workspace = MSBuildWorkspace.Create();
-        var projects = projectPath.EndsWith(".sln", StringComparison.OrdinalIgnoreCase)
-            ? (await workspace.OpenSolutionAsync(projectPath)).Projects
-            : ImmutableArray.Create(await workspace.OpenProjectAsync(projectPath));
+        var (projects, loadFailures) = await OpenProjectsAsync(workspace, projectPath);
 
         var allDiagnostics = new List<object>();
+        var total = 0;
         foreach (var project in projects)
         {
             var compilation = await project.GetCompilationAsync();
@@ -210,16 +234,41 @@ public static class RoslynTools
             if (compilation == null)
                 return $"Could not compile project: {project.Name}";
 
-            allDiagnostics.AddRange(compilation.GetDiagnostics().Select(d => new
-            {
-                Project = project.Name,
-                Id = d.Id,
-                Severity = d.Severity.ToString(),
-                Message = d.GetMessage(),
-                Location = d.Location.GetLineSpan().ToString()
-            }));
+            var relevant = compilation.GetDiagnostics()
+                .Where(d => d.Severity is DiagnosticSeverity.Error or DiagnosticSeverity.Warning)
+                .OrderByDescending(d => d.Severity)
+                .ToArray();
+
+            total += relevant.Length;
+            allDiagnostics.AddRange(relevant
+                .Take(Math.Max(0, MaxProjectDiagnostics - allDiagnostics.Count))
+                .Select(d => new
+                {
+                    Project = project.Name,
+                    Id = d.Id,
+                    Severity = d.Severity.ToString(),
+                    Message = d.GetMessage(),
+                    Location = d.Location.GetLineSpan().ToString()
+                }));
         }
 
-        return JsonSerializer.Serialize(allDiagnostics, new JsonSerializerOptions { WriteIndented = true });
+        var result = new
+        {
+            Diagnostics = allDiagnostics,
+            LoadFailures = loadFailures.Count > 0 ? loadFailures : null,
+            Note = total == 0
+                ? "No errors or warnings."
+                : total > allDiagnostics.Count
+                    ? $"Showing {allDiagnostics.Count} of {total} errors/warnings (errors first)."
+                    : null
+        };
+
+        return JsonSerializer.Serialize(result, SerializerOptions);
     }
+
+    private static readonly JsonSerializerOptions SerializerOptions = new()
+    {
+        WriteIndented = true,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+    };
 }
