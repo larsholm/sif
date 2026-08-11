@@ -2408,7 +2408,8 @@ internal class AgentApp
         int suggestionIndex = 0;
         bool suggestionNavigated = false;
         bool suggestionsDismissed = false;
-        string lastSuggestionText = "";
+        bool suggestionNavigationInProgress = false;
+        string suggestionFilter = "";
 
         void Redraw()
         {
@@ -2417,14 +2418,16 @@ internal class AgentApp
             var effectiveWidth = Math.Max(width - indent, 1);
             var text = sb.ToString();
 
-            if (text != lastSuggestionText)
+            // While arrowing through suggestions the input holds the highlighted
+            // command, but the list stays filtered by what was originally typed.
+            if (!suggestionNavigationInProgress && text != suggestionFilter)
             {
-                lastSuggestionText = text;
+                suggestionFilter = text;
                 suggestionsDismissed = false;
                 suggestionNavigated = false;
                 suggestionIndex = 0;
             }
-            currentSuggestions = suggestionsDismissed ? [] : ComputeSlashSuggestions(text);
+            currentSuggestions = suggestionsDismissed ? [] : ComputeSlashSuggestions(suggestionFilter);
             if (suggestionIndex >= currentSuggestions.Count)
                 suggestionIndex = 0;
 
@@ -2584,10 +2587,26 @@ internal class AgentApp
                     SetInput(currentSuggestions[suggestionIndex].Insert);
                 }
 
+                // Fill the highlighted suggestion into the input line while keeping
+                // the list filtered by what was originally typed.
+                void NavigateToSuggestion()
+                {
+                    suggestionNavigationInProgress = true;
+                    try
+                    {
+                        SetInput(currentSuggestions[suggestionIndex].Insert);
+                    }
+                    finally
+                    {
+                        suggestionNavigationInProgress = false;
+                    }
+                }
+
                 void ClearSuggestions()
                 {
                     if (currentSuggestions.Count == 0)
                         return;
+                    suggestionFilter = sb.ToString();
                     suggestionsDismissed = true;
                     Redraw();
                 }
@@ -2639,7 +2658,7 @@ internal class AgentApp
                     {
                         suggestionNavigated = true;
                         suggestionIndex = (suggestionIndex - 1 + currentSuggestions.Count) % currentSuggestions.Count;
-                        Redraw();
+                        NavigateToSuggestion();
                         continue;
                     }
                     if (inputHistory.Count > 0 && historyIndex > 0)
@@ -2659,7 +2678,7 @@ internal class AgentApp
                     {
                         suggestionNavigated = true;
                         suggestionIndex = (suggestionIndex + 1) % currentSuggestions.Count;
-                        Redraw();
+                        NavigateToSuggestion();
                         continue;
                     }
                     if (historyIndex < inputHistory.Count)
