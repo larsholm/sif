@@ -1074,6 +1074,7 @@ internal class AgentApp
         return $"You are Sif, a helpful assistant, with access to these tools: {string.Join(", ", tools)}. " +
                $"Current working directory: {Environment.CurrentDirectory}." +
                (hostSummary is null ? "" : $" {hostSummary}") +
+               $" {HostCapabilities.BuildShellSummary()}" +
                "\n\nUse tools proactively: " +
                "\n- Use 'bash' with commands like " + (Environment.OSVersion.Platform == PlatformID.Win32NT ? "dir/Select-String/Get-ChildItem" : "ls/grep/find") +
                "\n- Use 'read' to view file contents" +

@@ -34,4 +34,10 @@ internal static class HostCapabilities
             ? null
             : $"Host system has: {string.Join(", ", available)}.";
     }
+
+    public static string BuildShellSummary(bool? isWindows = null)
+    {
+        var shell = (isWindows ?? OperatingSystem.IsWindows()) ? "PowerShell" : "Bash";
+        return $"Shell commands run in {shell}.";
+    }
 }

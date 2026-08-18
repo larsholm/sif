@@ -20,4 +20,12 @@ public sealed class HostCapabilitiesTests
     {
         Assert.Null(HostCapabilities.BuildSummary(_ => false));
     }
+
+    [Theory]
+    [InlineData(true, "Shell commands run in PowerShell.")]
+    [InlineData(false, "Shell commands run in Bash.")]
+    public void BuildShellSummaryDescribesTheToolExecutionShell(bool isWindows, string expected)
+    {
+        Assert.Equal(expected, HostCapabilities.BuildShellSummary(isWindows));
+    }
 }
