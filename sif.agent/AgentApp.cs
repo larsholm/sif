@@ -262,7 +262,7 @@ internal class AgentApp
                 }
                 else if (trimmed == "/context" || trimmed.StartsWith("/context "))
                 {
-                    ContextCommandHandler.Handle(trimmed, history, tools, ShowChatHelp);
+                    ContextCommandHandler.Handle(trimmed, history, client, ShowChatHelp);
                     conversation.Save(history);
                 }
                 else if (trimmed == "/debug" || trimmed.StartsWith("/debug "))
@@ -285,6 +285,7 @@ internal class AgentApp
                         conversation.Close();
                         conversation = resumedConversation!;
                         history = resumedHistory!;
+                        client.ClearLastRequestSnapshot();
                         conversation.Save(history);
                         AnsiConsole.MarkupLine($"[dim]Resumed {conversation.Session.Id.EscapeMarkup()} ({history.Count:N0} messages). The current context is now auto-saved.[/]\n");
                     }
@@ -335,7 +336,7 @@ internal class AgentApp
                     var turn = await RunWithChatControls((ct, mailbox) => client.ChatWithToolsAsync(history, ct, mailbox.TakeAll, () => conversation.Save(history)));
                     var (response, tokenCount) = turn.Result;
                     queuedSteeringComments = turn.PendingComments;
-                    var ctxEstimate = ContextCommandHandler.EstimateContextSize(history);
+                    var ctxEstimate = ContextCommandHandler.EstimateContextSize(client.LastRequestSnapshot);
                     AnsiConsole.MarkupLine($"[dim]\n({tokenCount} tokens, {ctxEstimate} context)[/]\n");
                 }
                 else if (opts.NoStream || (config.ThinkingEnabled ?? false) && !IsOModel(config.Model))
@@ -370,7 +371,7 @@ internal class AgentApp
                     queuedSteeringComments = turn.PendingComments;
                     history.Add(new ChatMessage("assistant", response));
                     conversation.Save(history);
-                    var ctxEstimate = ContextCommandHandler.EstimateContextSize(history);
+                    var ctxEstimate = ContextCommandHandler.EstimateContextSize(client.LastRequestSnapshot);
                     AnsiConsole.MarkupLine($"[dim]\n({tokenCount} tokens, {ctxEstimate} context)[/]\n");
                 }
             }
@@ -902,8 +903,9 @@ internal class AgentApp
         table.AddRow("[bold]/model[/]", "Select a model profile interactively");
         table.AddRow("[bold]/model list[/]", "List model profiles and show current one");
         table.AddRow("[bold]/model <name>[/]", "Switch to a model profile (clears conversation)");
-        table.AddRow("[bold]/context[/]", "Show chat history and stored context summary");
-        table.AddRow("[bold]/context full[/]", "Show full stored message contents sent before the next user message");
+        table.AddRow("[bold]/context[/]", "Show the last model request and persisted-state summary");
+        table.AddRow("[bold]/context full[/]", "Show the complete last model request, including tool schemas");
+        table.AddRow("[bold]/context history[/]", "Show persisted conversation history");
         table.AddRow("[bold]/context list[/]", "List stored context entries");
         table.AddRow("[bold]/context search <query>[/]", "Search stored context");
         table.AddRow("[bold]/context read <id> [[query]][/]", "Read a stored entry, optionally focused by query");
@@ -1085,11 +1087,6 @@ internal class AgentApp
                "\n- Use 'serve' to start a local static HTTP server; do not start long-running servers with 'bash'" +
                "\n- Use 'ctx_search' and 'ctx_read' when a tool result says large context was stored" +
                "\n- Use 'ctx_index' for large pasted text or generated data that should be searchable later" +
-               "\n- When VS Code context points at a C# file, ambient Roslyn context may be attached automatically" +
-               (tools.Any(t => t.Equals("roslyn", StringComparison.OrdinalIgnoreCase))
-                   ? "\n- Use 'roslyn_find_symbols' to find symbols in a C# solution" +
-                     "\n- Use 'roslyn_get_diagnostics' to get diagnostic issues in a C# project"
-                   : "") + 
                 //"\nNever use JS for greenfield projects." +   
                 "\nAfter using tools, summarize your key findings in your final answer. Important details from tool results should be restated in natural language so they persist in the conversation history.";
                
@@ -1160,7 +1157,7 @@ internal class AgentApp
                     history.Add(new ChatMessage("system", systemPrompt));
                 history.Add(new ChatMessage("user", promptWithEditorContext));
                 var (response, tokenCount) = await RunWithEscapeCancel(ct => client.ChatWithToolsAsync(history, ct));
-                var ctxEstimate = ContextCommandHandler.EstimateContextSize(history);
+                var ctxEstimate = ContextCommandHandler.EstimateContextSize(client.LastRequestSnapshot);
                 AnsiConsole.MarkupLine($"\n[dim]({tokenCount} tokens, {ctxEstimate} context)[/]");
             }
             else
@@ -2329,7 +2326,7 @@ internal class AgentApp
     [
         ("/help", "Show available commands", false),
         ("/clear", "Clear conversation history and keep the system prompt", false),
-        ("/context", "Show chat history and stored context summary", true),
+        ("/context", "Show the last model request and persisted-state summary", true),
         ("/model", "Select a model profile interactively, or switch by name", true),
         ("/resume", "Load a saved conversation", true),
         ("/sys", "Change the system prompt", true),
@@ -2344,8 +2341,9 @@ internal class AgentApp
         {
             ["/context"] =
             [
-                ("stats", "Show chat history and stored context summary", false),
-                ("full", "Show full stored message contents", false),
+                ("stats", "Show the last model request and persisted-state summary", false),
+                ("full", "Show the complete last model request and tool schemas", false),
+                ("history", "Show persisted conversation history", false),
                 ("list", "List stored context entries", false),
                 ("search", "Search stored context", true),
                 ("read", "Read a stored entry by id, optionally focused by query", true),

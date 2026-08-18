@@ -330,8 +330,9 @@ During an interactive chat session:
 | `/model` | Select a model profile interactively |
 | `/model list` | List model profiles and show the current one |
 | `/model <name>` | Switch to a model profile (clears conversation) |
-| `/context` | Show chat history and stored context summary |
-| `/context full` | Show full stored message contents sent before the next user message |
+| `/context` | Show the last model request and persisted-state summary |
+| `/context full` | Show the complete last model request, including tool schemas |
+| `/context history` | Show persisted conversation history |
 | `/context list` | List stored context entries |
 | `/context search <query>` | Search stored context entries |
 | `/context read <id> [query]` | Read a stored entry, optionally focused by query |

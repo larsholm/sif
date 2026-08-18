@@ -9,12 +9,12 @@ namespace sif.agent;
 /// </summary>
 internal static class ContextCommandHandler
 {
-    public static void Handle(string command, List<ChatMessage> history, string[]? tools, Action showHelp)
+    public static void Handle(string command, List<ChatMessage> history, AgentClient client, Action showHelp)
     {
         var rest = command.Length == "/context".Length ? "" : command["/context".Length..].Trim();
         if (string.IsNullOrWhiteSpace(rest) || rest.Equals("stats", StringComparison.OrdinalIgnoreCase))
         {
-            ShowContextSummary(history, tools);
+            ShowContextSummary(history, client.LastRequestSnapshot);
             return;
         }
 
@@ -32,7 +32,11 @@ internal static class ContextCommandHandler
                 break;
             case "messages":
             case "full":
-                ShowModelMessages(history, full: true);
+                ShowLastRequest(client.LastRequestSnapshot, full: true);
+                break;
+            case "history":
+            case "stored":
+                ShowMessages(history, "Stored Conversation History", full: true);
                 break;
             case "search":
                 if (string.IsNullOrWhiteSpace(arg))
@@ -76,71 +80,139 @@ internal static class ContextCommandHandler
         }
     }
 
-    public static string EstimateContextSize(List<ChatMessage> history)
+    public static string EstimateContextSize(ModelRequestSnapshot? snapshot)
     {
-        var chars = history.Sum(m => m.Content.Length);
-        var entries = ContextStore.ListEntries();
-        var storedChars = entries.Sum(e => e.Length);
-        var totalChars = chars + storedChars;
-        var tokens = totalChars / 4;
+        if (snapshot is null)
+            return "unknown";
+
+        var tokens = snapshot.ApproximateInputCharacters / 4;
         if (tokens < 1000)
             return $"~{tokens} tokens";
         return $"~{tokens / 1000:0.0}k tokens";
     }
 
-    private static void ShowContextSummary(List<ChatMessage> history, string[]? tools)
+    private static void ShowContextSummary(List<ChatMessage> history, ModelRequestSnapshot? snapshot)
     {
+        ShowLastRequest(snapshot, full: false);
+
         var nonSystemMessages = history.Count(m => m.Role != "system");
         var chars = history.Sum(m => m.Content.Length);
         var entries = ContextStore.ListEntries();
         var storedChars = entries.Sum(e => e.Length);
 
         var table = new Table();
-        table.Title("[green]Current Context[/]");
+        table.Title("[green]Persisted State[/]");
         table.AddColumn("Area");
         table.AddColumn("Count");
         table.AddColumn("Size");
-        table.AddRow("Chat messages", history.Count.ToString("N0"), $"~{chars / 4:N0} tokens / {chars:N0} chars");
+        table.AddRow("Conversation history", history.Count.ToString("N0"), $"~{chars / 4:N0} tokens / {chars:N0} chars");
         table.AddRow("Non-system messages", nonSystemMessages.ToString("N0"), "");
-        table.AddRow("Configured tools", tools is { Length: > 0 } ? string.Join(", ", tools).EscapeMarkup() : "[dim]none[/]", "");
-        table.AddRow("Stored context", entries.Count.ToString("N0"), $"{storedChars:N0} chars");
+        table.AddRow("Out-of-band context", entries.Count.ToString("N0"), $"{storedChars:N0} chars");
         table.AddRow("Store path", "", $"[dim]{ContextStore.GetRootPath().EscapeMarkup()}[/]");
         AnsiConsole.Write(table);
-        ShowModelMessages(history, full: false);
         if (VscodeContext.IsRunningInVscodeTerminal())
             AnsiConsole.MarkupLine("[dim]Note: current VS Code editor context is appended to the next user message when you send it. Use /vscode to inspect it.[/]");
-        AnsiConsole.MarkupLine("[dim]Use /context full to show full stored message contents. Tool schemas are also sent when tools are enabled.[/]");
+        AnsiConsole.MarkupLine("[dim]Use /context full for the complete last request, including tool schemas; /context history shows persisted conversation state.[/]");
         AnsiConsole.MarkupLine("[dim]Use /context help for management commands.[/]\n");
     }
 
-    private static void ShowModelMessages(List<ChatMessage> history, bool full)
+    private static void ShowLastRequest(ModelRequestSnapshot? snapshot, bool full)
     {
-        if (history.Count == 0)
+        if (snapshot is null)
         {
-            AnsiConsole.MarkupLine("[dim]No chat messages are currently stored.[/]\n");
+            AnsiConsole.MarkupLine("[dim]No main chat request has been captured for the current conversation.[/]\n");
             return;
         }
 
+        var metadata = new Table();
+        metadata.Title("[green]Last Model Request[/]");
+        metadata.AddColumn("Item");
+        metadata.AddColumn("Value");
+        metadata.AddRow("Captured", snapshot.CapturedAt.ToString("u").EscapeMarkup());
+        metadata.AddRow("Model", snapshot.Model.EscapeMarkup());
+        metadata.AddRow("Mode", snapshot.Streaming ? "streaming" : "non-streaming");
+        metadata.AddRow("Messages", snapshot.Messages.Count.ToString("N0"));
+        metadata.AddRow("Approx. input", $"~{snapshot.ApproximateInputCharacters / 4:N0} tokens / {snapshot.ApproximateInputCharacters:N0} chars");
+        metadata.AddRow("Tools", snapshot.Tools.Count == 0
+            ? "[dim]none[/]"
+            : string.Join(", ", snapshot.Tools.Select(tool => tool.Name)).EscapeMarkup());
+        metadata.AddRow("Temperature", snapshot.Temperature?.ToString() ?? "[dim]provider default[/]");
+        metadata.AddRow("Max output tokens", snapshot.MaxOutputTokens?.ToString("N0") ?? "[dim]provider default[/]");
+        metadata.AddRow("Reasoning effort", snapshot.ReasoningEffort?.EscapeMarkup() ?? "[dim]not sent[/]");
+        AnsiConsole.Write(metadata);
+
+        ShowMessages(snapshot.Messages, full ? "Messages Sent" : "Message Preview", full);
+
+        if (full)
+            ShowTools(snapshot.Tools);
+    }
+
+    private static void ShowMessages(IReadOnlyList<ModelRequestMessage> messages, string title, bool full)
+    {
         var table = new Table();
-        table.Title(full ? "[green]Stored Model Messages[/]" : "[green]Stored Messages Sent Before Next User Message[/]");
+        table.Title($"[green]{title}[/]");
         table.AddColumn("#");
         table.AddColumn("Role");
         table.AddColumn("Chars");
         table.AddColumn(full ? "Content" : "Preview");
 
-        for (var i = 0; i < history.Count; i++)
+        for (var i = 0; i < messages.Count; i++)
         {
-            var message = history[i];
-            var content = full ? message.Content : Preview(message.Content, 220);
+            var message = messages[i];
+            var content = FormatMessage(message);
             table.AddRow(
                 (i + 1).ToString("N0"),
-                message.Role.EscapeMarkup(),
+                FormatRole(message).EscapeMarkup(),
                 message.Content.Length.ToString("N0"),
-                content.EscapeMarkup());
+                (full ? content : Preview(content, 220)).EscapeMarkup());
         }
 
         AnsiConsole.Write(table);
         AnsiConsole.WriteLine();
+    }
+
+    private static void ShowMessages(List<ChatMessage> history, string title, bool full)
+    {
+        var messages = history
+            .Select(message => new ModelRequestMessage(message.Role, message.Content, message.ToolCallId))
+            .ToArray();
+        ShowMessages(messages, title, full);
+    }
+
+    private static void ShowTools(IReadOnlyList<ModelRequestTool> tools)
+    {
+        if (tools.Count == 0)
+            return;
+
+        var table = new Table();
+        table.Title("[green]Tool Schemas Sent[/]");
+        table.AddColumn("Name");
+        table.AddColumn("Description");
+        table.AddColumn("Parameters");
+
+        foreach (var tool in tools)
+            table.AddRow(
+                tool.Name.EscapeMarkup(),
+                tool.Description.EscapeMarkup(),
+                tool.ParametersJson?.EscapeMarkup() ?? "[dim]not sent[/]");
+
+        AnsiConsole.Write(table);
+        AnsiConsole.WriteLine();
+    }
+
+    private static string FormatRole(ModelRequestMessage message)
+    {
+        return message.ToolCallId is null ? message.Role : $"{message.Role} ({message.ToolCallId})";
+    }
+
+    private static string FormatMessage(ModelRequestMessage message)
+    {
+        if (message.ToolCalls.Count == 0)
+            return message.Content;
+
+        var calls = string.Join('\n', message.ToolCalls.Select(call =>
+            $"Tool call {call.Id}: {call.Name}({call.Arguments})"));
+        return string.IsNullOrEmpty(message.Content) ? calls : message.Content + "\n" + calls;
     }
 
     private static string Preview(string text, int maxChars)

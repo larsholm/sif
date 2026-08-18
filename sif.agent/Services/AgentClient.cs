@@ -14,6 +14,10 @@ namespace sif.agent;
 internal class AgentClient
 {
     private const int MaxTransientModelRetries = 2;
+    private const string ToolParseRetryInstruction =
+        "The previous completion was rejected because the tool call was malformed. Retry once. " +
+        "If you need a tool, call the provided function directly with a valid JSON object for arguments. " +
+        "Do not emit XML, <tool_call>, <function>, or <parameter> tags.";
     private readonly OpenAI.Chat.ChatClient _chatClient;
     private readonly HashSet<string> _availableLocalTools = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _activeLocalTools = new(StringComparer.OrdinalIgnoreCase);
@@ -24,6 +28,10 @@ internal class AgentClient
     private readonly bool _isOModel;
     private readonly float? _temperature;
     private readonly int? _maxTokens;
+
+    public ModelRequestSnapshot? LastRequestSnapshot { get; private set; }
+
+    public void ClearLastRequestSnapshot() => LastRequestSnapshot = null;
 
     public AgentClient(AgentConfig config, string[]? enabledTools = null, McpService? mcpService = null)
     {
@@ -138,6 +146,7 @@ internal class AgentClient
         Action? onHistoryChanged = null)
     {
         var messages = history.Select(m => ToRequestMessage(m)).ToList();
+        var requestMessages = history.Select(ToRequestSnapshotMessage).ToList();
         int totalTokens = 0;
         int totalOutputTokens = 0;
         var totalTime = TimeSpan.Zero;
@@ -155,6 +164,7 @@ internal class AgentClient
                 foreach (var tool in GetCurrentTools())
                     opts.Tools.Add(tool);
                 ApplyThinkingOptions(opts);
+                CaptureRequest(requestMessages, opts.Tools, streaming: false);
 
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 ClientResult<OpenAI.Chat.ChatCompletion> result;
@@ -167,10 +177,8 @@ internal class AgentClient
                     malformedToolCallRetries++;
                     sw.Stop();
                     AnsiConsole.MarkupLine("\n[yellow]Provider rejected a malformed tool call; retrying once with stricter tool-call instructions.[/]");
-                    messages.Add(OpenAI.Chat.ChatMessage.CreateSystemMessage(
-                        "The previous completion was rejected because the tool call was malformed. Retry once. " +
-                        "If you need a tool, call the provided function directly with a valid JSON object for arguments. " +
-                        "Do not emit XML, <tool_call>, <function>, or <parameter> tags."));
+                    messages.Add(OpenAI.Chat.ChatMessage.CreateSystemMessage(ToolParseRetryInstruction));
+                    requestMessages.Add(new ModelRequestMessage("system", ToolParseRetryInstruction));
                     continue;
                 }
                 sw.Stop();
@@ -222,6 +230,13 @@ internal class AgentClient
                         .Select(NormalizeToolCall)
                         .ToList();
                     messages.Add(OpenAI.Chat.ChatMessage.CreateAssistantMessage(toolCalls.Select(call => call.ToolCall)));
+                    requestMessages.Add(new ModelRequestMessage(
+                        "assistant",
+                        "",
+                        toolCalls: toolCalls.Select(call => new ModelRequestToolCall(
+                            call.ToolCall.Id,
+                            call.ToolCall.FunctionName,
+                            call.ArgumentsJson)).ToArray()));
 
                     foreach (var normalizedCall in toolCalls)
                     {
@@ -308,6 +323,7 @@ internal class AgentClient
                             toolResult = toolResult.Substring(0, 120000) + "\n... (truncated)";
 
                         messages.Add(OpenAI.Chat.ChatMessage.CreateToolMessage(toolCall.Id, toolResult));
+                        requestMessages.Add(new ModelRequestMessage("tool", toolResult, toolCall.Id));
 
                         // Persist prior tool context as normal assistant text. OpenAI tool
                         // messages are only valid immediately after their matching assistant
@@ -325,6 +341,7 @@ internal class AgentClient
                             history.Add(new ChatMessage("user", steeringMessage));
                             onHistoryChanged?.Invoke();
                             messages.Add(OpenAI.Chat.ChatMessage.CreateUserMessage(steeringMessage));
+                            requestMessages.Add(new ModelRequestMessage("user", steeringMessage));
                         }
                     }
 
@@ -368,6 +385,7 @@ internal class AgentClient
         var messages = history.Select(m => ToRequestMessage(m)).ToList();
         var opts = new OpenAI.Chat.ChatCompletionOptions();
         ApplyThinkingOptions(opts);
+        CaptureRequest(history.Select(ToRequestSnapshotMessage), opts.Tools, streaming: false);
         var result = await CompleteChatWithRecoveryAsync(messages, opts, cancellationToken);
 
         if (!ChatResponseParsing.HasChoices(result))
@@ -425,6 +443,7 @@ internal class AgentClient
         var messages = history.Select(m => ToRequestMessage(m)).ToList();
         var opts = new OpenAI.Chat.ChatCompletionOptions();
         ApplyThinkingOptions(opts);
+        CaptureRequest(history.Select(ToRequestSnapshotMessage), opts.Tools, streaming: true);
         var stream = _chatClient.CompleteChatStreamingAsync(messages, opts, cancellationToken);
 
         var sb = new StringBuilder();
@@ -593,6 +612,43 @@ internal class AgentClient
     private static bool IsContextTool(string toolName)
     {
         return toolName is "ctx_index" or "ctx_search" or "ctx_read" or "ctx_summarize" or "ctx_stats";
+    }
+
+    private void CaptureRequest(
+        IEnumerable<ModelRequestMessage> messages,
+        IEnumerable<OpenAI.Chat.ChatTool> tools,
+        bool streaming)
+    {
+        var messageSnapshot = messages
+            .Select(message => message with { ToolCalls = message.ToolCalls.ToArray() })
+            .ToArray();
+        var toolSnapshot = tools
+            .Select(tool => new ModelRequestTool(
+                tool.FunctionName,
+                tool.FunctionDescription ?? "",
+                tool.FunctionParameters?.ToString()))
+            .ToArray();
+
+        LastRequestSnapshot = new ModelRequestSnapshot(
+            DateTimeOffset.UtcNow,
+            _modelName,
+            streaming,
+            _temperature,
+            _maxTokens,
+            _thinkingEnabled && _isOModel ? "high" : null,
+            messageSnapshot,
+            toolSnapshot);
+    }
+
+    private static ModelRequestMessage ToRequestSnapshotMessage(ChatMessage message)
+    {
+        return message.Role switch
+        {
+            "system" => new ModelRequestMessage("system", message.Content),
+            "assistant" => new ModelRequestMessage("assistant", message.Content),
+            "tool" => new ModelRequestMessage("assistant", $"Prior tool result:\n{message.Content}"),
+            _ => new ModelRequestMessage("user", message.Content),
+        };
     }
 
     private static OpenAI.Chat.ChatMessage ToRequestMessage(ChatMessage msg)

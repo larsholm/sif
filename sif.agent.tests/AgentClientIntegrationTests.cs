@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
+using Spectre.Console;
 using sif.agent;
 using Xunit;
 
@@ -101,6 +102,75 @@ public sealed class AgentClientIntegrationTests
             message.Role == "user" &&
             message.Content == "User steering comment: also check whether the note is empty");
         Assert.Equal("done", history[^1].Content);
+
+        var snapshot = Assert.IsType<ModelRequestSnapshot>(client.LastRequestSnapshot);
+        Assert.Equal(ConfiguredDefaultModel(), snapshot.Model);
+        Assert.False(snapshot.Streaming);
+        Assert.Contains(snapshot.Tools, tool =>
+            tool.Name == "read" &&
+            tool.ParametersJson?.Contains("path", StringComparison.Ordinal) == true);
+        Assert.Contains(snapshot.Messages, message =>
+            message.Role == "assistant" &&
+            message.ToolCalls.Any(call => call.Id == "call_read_1" && call.Name == "read"));
+        Assert.Contains(snapshot.Messages, message =>
+            message.Role == "tool" &&
+            message.ToolCallId == "call_read_1" &&
+            message.Content.Contains("tool result text", StringComparison.Ordinal));
+        Assert.Contains(snapshot.Messages, message =>
+            message.Role == "user" &&
+            message.Content == "User steering comment: also check whether the note is empty");
+        Assert.DoesNotContain(snapshot.Messages, message => message.Content == "done");
+
+        var contextOutput = CaptureConsoleOutput(() =>
+            ContextCommandHandler.Handle("/context full", history, client, () => { }));
+        Assert.Contains("Last Model Request", contextOutput);
+        Assert.Contains("Tool Schemas Sent", contextOutput);
+        Assert.Contains("tool result text", contextOutput);
+        Assert.DoesNotContain("done", contextOutput);
+
+        var historyOutput = CaptureConsoleOutput(() =>
+            ContextCommandHandler.Handle("/context history", history, client, () => { }));
+        Assert.Contains("Stored Conversation History", historyOutput);
+        Assert.Contains("done", historyOutput);
+    }
+
+    [Fact]
+    public async Task ChatAsyncCapturesMessagesAndOptionsFromLastModelRequest()
+    {
+        await using var server = new ChatCompletionStub();
+        server.Enqueue(ChatResponse("""
+            {"role":"assistant","content":"answer generated afterward"}
+            """));
+
+        var config = TestConfig(server.BaseUrl, ConfiguredDefaultModel());
+        config.Temperature = 0.25f;
+        config.MaxTokens = 321;
+        var client = new AgentClient(config);
+        var history = new List<ChatMessage>
+        {
+            new("system", "system prompt"),
+            new("user", "question")
+        };
+
+        await WithTimeout(client.ChatAsync(history));
+
+        var snapshot = Assert.IsType<ModelRequestSnapshot>(client.LastRequestSnapshot);
+        Assert.Equal(0.25f, snapshot.Temperature);
+        Assert.Equal(321, snapshot.MaxOutputTokens);
+        Assert.Null(snapshot.ReasoningEffort);
+        Assert.Empty(snapshot.Tools);
+        Assert.Collection(snapshot.Messages,
+            message =>
+            {
+                Assert.Equal("system", message.Role);
+                Assert.Equal("system prompt", message.Content);
+            },
+            message =>
+            {
+                Assert.Equal("user", message.Role);
+                Assert.Equal("question", message.Content);
+            });
+        Assert.DoesNotContain(snapshot.Messages, message => message.Content.Contains("generated afterward", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -196,6 +266,12 @@ public sealed class AgentClientIntegrationTests
             message.GetProperty("role").GetString() == "system" &&
             MessageText(message).Contains("malformed", StringComparison.OrdinalIgnoreCase) &&
             MessageText(message).Contains("valid JSON object", StringComparison.OrdinalIgnoreCase));
+
+        var snapshot = Assert.IsType<ModelRequestSnapshot>(client.LastRequestSnapshot);
+        Assert.Contains(snapshot.Messages, message =>
+            message.Role == "system" &&
+            message.Content.Contains("malformed", StringComparison.OrdinalIgnoreCase) &&
+            message.Content.Contains("valid JSON object", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -327,6 +403,28 @@ public sealed class AgentClientIntegrationTests
         var dir = Path.Combine(Path.GetTempPath(), "sif-agent-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
         return dir;
+    }
+
+    private static string CaptureConsoleOutput(Action action)
+    {
+        var original = AnsiConsole.Console;
+        using var writer = new StringWriter();
+        AnsiConsole.Console = AnsiConsole.Create(new AnsiConsoleSettings
+        {
+            Ansi = AnsiSupport.No,
+            ColorSystem = ColorSystemSupport.NoColors,
+            Out = new AnsiConsoleOutput(writer)
+        });
+
+        try
+        {
+            action();
+            return writer.ToString();
+        }
+        finally
+        {
+            AnsiConsole.Console = original;
+        }
     }
 
     private sealed class ChatCompletionStub : IAsyncDisposable
