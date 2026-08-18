@@ -1053,6 +1053,8 @@ internal class AgentApp
         if (tools is not { Length: > 0 })
             return null;
 
+        var hostSummary = HostCapabilities.BuildSummary();
+
         // var descriptions = new Dictionary<string, string>
         // {
         //     { "bash", "Run an allowed shell command using Bash on Unix-like systems or PowerShell on Windows" },
@@ -1070,7 +1072,8 @@ internal class AgentApp
         //     .Aggregate((a, b) => $"{a}, {b}");
 
         return $"You are Sif, a helpful assistant, with access to these tools: {string.Join(", ", tools)}. " +
-               $"Current working directory: {Environment.CurrentDirectory}. " +               
+               $"Current working directory: {Environment.CurrentDirectory}." +
+               (hostSummary is null ? "" : $" {hostSummary}") +
                "\n\nUse tools proactively: " +
                "\n- Use 'bash' with commands like " + (Environment.OSVersion.Platform == PlatformID.Win32NT ? "dir/Select-String/Get-ChildItem" : "ls/grep/find") +
                "\n- Use 'read' to view file contents" +

@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using Spectre.Console;
+using sif.agent.Services;
 using sif.agent.Services.Tools;
 
 namespace sif.agent;
@@ -139,7 +140,7 @@ internal static class ToolRegistry
 
             var logPath = Path.Combine(Path.GetTempPath(), $"sif_http_{port}_{Guid.NewGuid():N}.log");
 
-            var python = FindExecutable(RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+            var python = ExecutableLocator.Find(RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
                 ? ["python", "py"]
                 : ["python3", "python"]);
             if (python == null)
@@ -209,35 +210,6 @@ internal static class ToolRegistry
         {
             // Best-effort logging for background server processes.
         }
-    }
-
-    private static string? FindExecutable(IEnumerable<string> names)
-    {
-        var pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
-        var pathExts = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-            ? (Environment.GetEnvironmentVariable("PATHEXT") ?? ".EXE;.BAT;.CMD;.COM")
-                .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            : [""];
-
-        foreach (var name in names)
-        {
-            if (Path.IsPathRooted(name) && File.Exists(name))
-                return name;
-
-            foreach (var dir in pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            {
-                foreach (var ext in pathExts)
-                {
-                    var candidate = Path.Combine(dir, name);
-                    if (!candidate.EndsWith(ext, StringComparison.OrdinalIgnoreCase))
-                        candidate += ext;
-                    if (File.Exists(candidate))
-                        return candidate;
-                }
-            }
-        }
-
-        return null;
     }
 
     private static async Task<string> RunBashAsync(JsonElement root, CancellationToken cancellationToken)
@@ -499,7 +471,7 @@ internal static class ToolRegistry
         {
             var scriptPath = Path.Combine(Path.GetTempPath(), $"sif_shell_{Guid.NewGuid():N}.ps1");
             File.WriteAllText(scriptPath, command);
-            var shell = FindExecutable(["pwsh", "powershell"]) ?? "powershell.exe";
+            var shell = ExecutableLocator.Find(["pwsh", "powershell"]) ?? "powershell.exe";
             psi = new ProcessStartInfo
             {
                 FileName = shell,
