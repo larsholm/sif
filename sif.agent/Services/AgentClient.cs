@@ -1,4 +1,5 @@
 using System.ClientModel;
+using System.ClientModel.Primitives;
 #pragma warning disable OPENAI001
 using System.Text;
 using System.Text.Json;
@@ -40,6 +41,7 @@ internal class AgentClient
 
         OpenAIClient openAIClient;
         var clientOptions = new OpenAI.OpenAIClientOptions();
+        clientOptions.AddPolicy(new OpenAICompatibleErrorPolicy(), PipelinePosition.PerCall);
         if (config.ModelTimeoutSeconds is > 0)
             clientOptions.NetworkTimeout = TimeSpan.FromSeconds(config.ModelTimeoutSeconds.Value);
 

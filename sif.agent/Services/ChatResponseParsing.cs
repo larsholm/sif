@@ -106,6 +106,12 @@ internal static class ChatResponseParsing
             if (IsProviderToolParseError(clientEx))
                 return false;
 
+            if (TryReadProviderCompletionError(clientEx) is { } providerError &&
+                IsTransientProviderCompletionError(providerError))
+            {
+                return true;
+            }
+
             var status = TryGetStatus(clientEx);
             if (status is 408 or 429 or 500 or 502 or 503 or 504)
                 return true;
@@ -123,8 +129,46 @@ internal static class ChatResponseParsing
         return ex.InnerException is not null && IsTransientModelFailure(ex.InnerException);
     }
 
+    public static ProviderCompletionError? TryReadProviderCompletionError(ClientResultException ex)
+    {
+        var response = TryReadRawResponse(ex);
+        try
+        {
+            return ProviderCompletionError.TryParse(response, out var providerError) ? providerError : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static bool IsTransientProviderCompletionError(ProviderCompletionError error)
+    {
+        if (error.Code is 408 or 429 || error.Code >= 500)
+            return true;
+
+        return error.Type.ToLowerInvariant() switch
+        {
+            "rate_limit_exceeded" or
+            "provider_overloaded" or
+            "provider_unavailable" or
+            "timeout" or
+            "server" => true,
+            _ => false
+        };
+    }
+
     public static string DescribeTransientModelFailure(Exception ex)
     {
+        if (TryFindClientResultException(ex) is { } providerEx &&
+            TryReadProviderCompletionError(providerEx) is { } providerError)
+        {
+            if (!string.IsNullOrWhiteSpace(providerError.Type))
+                return providerError.Type.Replace('_', ' ');
+            if (providerError.Code is { } code)
+                return $"provider error {code}";
+        }
+
         if (TryFindClientResultException(ex) is { } clientEx && TryGetStatus(clientEx) is > 0 and var status)
             return $"HTTP {status}";
 

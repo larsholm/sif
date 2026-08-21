@@ -326,6 +326,47 @@ public sealed class AgentClientIntegrationTests
             MessageText(message).Contains("completed tool work", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task ChatAsyncRetriesEmbeddedOpenRouterProviderError()
+    {
+        await using var server = new ChatCompletionStub();
+        server.Enqueue(200, OpenRouterErrorResponse(
+            502,
+            "Provider disconnected during generation",
+            "provider_unavailable"));
+        server.Enqueue(ChatResponse("""{"role":"assistant","content":"recovered response"}"""));
+
+        var client = new AgentClient(TestConfig(server.BaseUrl, ConfiguredDefaultModel()));
+        var history = new List<ChatMessage> { new("user", "continue") };
+
+        var (response, _) = await WithTimeout(client.ChatAsync(history));
+
+        Assert.Equal("recovered response", response);
+        Assert.Equal(2, server.Requests.Count);
+    }
+
+    [Fact]
+    public async Task ChatAsyncSurfacesEmbeddedOpenRouterErrorDetails()
+    {
+        await using var server = new ChatCompletionStub();
+        server.Enqueue(200, OpenRouterErrorResponse(
+            402,
+            "Insufficient credits for this request",
+            "payment_required"));
+
+        var client = new AgentClient(TestConfig(server.BaseUrl, ConfiguredDefaultModel()));
+        var history = new List<ChatMessage> { new("user", "continue") };
+
+        var exception = await Assert.ThrowsAsync<System.ClientModel.ClientResultException>(
+            () => WithTimeout(client.ChatAsync(history)));
+
+        var userMessage = AgentErrorFormatter.ToUserMessage(exception);
+        Assert.Contains("billing or quota", userMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Insufficient credits", userMessage, StringComparison.Ordinal);
+        Assert.DoesNotContain("Unknown ChatFinishReason", userMessage, StringComparison.Ordinal);
+        Assert.Single(server.Requests);
+    }
+
     private static AgentConfig TestConfig(string baseUrl, string model)
     {
         return new AgentConfig
@@ -374,6 +415,30 @@ public sealed class AgentClientIntegrationTests
                 "completion_tokens": 123,
                 "total_tokens": 246
               }
+            }
+            """;
+    }
+
+    private static string OpenRouterErrorResponse(int code, string message, string errorType)
+    {
+        return $$"""
+            {
+              "id": "chatcmpl-error",
+              "object": "chat.completion",
+              "created": 1,
+              "model": "test-model",
+              "choices": [
+                {
+                  "index": 0,
+                  "message": {"role":"assistant","content":"partial output"},
+                  "finish_reason": "error",
+                  "error": {
+                    "code": {{code}},
+                    "message": "{{message}}",
+                    "metadata": {"error_type":"{{errorType}}"}
+                  }
+                }
+              ]
             }
             """;
     }

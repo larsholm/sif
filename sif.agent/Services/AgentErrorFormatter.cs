@@ -30,6 +30,9 @@ internal static class AgentErrorFormatter
         var response = TryReadResponse(ex);
         var combined = $"{ex.Message}\n{response}";
 
+        if (ChatResponseParsing.TryReadProviderCompletionError(ex) is { } providerError)
+            return FormatEmbeddedProviderError(providerError);
+
         if (status == 401)
             return "Authentication failed (HTTP 401). Check the API key for the active model profile."
                 + Detail(ExtractProviderMessage(response));
@@ -55,6 +58,22 @@ internal static class AgentErrorFormatter
                 + Detail(ExtractProviderMessage(response));
 
         return ex.Message;
+    }
+
+    private static string FormatEmbeddedProviderError(ProviderCompletionError error)
+    {
+        var detail = Detail(error.Message);
+        return error.Code switch
+        {
+            401 => "Authentication failed (provider error 401). Check the API key for the active model profile." + detail,
+            402 => "The provider rejected the request for billing or quota reasons (provider error 402). Add credits, raise the key limit, or lower max tokens." + detail,
+            429 => "The provider rate-limited the request (provider error 429). Wait a bit or switch to another model/provider." + detail,
+            >= 500 and var code => $"The model provider failed during generation (provider error {code}). Retry or switch model/provider." + detail,
+            { } code => $"The model provider stopped generation with error {code}." + detail,
+            null when !string.IsNullOrWhiteSpace(error.Type) =>
+                $"The model provider stopped generation ({error.Type.Replace('_', ' ')})." + detail,
+            _ => "The model provider stopped generation with an unspecified error." + detail
+        };
     }
 
     private static bool LooksLikeToolParseFailure(string text)
