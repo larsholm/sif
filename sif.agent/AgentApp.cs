@@ -1082,7 +1082,7 @@ internal class AgentApp
                "\n- Use 'ctx_search' and 'ctx_read' when a tool result says large context was stored" +
                "\n- Use 'ctx_index' for large pasted text or generated data that should be searchable later" +
                 //"\nNever use JS for greenfield projects." +   
-                "\nAfter using tools, summarize your key findings in your final answer. Important details from tool results should be restated in natural language so they persist in the conversation history.";
+                "\nAfter using tools, summarize your key findings in your final answer. Important details from tool results and reasoning should be restated in natural language so they persist in the conversation history.";
                
     }
 
