@@ -96,6 +96,23 @@ internal static class JsonArgs
         return defaultValue;
     }
 
+    public static bool Bool(JsonElement root, bool defaultValue, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (!root.TryGetProperty(name, out var element))
+                continue;
+
+            if (element.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                return element.GetBoolean();
+
+            if (element.ValueKind == JsonValueKind.String && bool.TryParse(element.GetString(), out var parsed))
+                return parsed;
+        }
+
+        return defaultValue;
+    }
+
     public static string[] StringArray(JsonElement root, params string[] names)
     {
         foreach (var name in names)

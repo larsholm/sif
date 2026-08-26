@@ -81,14 +81,15 @@ internal static class ToolSchemas
         {
             tools.Add(OpenAI.Chat.ChatTool.CreateFunctionTool(
                 "edit",
-                "Replace text in a file. Old text must match exactly.",
+                "Replace text in a file. Old text must identify exactly one match unless replaceAll is true.",
                 BinaryData.FromString("""
                     {
                         "type": "object",
                         "properties": {
                             "path": { "type": "string", "description": "File path" },
-                            "oldText": { "type": "string", "description": "The exact literal text to replace (including all whitespace, indentation, newlines, and surrounding code etc.). Must match the file content exactly." },
-                            "newText": { "type": "string", "description": "The exact literal text to replace 'oldText' with." }
+                            "oldText": { "type": "string", "description": "The exact literal text to replace, including whitespace and surrounding code. Newline sequences are normalized to the file's newline style." },
+                            "newText": { "type": "string", "description": "The exact literal text to replace 'oldText' with. Newline sequences are normalized to the file's newline style." },
+                            "replaceAll": { "type": "boolean", "description": "Replace every occurrence instead of requiring exactly one match. Defaults to false." }
                         },
                         "required": ["path", "oldText", "newText"]
                     }

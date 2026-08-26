@@ -1,3 +1,5 @@
+using System.Text;
+using System.Text.Json;
 using sif.agent;
 using sif.agent.Services.Tools;
 using Xunit;
@@ -57,6 +59,75 @@ public sealed class ToolRegistryArgumentTests
 
         Assert.Contains("Edited", result);
         Assert.Equal("before changed after", await File.ReadAllTextAsync(file));
+    }
+
+    [Fact]
+    public async Task EditRequiresOneMatchByDefault()
+    {
+        var dir = CreateTempDirectory();
+        var file = Path.Combine(dir, "ambiguous.txt");
+        await File.WriteAllTextAsync(file, "same middle same");
+
+        var result = await ToolRegistry.ExecuteAsync(
+            "edit",
+            JsonSerializer.Serialize(new { path = file, oldText = "same", newText = "changed" }));
+
+        Assert.Contains("matched 2 occurrences", result);
+        Assert.Contains("replaceAll", result);
+        Assert.Equal("same middle same", await File.ReadAllTextAsync(file));
+    }
+
+    [Fact]
+    public async Task EditReplacesEveryMatchWhenExplicitlyRequested()
+    {
+        var dir = CreateTempDirectory();
+        var file = Path.Combine(dir, "replace-all.txt");
+        await File.WriteAllTextAsync(file, "same middle same");
+
+        var result = await ToolRegistry.ExecuteAsync(
+            "edit",
+            JsonSerializer.Serialize(new { path = file, oldText = "same", newText = "changed", replaceAll = true }));
+
+        Assert.Contains("Replaced 2 occurrence(s)", result);
+        Assert.Equal("changed middle changed", await File.ReadAllTextAsync(file));
+    }
+
+    [Fact]
+    public async Task EditNormalizesIncomingNewLinesToFileStyle()
+    {
+        var dir = CreateTempDirectory();
+        var file = Path.Combine(dir, "crlf.txt");
+        await File.WriteAllTextAsync(file, "before\r\nold one\r\nold two\r\nafter", new UTF8Encoding(false));
+
+        var result = await ToolRegistry.ExecuteAsync(
+            "edit",
+            JsonSerializer.Serialize(new
+            {
+                path = file,
+                oldText = "old one\nold two",
+                newText = "new one\nnew two"
+            }));
+
+        Assert.Contains("Replaced 1 occurrence(s)", result);
+        Assert.Equal("before\r\nnew one\r\nnew two\r\nafter", await File.ReadAllTextAsync(file));
+    }
+
+    [Fact]
+    public async Task EditPreservesUtf16EncodingAndBom()
+    {
+        var dir = CreateTempDirectory();
+        var file = Path.Combine(dir, "utf16.txt");
+        var encoding = new UnicodeEncoding(bigEndian: false, byteOrderMark: true);
+        await File.WriteAllTextAsync(file, "before old after", encoding);
+
+        var result = await ToolRegistry.ExecuteAsync(
+            "edit",
+            JsonSerializer.Serialize(new { path = file, oldText = "old", newText = "new" }));
+
+        var bytes = await File.ReadAllBytesAsync(file);
+        Assert.Contains("Replaced 1 occurrence(s)", result);
+        Assert.True(bytes.AsSpan().StartsWith(encoding.GetPreamble()));
+        Assert.Equal("before new after", encoding.GetString(bytes.AsSpan(encoding.GetPreamble().Length)));
     }
 
     [Fact]

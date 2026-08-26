@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.Json;
 using Spectre.Console;
 using sif.agent.Services;
@@ -542,6 +543,7 @@ internal static class ToolRegistry
         // Accept multiple parameter name formats: camelCase or snake_case
         var oldText = JsonArgs.String(root, "", "oldText", "old_text", "old", "search", "find", "target");
         var newText = JsonArgs.String(root, "", "newText", "new_text", "new", "replacement", "replace", "with");
+        var replaceAll = JsonArgs.Bool(root, false, "replaceAll", "replace_all");
 
         // Validate inputs
         if (string.IsNullOrEmpty(path)) return "Error: path is required.";
@@ -553,10 +555,14 @@ internal static class ToolRegistry
         if (!IsPathInGitRepo(path))
             WarnNotInGitRepo(path, "edit");
 
-        var content = File.ReadAllText(path);
+        var (content, encoding, preamble) = ReadTextPreservingEncoding(path);
+        var newLine = DetectNewLine(content);
+        oldText = NormalizeNewLines(oldText, newLine);
+        newText = NormalizeNewLines(newText, newLine);
+        var occurrences = CountOccurrences(content, oldText);
         
         // Check if oldText exists in the file
-        if (!content.Contains(oldText, StringComparison.Ordinal))
+        if (occurrences == 0)
         {
             // Provide helpful diagnostics
             var fileName = Path.GetFileName(path);
@@ -576,21 +582,89 @@ internal static class ToolRegistry
             return $"Error: Text not found in {fileName}. The exact text to replace was not found in the file.\nSearched for ({oldTextLength} chars): {oldTextPreview}\nTip: Use the read tool first to see the exact content and whitespace.";
         }
 
-        // Check if replacement would actually change anything
-        if (content.Contains(oldText, StringComparison.Ordinal))
+        if (!replaceAll && occurrences != 1)
+            return $"Error: Text matched {occurrences} occurrences in {Path.GetFileName(path)}. Provide more surrounding context to identify exactly one match, or set replaceAll to true.";
+
+        var newContent = content.Replace(oldText, newText, StringComparison.Ordinal);
+        if (newContent == content)
+            return $"Warning: oldText and newText are identical. No changes made to {Path.GetFileName(path)}.";
+
+        WriteTextPreservingEncoding(path, newContent, encoding, preamble);
+        return $"Edited {Path.GetFileName(path)} successfully. Replaced {occurrences} occurrence(s) of the specified text.";
+    }
+
+    private static (string Content, Encoding Encoding, byte[] Preamble) ReadTextPreservingEncoding(string path)
+    {
+        var bytes = File.ReadAllBytes(path);
+        var (encoding, preambleLength) = DetectEncoding(bytes);
+        var preamble = bytes.AsSpan(0, preambleLength).ToArray();
+        var content = encoding.GetString(bytes.AsSpan(preambleLength));
+        return (content, encoding, preamble);
+    }
+
+    private static (Encoding Encoding, int PreambleLength) DetectEncoding(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.Length >= 4 && bytes[0] == 0x00 && bytes[1] == 0x00 && bytes[2] == 0xfe && bytes[3] == 0xff)
+            return (new UTF32Encoding(bigEndian: true, byteOrderMark: false), 4);
+        if (bytes.Length >= 4 && bytes[0] == 0xff && bytes[1] == 0xfe && bytes[2] == 0x00 && bytes[3] == 0x00)
+            return (new UTF32Encoding(bigEndian: false, byteOrderMark: false), 4);
+        if (bytes.Length >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf)
+            return (new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), 3);
+        if (bytes.Length >= 2 && bytes[0] == 0xfe && bytes[1] == 0xff)
+            return (new UnicodeEncoding(bigEndian: true, byteOrderMark: false), 2);
+        if (bytes.Length >= 2 && bytes[0] == 0xff && bytes[1] == 0xfe)
+            return (new UnicodeEncoding(bigEndian: false, byteOrderMark: false), 2);
+
+        return (new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), 0);
+    }
+
+    private static void WriteTextPreservingEncoding(string path, string content, Encoding encoding, byte[] preamble)
+    {
+        var contentBytes = encoding.GetBytes(content);
+        var bytes = new byte[preamble.Length + contentBytes.Length];
+        preamble.CopyTo(bytes, 0);
+        contentBytes.CopyTo(bytes, preamble.Length);
+        File.WriteAllBytes(path, bytes);
+    }
+
+    private static string DetectNewLine(string content)
+    {
+        var crlfCount = 0;
+        var lfCount = 0;
+        var crCount = 0;
+
+        for (var i = 0; i < content.Length; i++)
         {
-            var newContent = content.Replace(oldText, newText, StringComparison.Ordinal);
-            if (newContent == content)
-                return $"Warning: oldText and newText are identical. No changes made to {Path.GetFileName(path)}.";
-            
-            File.WriteAllText(path, newContent);
-            var occurrences = CountOccurrences(content, oldText);
-            var successMsg = $"Edited {Path.GetFileName(path)} successfully. Replaced {occurrences} occurrence(s) of the specified text.";
-            return successMsg;
+            if (content[i] == '\r')
+            {
+                if (i + 1 < content.Length && content[i + 1] == '\n')
+                {
+                    crlfCount++;
+                    i++;
+                }
+                else
+                {
+                    crCount++;
+                }
+            }
+            else if (content[i] == '\n')
+            {
+                lfCount++;
+            }
         }
 
-        // Should not reach here due to check above, but defensively:
-        return $"Error: Unexpected error editing {Path.GetFileName(path)}.";
+        if (crlfCount == 0 && lfCount == 0 && crCount == 0)
+            return Environment.NewLine;
+        if (crlfCount >= lfCount && crlfCount >= crCount)
+            return "\r\n";
+        return lfCount >= crCount ? "\n" : "\r";
+    }
+
+    private static string NormalizeNewLines(string text, string newLine)
+    {
+        return text.Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace("\r", "\n", StringComparison.Ordinal)
+            .Replace("\n", newLine, StringComparison.Ordinal);
     }
 
     private static string NormalizeWhitespace(string text)
