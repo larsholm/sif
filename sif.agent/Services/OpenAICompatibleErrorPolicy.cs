@@ -32,7 +32,7 @@ internal sealed class OpenAICompatibleErrorPolicy : PipelinePolicy
     private static void ThrowIfEmbeddedCompletionError(PipelineMessage message)
     {
         var response = message.Response;
-        if (response is null || response.IsError)
+        if (response is null || response.IsError || !message.BufferResponse)
             return;
 
         try

@@ -1,4 +1,5 @@
 using System.ClientModel;
+using System.ClientModel.Primitives;
 #pragma warning disable OPENAI001
 using System.Net.Http;
 using System.Net.Sockets;
@@ -13,9 +14,12 @@ namespace sif.agent;
 /// </summary>
 internal static class ChatResponseParsing
 {
+    private static readonly string[] ReasoningPropertyNames = ["reasoning", "reasoning_content"];
+    private static readonly ModelReaderWriterOptions WireFormat = new("W");
+
     /// <summary>
-    /// Extract the "reasoning" field from a raw API response.
-    /// vLLM / Qwen return reasoning as a separate field on the choice message.
+    /// Extract a reasoning field from a raw API response.
+    /// Compatible providers return it separately on the choice message.
     /// </summary>
     public static string ExtractReasoningFromRawResponse(ClientResult<OpenAI.Chat.ChatCompletion> result)
     {
@@ -29,18 +33,62 @@ internal static class ChatResponseParsing
             {
                 var choice = choices[0];
                 var message = choice.GetProperty("message");
-                if (message.TryGetProperty("reasoning", out var reasoning))
-                {
-                    var text = reasoning.GetString();
-                    if (!string.IsNullOrEmpty(text))
-                        return text.Trim();
-                }
+                var text = ExtractReasoningText(message);
+                if (!string.IsNullOrEmpty(text))
+                    return text.Trim();
             }
         }
         catch
         {
             // Parsing failed — no reasoning available
         }
+        return "";
+    }
+
+    /// <summary>
+    /// Extract a reasoning delta retained by the SDK as additional raw response data.
+    /// OpenAI-compatible providers commonly use either <c>reasoning</c> or
+    /// <c>reasoning_content</c> on the streamed choice delta.
+    /// </summary>
+    public static string ExtractReasoningDelta(OpenAI.Chat.StreamingChatCompletionUpdate update)
+    {
+        try
+        {
+            // The SDK does not expose provider-specific reasoning fields as public
+            // properties, but it preserves them when a wire model is re-serialized.
+            var json = ModelReaderWriter.Write(update, WireFormat).ToString();
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("choices", out var choices) ||
+                choices.ValueKind != JsonValueKind.Array ||
+                choices.GetArrayLength() == 0)
+            {
+                return "";
+            }
+
+            var choice = choices[0];
+            if (!choice.TryGetProperty("delta", out var delta))
+                return "";
+
+            return ExtractReasoningText(delta);
+        }
+        catch
+        {
+            // A provider-specific delta must never break normal answer streaming.
+            return "";
+        }
+    }
+
+    private static string ExtractReasoningText(JsonElement container)
+    {
+        foreach (var propertyName in ReasoningPropertyNames)
+        {
+            if (!container.TryGetProperty(propertyName, out var reasoning))
+                continue;
+
+            if (reasoning.ValueKind == JsonValueKind.String)
+                return reasoning.GetString() ?? "";
+        }
+
         return "";
     }
 

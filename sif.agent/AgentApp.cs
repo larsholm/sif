@@ -333,19 +333,19 @@ internal class AgentApp
                 if (tools?.Length > 0)
                 {
                     AnsiConsole.Write(new Markup("[green]agent>[/] "));
-                    var turn = await RunWithChatControls((ct, mailbox) => client.ChatWithToolsAsync(history, ct, mailbox.TakeAll, () => conversation.Save(history)));
+                    var turn = await RunWithChatControls((ct, mailbox) => client.ChatWithToolsAsync(
+                        history,
+                        ct,
+                        mailbox.TakeAll,
+                        () => conversation.Save(history),
+                        streaming: !opts.NoStream));
                     var (response, tokenCount) = turn.Result;
                     queuedSteeringComments = turn.PendingComments;
                     var ctxEstimate = ContextCommandHandler.EstimateContextSize(client.LastRequestSnapshot);
                     AnsiConsole.MarkupLine($"[dim]\n({tokenCount} tokens, {ctxEstimate} context)[/]\n");
                 }
-                else if (opts.NoStream || (config.ThinkingEnabled ?? false) && !IsOModel(config.Model))
+                else if (opts.NoStream)
                 {
-                    // Use non-streaming when thinking is enabled on non-OpenAI models
-                    // because reasoning is in a separate response field the SDK can't stream
-                    var useNonStream = !opts.NoStream && (config.ThinkingEnabled ?? false);
-                    if (useNonStream)
-                        AnsiConsole.MarkupLine("[dim](thinking enabled, using non-streaming mode)[/]");
                     AnsiConsole.Write(new Markup("[green]agent>[/] "));
                     var turn = await RunWithChatControls((ct, _) => client.ChatAsync(history, ct));
                     var (response, reasoning) = turn.Result;
@@ -695,12 +695,6 @@ internal class AgentApp
                 return comments;
             }
         }
-    }
-
-    private static bool IsOModel(string model)
-    {
-        return model.StartsWith("o1", StringComparison.OrdinalIgnoreCase) ||
-               model.StartsWith("o3", StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task<(AgentClient? newClient, bool shouldRestart)> HandleModelCommandInline(string rest, AgentConfig config, string[]? tools, McpService? mcpService, int skillsCount)
@@ -1156,7 +1150,10 @@ internal class AgentApp
                 if (!string.IsNullOrEmpty(systemPrompt))
                     history.Add(new ChatMessage("system", systemPrompt));
                 history.Add(new ChatMessage("user", promptWithEditorContext));
-                var (response, tokenCount) = await RunWithEscapeCancel(ct => client.ChatWithToolsAsync(history, ct));
+                var (response, tokenCount) = await RunWithEscapeCancel(ct => client.ChatWithToolsAsync(
+                    history,
+                    ct,
+                    streaming: !opts.NoStream));
                 var ctxEstimate = ContextCommandHandler.EstimateContextSize(client.LastRequestSnapshot);
                 AnsiConsole.MarkupLine($"\n[dim]({tokenCount} tokens, {ctxEstimate} context)[/]");
             }

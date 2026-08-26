@@ -42,6 +42,34 @@ public sealed class AgentClientIntegrationTests
     }
 
     [Fact]
+    public async Task ChatStreamingAsyncDisplaysReasoningDeltasWithoutReturningThemAsAnswerText()
+    {
+        await using var server = new ChatCompletionStub();
+        server.EnqueueStream(
+            ChatStreamChunk("{\"role\":\"assistant\",\"reasoning_content\":\"Plan \"}"),
+            ChatStreamChunk("{\"reasoning\":\"carefully.\"}"),
+            ChatStreamChunk("{\"content\":\"Final \"}"),
+            ChatStreamChunk("{\"content\":\"answer.\"}"),
+            ChatStreamChunk("{}", "stop"));
+
+        var config = TestConfig(server.BaseUrl, ConfiguredDefaultModel());
+        config.ThinkingEnabled = true;
+        var client = new AgentClient(config);
+        var history = new List<ChatMessage> { new("user", "solve it") };
+
+        var ((response, _), output) = await CaptureConsoleOutputAsync(
+            () => WithTimeout(client.ChatStreamingAsync(history)));
+
+        Assert.Equal("Final answer.", response);
+        Assert.Contains("Thinking:", output);
+        Assert.Contains("Plan carefully.", output);
+        Assert.Contains("Final answer.", output);
+        Assert.DoesNotContain("Plan", response);
+        Assert.DoesNotContain("carefully", response);
+        Assert.True(server.Requests.Single().Json.RootElement.GetProperty("stream").GetBoolean());
+    }
+
+    [Fact]
     public async Task ChatWithToolsExecutesToolAndContinuesWithToolResult()
     {
         var dir = CreateTempDirectory();
@@ -132,6 +160,65 @@ public sealed class AgentClientIntegrationTests
             ContextCommandHandler.Handle("/context history", history, client, () => { }));
         Assert.Contains("Stored Conversation History", historyOutput);
         Assert.Contains("done", historyOutput);
+    }
+
+    [Fact]
+    public async Task ChatWithToolsStreamsReasoningAndAccumulatesToolCallDeltas()
+    {
+        var dir = CreateTempDirectory();
+        var file = Path.Combine(dir, "streamed-note.txt");
+        await File.WriteAllTextAsync(file, "streamed tool result");
+        var arguments = JsonSerializer.Serialize(new { path = file });
+        var split = arguments.Length / 2;
+
+        await using var server = new ChatCompletionStub();
+        server.EnqueueStream(
+            ChatStreamChunk("{\"role\":\"assistant\",\"reasoning_content\":\"Need the file.\"}"),
+            ChatStreamChunk(JsonSerializer.Serialize(new
+            {
+                tool_calls = new[]
+                {
+                    new
+                    {
+                        index = 0,
+                        id = "call_read_stream",
+                        type = "function",
+                        function = new { name = "read", arguments = arguments[..split] }
+                    }
+                }
+            })),
+            ChatStreamChunk(JsonSerializer.Serialize(new
+            {
+                tool_calls = new[]
+                {
+                    new
+                    {
+                        index = 0,
+                        function = new { arguments = arguments[split..] }
+                    }
+                }
+            })),
+            ChatStreamChunk("{}", "tool_calls"));
+        server.EnqueueStream(
+            ChatStreamChunk("{\"role\":\"assistant\",\"reasoning\":\"Now answer.\"}"),
+            ChatStreamChunk("{\"content\":\"Done with streamed tools.\"}"),
+            ChatStreamChunk("{}", "stop"));
+
+        var config = TestConfig(server.BaseUrl, ConfiguredDefaultModel());
+        config.ThinkingEnabled = true;
+        var client = new AgentClient(config, ["read"]);
+        var history = new List<ChatMessage> { new("user", "read the streamed note") };
+
+        var ((response, _), output) = await CaptureConsoleOutputAsync(
+            () => WithTimeout(client.ChatWithToolsAsync(history, streaming: true)));
+
+        Assert.Equal("Done with streamed tools.", response);
+        Assert.Contains("Need the file.", output);
+        Assert.Contains("Now answer.", output);
+        Assert.Contains("streamed tool result", output);
+        Assert.Equal(2, server.Requests.Count);
+        Assert.All(server.Requests, request =>
+            Assert.True(request.Json.RootElement.GetProperty("stream").GetBoolean()));
     }
 
     [Fact]
@@ -419,6 +506,26 @@ public sealed class AgentClientIntegrationTests
             """;
     }
 
+    private static string ChatStreamChunk(string deltaJson, string? finishReason = null)
+    {
+        var serializedFinishReason = finishReason is null ? "null" : JsonSerializer.Serialize(finishReason);
+        return $$"""
+            {
+              "id": "chatcmpl-test",
+              "object": "chat.completion.chunk",
+              "created": 1,
+              "model": "test-model",
+              "choices": [
+                {
+                  "index": 0,
+                  "delta": {{deltaJson}},
+                  "finish_reason": {{serializedFinishReason}}
+                }
+              ]
+            }
+            """;
+    }
+
     private static string OpenRouterErrorResponse(int code, string message, string errorType)
     {
         return $$"""
@@ -492,6 +599,28 @@ public sealed class AgentClientIntegrationTests
         }
     }
 
+    private static async Task<(T Result, string Output)> CaptureConsoleOutputAsync<T>(Func<Task<T>> action)
+    {
+        var original = AnsiConsole.Console;
+        using var writer = new StringWriter();
+        AnsiConsole.Console = AnsiConsole.Create(new AnsiConsoleSettings
+        {
+            Ansi = AnsiSupport.No,
+            ColorSystem = ColorSystemSupport.NoColors,
+            Out = new AnsiConsoleOutput(writer)
+        });
+
+        try
+        {
+            var result = await action();
+            return (result, writer.ToString());
+        }
+        finally
+        {
+            AnsiConsole.Console = original;
+        }
+    }
+
     private sealed class ChatCompletionStub : IAsyncDisposable
     {
         private readonly HttpListener _listener = new();
@@ -518,7 +647,14 @@ public sealed class AgentClientIntegrationTests
 
         public void Enqueue(int statusCode, string responseJson)
         {
-            _responses.Enqueue(new StubResponse(statusCode, responseJson));
+            _responses.Enqueue(new StubResponse(statusCode, responseJson, "application/json"));
+        }
+
+        public void EnqueueStream(params string[] responseJsonChunks)
+        {
+            var body = string.Join("", responseJsonChunks.Select(chunk =>
+                $"data: {chunk.Replace("\r", "").Replace("\n", "")}\n\n")) + "data: [DONE]\n\n";
+            _responses.Enqueue(new StubResponse(200, body, "text/event-stream"));
         }
 
         public async ValueTask DisposeAsync()
@@ -562,10 +698,10 @@ public sealed class AgentClientIntegrationTests
 
             var response = _responses.Count > 0
                 ? _responses.Dequeue()
-                : new StubResponse(500, """{"error":{"message":"No stub response queued"}}""");
+                : new StubResponse(500, """{"error":{"message":"No stub response queued"}}""", "application/json");
 
             context.Response.StatusCode = response.StatusCode;
-            context.Response.ContentType = "application/json";
+            context.Response.ContentType = response.ContentType;
 
             var bytes = Encoding.UTF8.GetBytes(response.Body);
             context.Response.ContentLength64 = bytes.Length;
@@ -582,5 +718,5 @@ public sealed class AgentClientIntegrationTests
     }
 
     private sealed record CapturedRequest(string Path, JsonDocument Json);
-    private sealed record StubResponse(int StatusCode, string Body);
+    private sealed record StubResponse(int StatusCode, string Body, string ContentType);
 }

@@ -151,7 +151,7 @@ Use `/resume` in an interactive chat to choose a saved session with the arrow ke
 
 The `diagnostics` tool is for inspecting sif's runtime state only. It is not a debugger and does not launch, attach to, or manage .NET debug adapter sessions. There is also a legacy `debug` tool alias for the same diagnostics behavior.
 
-Tool calling is non-streaming: the model decides whether to call tools, then returns the final response. Thinking and reasoning display works for OpenAI o-series models and Qwen3.x models via vLLM.
+Sif streams model output, including thinking/reasoning deltas exposed by compatible providers, while accumulating any tool calls before executing them. Thinking and reasoning display works for OpenAI o-series models and Qwen3.x models via vLLM.
 
 ## C# Development with Roslyn
 
@@ -442,7 +442,7 @@ sif --thinking true -m o3-mini
 sif config --set THINKING_ENABLED=true
 ```
 
-For Qwen3.x models, thinking is enabled by default on the server. The `--thinking` flag enables display of the reasoning output. When thinking is enabled on non-OpenAI models, non-streaming mode is used automatically because reasoning is exposed as a separate response field that the SDK cannot stream.
+For Qwen3.x models, thinking is enabled by default on the server. The `--thinking` flag enables live display of streamed reasoning output when the provider exposes `reasoning` or `reasoning_content` deltas. Use `--no-stream` to request and display the complete reasoning response instead.
 
 ## License
 

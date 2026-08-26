@@ -145,7 +145,8 @@ internal class AgentClient
         List<ChatMessage> history,
         CancellationToken cancellationToken = default,
         Func<IReadOnlyList<string>>? takeSteeringComments = null,
-        Action? onHistoryChanged = null)
+        Action? onHistoryChanged = null,
+        bool streaming = false)
     {
         var messages = history.Select(m => ToRequestMessage(m)).ToList();
         var requestMessages = history.Select(ToRequestSnapshotMessage).ToList();
@@ -166,13 +167,17 @@ internal class AgentClient
                 foreach (var tool in GetCurrentTools())
                     opts.Tools.Add(tool);
                 ApplyThinkingOptions(opts);
-                CaptureRequest(requestMessages, opts.Tools, streaming: false);
+                CaptureRequest(requestMessages, opts.Tools, streaming);
 
                 var sw = System.Diagnostics.Stopwatch.StartNew();
-                ClientResult<OpenAI.Chat.ChatCompletion> result;
+                ClientResult<OpenAI.Chat.ChatCompletion>? result = null;
+                StreamedChatCompletion? streamedResult = null;
                 try
                 {
-                    result = await CompleteChatWithRecoveryAsync(messages, opts, cancellationToken);
+                    if (streaming)
+                        streamedResult = await CompleteChatStreamingWithRecoveryAsync(messages, opts, cancellationToken);
+                    else
+                        result = await CompleteChatWithRecoveryAsync(messages, opts, cancellationToken);
                 }
                 catch (ClientResultException ex) when (malformedToolCallRetries == 0 && ChatResponseParsing.IsProviderToolParseError(ex))
                 {
@@ -185,9 +190,10 @@ internal class AgentClient
                 }
                 sw.Stop();
 
-                var usage = result.Value.Usage;
-                totalTokens += usage?.TotalTokenCount ?? 0;
-                totalOutputTokens += usage?.OutputTokenCount ?? 0;
+                var inputAndOutputTokens = streamedResult?.TotalTokenCount ?? result!.Value.Usage?.TotalTokenCount ?? 0;
+                var generatedTokens = streamedResult?.OutputTokenCount ?? result!.Value.Usage?.OutputTokenCount ?? 0;
+                totalTokens += inputAndOutputTokens;
+                totalOutputTokens += generatedTokens;
                 totalTime += sw.Elapsed;
                 modelCalls++;
 
@@ -195,7 +201,7 @@ internal class AgentClient
                 // The SDK's flattened accessors (.Content, .ToolCalls, …) dereference
                 // Choices[0] and would throw ArgumentOutOfRangeException. Retry once for
                 // a transient empty response, then surface a clear error.
-                if (!ChatResponseParsing.HasChoices(result))
+                if (result is not null && !ChatResponseParsing.HasChoices(result))
                 {
                     if (emptyResponseRetries == 0)
                     {
@@ -209,8 +215,8 @@ internal class AgentClient
                 }
 
                 // Extract reasoning from the raw response (vLLM/Qwen) or from content tags
-                string reasoningText = ChatResponseParsing.ExtractReasoningFromRawResponse(result);
-                var contentText = ExtractText(result.Value.Content);
+                string reasoningText = result is null ? "" : ChatResponseParsing.ExtractReasoningFromRawResponse(result);
+                var contentText = streamedResult?.Content ?? ExtractText(result!.Value.Content);
 
                 // Fall back to extracting thinking tags from content if no separate reasoning field
                 if (string.IsNullOrEmpty(reasoningText))
@@ -226,9 +232,10 @@ internal class AgentClient
                 }
 
                 // Check if the model wants to call tools
-                if (result.Value.ToolCalls.Count > 0)
+                var responseToolCalls = streamedResult?.ToolCalls ?? result!.Value.ToolCalls;
+                if (responseToolCalls.Count > 0)
                 {
-                    var toolCalls = result.Value.ToolCalls
+                    var toolCalls = responseToolCalls
                         .Select(NormalizeToolCall)
                         .ToList();
                     messages.Add(OpenAI.Chat.ChatMessage.CreateAssistantMessage(toolCalls.Select(call => call.ToolCall)));
@@ -372,7 +379,7 @@ internal class AgentClient
                 
                 history.Add(new ChatMessage("assistant", cleanContent));
                 onHistoryChanged?.Invoke();
-                messages.Add(OpenAI.Chat.ChatMessage.CreateAssistantMessage(result.Value));
+                messages.Add(OpenAI.Chat.ChatMessage.CreateAssistantMessage(cleanContent));
 
                 return (cleanContent, totalTokens);
             }
@@ -435,10 +442,94 @@ internal class AgentClient
         }
     }
 
+    private async Task<StreamedChatCompletion> CompleteChatStreamingWithRecoveryAsync(
+        IEnumerable<OpenAI.Chat.ChatMessage> messages,
+        OpenAI.Chat.ChatCompletionOptions options,
+        CancellationToken cancellationToken)
+    {
+        for (var retry = 0; ; retry++)
+        {
+            try
+            {
+                var content = new StringBuilder();
+                var toolCalls = new Dictionary<int, StreamingToolCallBuilder>();
+                var totalTokens = 0;
+                var outputTokens = 0;
+                var showedReasoning = false;
+                var stream = _chatClient.CompleteChatStreamingAsync(messages, options, cancellationToken);
+
+                await foreach (var update in stream.WithCancellation(cancellationToken))
+                {
+                    if (_thinkingEnabled)
+                    {
+                        var reasoningDelta = ChatResponseParsing.ExtractReasoningDelta(update);
+                        if (reasoningDelta.Length > 0)
+                        {
+                            if (!showedReasoning)
+                            {
+                                AnsiConsole.MarkupLine("\n[dim]Thinking:[/]");
+                                showedReasoning = true;
+                            }
+                            AnsiConsole.Markup("[dim]" + reasoningDelta.EscapeMarkup() + "[/]");
+                        }
+                    }
+
+                    content.Append(ExtractText(update.ContentUpdate));
+
+                    foreach (var toolCallUpdate in update.ToolCallUpdates)
+                    {
+                        if (!toolCalls.TryGetValue(toolCallUpdate.Index, out var builder))
+                        {
+                            builder = new StreamingToolCallBuilder();
+                            toolCalls.Add(toolCallUpdate.Index, builder);
+                        }
+
+                        if (!string.IsNullOrEmpty(toolCallUpdate.ToolCallId))
+                            builder.Id = toolCallUpdate.ToolCallId;
+                        if (!string.IsNullOrEmpty(toolCallUpdate.FunctionName))
+                            builder.FunctionName.Append(toolCallUpdate.FunctionName);
+                        builder.Arguments.Append(toolCallUpdate.FunctionArgumentsUpdate.ToString());
+                    }
+
+                    if (update.Usage is { } usage)
+                    {
+                        totalTokens = usage.TotalTokenCount;
+                        outputTokens = usage.OutputTokenCount;
+                    }
+                }
+
+                if (showedReasoning)
+                    AnsiConsole.WriteLine();
+
+                var completedToolCalls = toolCalls
+                    .OrderBy(pair => pair.Key)
+                    .Select(pair => OpenAI.Chat.ChatToolCall.CreateFunctionToolCall(
+                        pair.Value.Id,
+                        pair.Value.FunctionName.ToString(),
+                        BinaryData.FromString(pair.Value.Arguments.ToString())))
+                    .ToList();
+
+                return new StreamedChatCompletion(content.ToString(), completedToolCalls, totalTokens, outputTokens);
+            }
+            catch (Exception ex) when (
+                !cancellationToken.IsCancellationRequested &&
+                retry < MaxTransientModelRetries &&
+                ChatResponseParsing.IsTransientModelFailure(ex))
+            {
+                var attempt = retry + 1;
+                var delay = TimeSpan.FromSeconds(attempt);
+                var reason = ChatResponseParsing.DescribeTransientModelFailure(ex);
+                AnsiConsole.MarkupLine(
+                    $"\n[yellow]Temporary model provider failure ({reason.EscapeMarkup()}); " +
+                    $"continuing this task in {delay.TotalSeconds:0}s ({attempt}/{MaxTransientModelRetries}).[/]");
+                await Task.Delay(delay, cancellationToken);
+            }
+        }
+    }
+
     /// <summary>
     /// Send a full conversation with streaming output.
     /// Returns the full response text and total token count.
-    /// Note: reasoning/thinking is only available in non-streaming mode.
     /// </summary>
     public async Task<(string Response, int TokenCount)> ChatStreamingAsync(List<ChatMessage> history, CancellationToken cancellationToken = default)
     {
@@ -451,15 +542,34 @@ internal class AgentClient
         var sb = new StringBuilder();
         int totalTokens = 0;
         int outputTokens = 0;
+        var showedReasoning = false;
+        var startedAnswer = false;
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
         await foreach (var update in stream.WithCancellation(cancellationToken))
         {
+            if (_thinkingEnabled)
+            {
+                var reasoningDelta = ChatResponseParsing.ExtractReasoningDelta(update);
+                if (reasoningDelta.Length > 0)
+                {
+                    if (!showedReasoning)
+                    {
+                        AnsiConsole.MarkupLine("\n[dim]Thinking:[/]");
+                        showedReasoning = true;
+                    }
+                    AnsiConsole.Markup("[dim]" + reasoningDelta.EscapeMarkup() + "[/]");
+                }
+            }
+
             if (update.ContentUpdate is not null)
             {
                 var text = ExtractText(update.ContentUpdate);
                 if (text.Length > 0)
                 {
+                    if (showedReasoning && !startedAnswer)
+                        AnsiConsole.WriteLine("\n");
+                    startedAnswer = true;
                     sb.Append(text);
                     AnsiConsole.Markup(text.EscapeMarkup());
                 }
@@ -698,4 +808,17 @@ internal class AgentClient
         OpenAI.Chat.ChatToolCall ToolCall,
         string ArgumentsJson,
         string Warning);
+
+    private sealed record StreamedChatCompletion(
+        string Content,
+        IReadOnlyList<OpenAI.Chat.ChatToolCall> ToolCalls,
+        int TotalTokenCount,
+        int OutputTokenCount);
+
+    private sealed class StreamingToolCallBuilder
+    {
+        public string Id { get; set; } = "";
+        public StringBuilder FunctionName { get; } = new();
+        public StringBuilder Arguments { get; } = new();
+    }
 }
