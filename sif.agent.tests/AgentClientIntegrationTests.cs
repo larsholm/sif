@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Spectre.Console;
 using sif.agent;
 using Xunit;
@@ -591,7 +592,7 @@ public sealed class AgentClientIntegrationTests
         try
         {
             action();
-            return writer.ToString();
+            return StripAnsi(writer.ToString());
         }
         finally
         {
@@ -613,13 +614,16 @@ public sealed class AgentClientIntegrationTests
         try
         {
             var result = await action();
-            return (result, writer.ToString());
+            return (result, StripAnsi(writer.ToString()));
         }
         finally
         {
             AnsiConsole.Console = original;
         }
     }
+
+    private static string StripAnsi(string text) =>
+        Regex.Replace(text, "\u001B\\[[0-?]*[ -/]*[@-~]", "");
 
     private sealed class ChatCompletionStub : IAsyncDisposable
     {
