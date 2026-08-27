@@ -257,6 +257,36 @@ public sealed class GeneralBehaviorTests
     }
 
     [Fact]
+    public void AgentConfigSwitchProfileClearsApiKeyForKeylessProvider()
+    {
+        var config = new AgentConfig
+        {
+            ApiKey = "previous-provider-key",
+            Providers =
+            {
+                ["local"] = new ProviderConfig
+                {
+                    Name = "local",
+                    BaseUrl = "http://localhost:8020/v1"
+                }
+            },
+            Profiles =
+            {
+                ["qwen"] = new ModelProfile
+                {
+                    Name = "qwen",
+                    Provider = "local",
+                    Model = "qwen3.6"
+                }
+            }
+        };
+
+        Assert.True(config.SwitchProfile("qwen"));
+
+        Assert.Null(config.ApiKey);
+    }
+
+    [Fact]
     public void AgentConfigMigratesProviderModelTimeoutAlias()
     {
         var config = JsonSerializer.Deserialize<AgentConfig>("""

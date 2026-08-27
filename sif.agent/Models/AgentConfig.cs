@@ -252,10 +252,9 @@ internal class AgentConfig
 
             CurrentProfile = name;
             BaseUrl = provider?.BaseUrl ?? profile.BaseUrl ?? BaseUrl;
-            if (provider != null && !string.IsNullOrEmpty(provider.ApiKey))
-                ApiKey = provider.ApiKey;
-            else if (provider == null && !string.IsNullOrEmpty(profile.ApiKey))
-                ApiKey = profile.ApiKey;
+            // Authentication belongs to the selected provider/profile. Assign null as
+            // well so a keyless local provider cannot inherit the previous provider's key.
+            ApiKey = provider?.ApiKey ?? profile.ApiKey;
             Model = profile.Model;
             Temperature = profile.Temperature;
             MaxTokens = profile.MaxTokens;

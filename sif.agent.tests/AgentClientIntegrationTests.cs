@@ -33,6 +33,7 @@ public sealed class AgentClientIntegrationTests
 
         var request = server.Requests.Single();
         Assert.Equal("/v1/chat/completions", request.Path);
+        Assert.Equal("Bearer test-key", request.Authorization);
         Assert.Equal(model, request.Json.RootElement.GetProperty("model").GetString());
 
         var messages = request.Json.RootElement.GetProperty("messages").EnumerateArray().ToArray();
@@ -40,6 +41,22 @@ public sealed class AgentClientIntegrationTests
         Assert.Equal("system prompt", MessageText(messages[0]));
         Assert.Equal("user", messages[1].GetProperty("role").GetString());
         Assert.Equal("hello", MessageText(messages[1]));
+    }
+
+    [Fact]
+    public async Task CompleteAsyncOmitsAuthorizationForKeylessEndpoint()
+    {
+        await using var server = new ChatCompletionStub();
+        server.Enqueue(ChatResponse("""{"role":"assistant","content":"keyless response"}"""));
+
+        var config = TestConfig(server.BaseUrl, ConfiguredDefaultModel());
+        config.ApiKey = null;
+        var client = new AgentClient(config);
+
+        var (response, _) = await WithTimeout(client.CompleteAsync("hello", "system prompt"));
+
+        Assert.Equal("keyless response", response);
+        Assert.Null(server.Requests.Single().Authorization);
     }
 
     [Fact]
@@ -698,7 +715,10 @@ public sealed class AgentClientIntegrationTests
             using (var reader = new StreamReader(context.Request.InputStream, context.Request.ContentEncoding))
                 body = await reader.ReadToEndAsync();
 
-            Requests.Add(new CapturedRequest(context.Request.Url?.AbsolutePath ?? "", JsonDocument.Parse(body)));
+            Requests.Add(new CapturedRequest(
+                context.Request.Url?.AbsolutePath ?? "",
+                JsonDocument.Parse(body),
+                context.Request.Headers["Authorization"]));
 
             var response = _responses.Count > 0
                 ? _responses.Dequeue()
@@ -721,6 +741,6 @@ public sealed class AgentClientIntegrationTests
         }
     }
 
-    private sealed record CapturedRequest(string Path, JsonDocument Json);
+    private sealed record CapturedRequest(string Path, JsonDocument Json, string? Authorization);
     private sealed record StubResponse(int StatusCode, string Body, string ContentType);
 }

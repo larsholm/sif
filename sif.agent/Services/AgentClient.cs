@@ -47,7 +47,10 @@ internal class AgentClient
 
         if (!endpoint.Contains("openai.com", StringComparison.OrdinalIgnoreCase))
         {
-            var localApiKey = string.IsNullOrWhiteSpace(apiKey) ? "local-api-key" : apiKey;
+            var hasApiKey = !string.IsNullOrWhiteSpace(apiKey);
+            var localApiKey = hasApiKey ? apiKey : "not-needed";
+            if (!hasApiKey)
+                clientOptions.AddPolicy(new RemoveAuthorizationPolicy(), PipelinePosition.BeforeTransport);
             clientOptions.Endpoint = new Uri(endpoint);
             openAIClient = new OpenAIClient(new ApiKeyCredential(localApiKey), clientOptions);
         }
