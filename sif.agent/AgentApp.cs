@@ -1433,10 +1433,20 @@ internal class AgentApp
         if (config.CompactionThreshold <= 0 || !contextLength.HasValue)
             return;
 
-        // Treat the built-in value as "auto". Custom configured thresholds stay explicit,
-        // even when the custom value happens to equal the built-in default.
+        // Treat the built-in value as "auto". Keep enough room for the current
+        // response while never allowing the automatic threshold to exceed Sif's
+        // built-in default. Custom configured thresholds stay explicit.
         if (!config.CompactionThresholdConfigured)
-            config.CompactionThreshold = Math.Max(1000, (int)Math.Floor(contextLength.Value * 0.60));
+            config.CompactionThreshold = CalculateAutomaticCompactionThreshold(contextLength.Value);
+    }
+
+    internal static int CalculateAutomaticCompactionThreshold(int modelContextLength)
+    {
+        if (modelContextLength <= 0)
+            throw new ArgumentOutOfRangeException(nameof(modelContextLength));
+
+        var eightyFivePercent = (long)modelContextLength * 85 / 100;
+        return (int)Math.Min(AgentConfig.DefaultCompactionThreshold, eightyFivePercent);
     }
 
     private static async Task<ModelEndpointInfo> FetchModelInfoAsync(string baseUrl, string apiKey, string modelId)

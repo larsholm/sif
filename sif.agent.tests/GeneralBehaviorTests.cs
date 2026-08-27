@@ -7,6 +7,17 @@ namespace sif.agent.tests;
 
 public sealed class GeneralBehaviorTests
 {
+    [Theory]
+    [InlineData(32768, 27852)]
+    [InlineData(100000, 85000)]
+    [InlineData(200000, AgentConfig.DefaultCompactionThreshold)]
+    public void AutomaticCompactionThresholdUsesSmallerOfDefaultAndEightyFivePercent(
+        int modelContextLength,
+        int expected)
+    {
+        Assert.Equal(expected, AgentApp.CalculateAutomaticCompactionThreshold(modelContextLength));
+    }
+
     [Fact]
     public void ConversationStorePersistsAndRestoresConversationHistory()
     {

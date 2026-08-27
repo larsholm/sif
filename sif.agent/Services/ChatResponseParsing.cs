@@ -93,6 +93,58 @@ internal static class ChatResponseParsing
     }
 
     /// <summary>
+    /// Extract the provider's finish reason from a streamed update. Keeping this
+    /// on the wire representation avoids losing OpenAI-compatible finish reasons
+    /// that the SDK does not otherwise expose consistently.
+    /// </summary>
+    public static string ExtractFinishReasonDelta(OpenAI.Chat.StreamingChatCompletionUpdate update)
+    {
+        try
+        {
+            var json = ModelReaderWriter.Write(update, WireFormat).ToString();
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("choices", out var choices) &&
+                choices.ValueKind == JsonValueKind.Array &&
+                choices.GetArrayLength() > 0 &&
+                choices[0].TryGetProperty("finish_reason", out var finishReason) &&
+                finishReason.ValueKind == JsonValueKind.String)
+            {
+                return finishReason.GetString() ?? "";
+            }
+        }
+        catch
+        {
+            // Missing provider metadata is not itself a completion failure.
+        }
+        return "";
+    }
+
+    /// <summary>
+    /// Extract the finish reason from a non-streamed completion response.
+    /// </summary>
+    public static string ExtractFinishReason(ClientResult<OpenAI.Chat.ChatCompletion> result)
+    {
+        try
+        {
+            var json = result.GetRawResponse().Content.ToString();
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("choices", out var choices) &&
+                choices.ValueKind == JsonValueKind.Array &&
+                choices.GetArrayLength() > 0 &&
+                choices[0].TryGetProperty("finish_reason", out var finishReason) &&
+                finishReason.ValueKind == JsonValueKind.String)
+            {
+                return finishReason.GetString() ?? "";
+            }
+        }
+        catch
+        {
+            // Missing provider metadata is not itself a completion failure.
+        }
+        return "";
+    }
+
+    /// <summary>
     /// Returns whether the raw response contains a non-empty <c>choices</c> array.
     /// Local OpenAI-compatible servers (vLLM, llama.cpp, …) occasionally return a
     /// response with an empty or missing <c>choices</c> array. The SDK's flattened

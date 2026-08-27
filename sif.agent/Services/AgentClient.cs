@@ -220,6 +220,14 @@ internal class AgentClient
                 // Extract reasoning from the raw response (vLLM/Qwen) or from content tags
                 string reasoningText = result is null ? "" : ChatResponseParsing.ExtractReasoningFromRawResponse(result);
                 var contentText = streamedResult?.Content ?? ExtractText(result!.Value.Content);
+                var finishReason = streamedResult?.FinishReason ?? ChatResponseParsing.ExtractFinishReason(result!);
+
+                if (string.Equals(finishReason, "length", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(
+                        "The model response was truncated because it reached the available context or output-token limit. " +
+                        "Increase the model context size or reduce the conversation before continuing.");
+                }
 
                 // Fall back to extracting thinking tags from content if no separate reasoning field
                 if (string.IsNullOrEmpty(reasoningText))
@@ -458,6 +466,7 @@ internal class AgentClient
                 var toolCalls = new Dictionary<int, StreamingToolCallBuilder>();
                 var totalTokens = 0;
                 var outputTokens = 0;
+                var finishReason = "";
                 var showedReasoning = false;
                 var stream = _chatClient.CompleteChatStreamingAsync(messages, options, cancellationToken);
 
@@ -478,6 +487,10 @@ internal class AgentClient
                     }
 
                     content.Append(ExtractText(update.ContentUpdate));
+
+                    var updateFinishReason = ChatResponseParsing.ExtractFinishReasonDelta(update);
+                    if (updateFinishReason.Length > 0)
+                        finishReason = updateFinishReason;
 
                     foreach (var toolCallUpdate in update.ToolCallUpdates)
                     {
@@ -512,7 +525,7 @@ internal class AgentClient
                         BinaryData.FromString(pair.Value.Arguments.ToString())))
                     .ToList();
 
-                return new StreamedChatCompletion(content.ToString(), completedToolCalls, totalTokens, outputTokens);
+                return new StreamedChatCompletion(content.ToString(), completedToolCalls, totalTokens, outputTokens, finishReason);
             }
             catch (Exception ex) when (
                 !cancellationToken.IsCancellationRequested &&
@@ -547,6 +560,7 @@ internal class AgentClient
         int outputTokens = 0;
         var showedReasoning = false;
         var startedAnswer = false;
+        var finishReason = "";
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
         await foreach (var update in stream.WithCancellation(cancellationToken))
@@ -583,8 +597,19 @@ internal class AgentClient
                 totalTokens = usage.TotalTokenCount;
                 outputTokens = usage.OutputTokenCount;
             }
+
+            var updateFinishReason = ChatResponseParsing.ExtractFinishReasonDelta(update);
+            if (updateFinishReason.Length > 0)
+                finishReason = updateFinishReason;
         }
         sw.Stop();
+
+        if (string.Equals(finishReason, "length", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "The model response was truncated because it reached the available context or output-token limit. " +
+                "Increase the model context size or reduce the conversation before continuing.");
+        }
 
         AnsiConsole.WriteLine();
         if (sw.Elapsed.TotalSeconds > 0 && outputTokens > 0)
@@ -816,7 +841,8 @@ internal class AgentClient
         string Content,
         IReadOnlyList<OpenAI.Chat.ChatToolCall> ToolCalls,
         int TotalTokenCount,
-        int OutputTokenCount);
+        int OutputTokenCount,
+        string FinishReason);
 
     private sealed class StreamingToolCallBuilder
     {

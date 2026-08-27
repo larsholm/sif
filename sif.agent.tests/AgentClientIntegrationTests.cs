@@ -88,6 +88,25 @@ public sealed class AgentClientIntegrationTests
     }
 
     [Fact]
+    public async Task ChatWithToolsSurfacesStreamedLengthTruncation()
+    {
+        await using var server = new ChatCompletionStub();
+        server.EnqueueStream(
+            ChatStreamChunk("{\"role\":\"assistant\",\"reasoning_content\":\"unfinished thought\"}"),
+            ChatStreamChunk("{}", "length"));
+
+        var client = new AgentClient(TestConfig(server.BaseUrl, ConfiguredDefaultModel()));
+        var history = new List<ChatMessage> { new("user", "solve a long problem") };
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => WithTimeout(client.ChatWithToolsAsync(history, streaming: true)));
+
+        Assert.Contains("truncated", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("context", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(history, message => message.Role == "assistant");
+    }
+
+    [Fact]
     public async Task ChatWithToolsExecutesToolAndContinuesWithToolResult()
     {
         var dir = CreateTempDirectory();

@@ -9,7 +9,7 @@ namespace sif.agent;
 /// </summary>
 internal class AgentConfig
 {
-    public const int DefaultCompactionThreshold = 100000;
+    public const int DefaultCompactionThreshold = 180000;
 
     public string BaseUrl { get; set; } = "http://localhost:1234/v1";
     public string? ApiKey { get; set; }
