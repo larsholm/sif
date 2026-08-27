@@ -326,20 +326,27 @@ internal static class ChatResponseParsing
 
     public static string StripThinkingTags(string text)
     {
-        // Strip <thinking>...</thinking>, <thought>...</thought>, etc.
-        text = System.Text.RegularExpressions.Regex.Replace(text, @"<\/?(?:thinking|thought|reasoning|think)>\s*", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        return text;
+        const string completeThinkingBlock = @"<(thinking|thought|reasoning|think)>.*?</\1>\s*";
+        const string orphanThinkingTag = @"<\/?(?:thinking|thought|reasoning|think)>\s*";
+        text = System.Text.RegularExpressions.Regex.Replace(
+            text,
+            completeThinkingBlock,
+            "",
+            System.Text.RegularExpressions.RegexOptions.Singleline | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return System.Text.RegularExpressions.Regex.Replace(
+            text,
+            orphanThinkingTag,
+            "",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
     }
 
     public static string ExtractThinking(string text)
     {
-        // Extract content from <thinking>...</thinking>, <thought>...</thought>, etc.
-        var match = System.Text.RegularExpressions.Regex.Match(text, @"<thinking>(.*?)</thinking>", System.Text.RegularExpressions.RegexOptions.Singleline | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        if (match.Success) return match.Groups[1].Value;
-        match = System.Text.RegularExpressions.Regex.Match(text, @"<thought>(.*?)</thought>", System.Text.RegularExpressions.RegexOptions.Singleline | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        if (match.Success) return match.Groups[1].Value;
-        match = System.Text.RegularExpressions.Regex.Match(text, @"<reasoning>(.*?)</reasoning>", System.Text.RegularExpressions.RegexOptions.Singleline | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        if (match.Success) return match.Groups[1].Value;
-        return "";
+        const string completeThinkingBlock = @"<(thinking|thought|reasoning|think)>(.*?)</\1>";
+        var matches = System.Text.RegularExpressions.Regex.Matches(
+            text,
+            completeThinkingBlock,
+            System.Text.RegularExpressions.RegexOptions.Singleline | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return string.Join('\n', matches.Select(match => match.Groups[2].Value));
     }
 }

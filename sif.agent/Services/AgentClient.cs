@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using OpenAI;
 using Spectre.Console;
+using sif.agent.Services;
 
 namespace sif.agent;
 
@@ -558,10 +559,50 @@ internal class AgentClient
         var sb = new StringBuilder();
         int totalTokens = 0;
         int outputTokens = 0;
-        var showedReasoning = false;
-        var startedAnswer = false;
+        var displayedSection = StreamDisplaySection.None;
+        var taggedContent = new ThinkingTagStreamParser();
         var finishReason = "";
         var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        void DisplayReasoning(string text)
+        {
+            if (!_thinkingEnabled || text.Length == 0)
+                return;
+
+            if (displayedSection != StreamDisplaySection.Reasoning)
+            {
+                AnsiConsole.MarkupLine(displayedSection == StreamDisplaySection.None
+                    ? "\n[dim]Thinking:[/]"
+                    : "\n\n[dim]Thinking:[/]");
+                displayedSection = StreamDisplaySection.Reasoning;
+            }
+
+            AnsiConsole.Markup("[dim]" + text.EscapeMarkup() + "[/]");
+        }
+
+        void DisplayAnswer(string text)
+        {
+            if (text.Length == 0)
+                return;
+
+            if (displayedSection == StreamDisplaySection.Reasoning)
+                AnsiConsole.MarkupLine("\n\n[green]Answer:[/]");
+
+            displayedSection = StreamDisplaySection.Answer;
+            sb.Append(text);
+            AnsiConsole.Markup(text.EscapeMarkup());
+        }
+
+        void DisplayTaggedSegments(IReadOnlyList<StreamTextSegment> segments)
+        {
+            foreach (var segment in segments)
+            {
+                if (segment.IsReasoning)
+                    DisplayReasoning(segment.Text);
+                else
+                    DisplayAnswer(segment.Text);
+            }
+        }
 
         await foreach (var update in stream.WithCancellation(cancellationToken))
         {
@@ -569,27 +610,14 @@ internal class AgentClient
             {
                 var reasoningDelta = ChatResponseParsing.ExtractReasoningDelta(update);
                 if (reasoningDelta.Length > 0)
-                {
-                    if (!showedReasoning)
-                    {
-                        AnsiConsole.MarkupLine("\n[dim]Thinking:[/]");
-                        showedReasoning = true;
-                    }
-                    AnsiConsole.Markup("[dim]" + reasoningDelta.EscapeMarkup() + "[/]");
-                }
+                    DisplayReasoning(reasoningDelta);
             }
 
             if (update.ContentUpdate is not null)
             {
                 var text = ExtractText(update.ContentUpdate);
                 if (text.Length > 0)
-                {
-                    if (showedReasoning && !startedAnswer)
-                        AnsiConsole.WriteLine("\n");
-                    startedAnswer = true;
-                    sb.Append(text);
-                    AnsiConsole.Markup(text.EscapeMarkup());
-                }
+                    DisplayTaggedSegments(taggedContent.Append(text));
             }
 
             if (update.Usage is { } usage)
@@ -602,6 +630,7 @@ internal class AgentClient
             if (updateFinishReason.Length > 0)
                 finishReason = updateFinishReason;
         }
+        DisplayTaggedSegments(taggedContent.Complete());
         sw.Stop();
 
         if (string.Equals(finishReason, "length", StringComparison.OrdinalIgnoreCase))
@@ -623,6 +652,13 @@ internal class AgentClient
         }
 
         return (sb.ToString(), totalTokens);
+    }
+
+    private enum StreamDisplaySection
+    {
+        None,
+        Reasoning,
+        Answer,
     }
 
     private List<OpenAI.Chat.ChatTool> GetCurrentTools()

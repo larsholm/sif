@@ -88,6 +88,33 @@ public sealed class AgentClientIntegrationTests
     }
 
     [Fact]
+    public async Task ChatStreamingAsyncSeparatesTaggedThinkingFromAnswerAcrossChunks()
+    {
+        await using var server = new ChatCompletionStub();
+        server.EnqueueStream(
+            ChatStreamChunk("{\"role\":\"assistant\",\"content\":\"<thi\"}"),
+            ChatStreamChunk("{\"content\":\"nk>Inspect pasted text.</th\"}"),
+            ChatStreamChunk("{\"content\":\"ink>Paste received.\"}"),
+            ChatStreamChunk("{}", "stop"));
+
+        var config = TestConfig(server.BaseUrl, ConfiguredDefaultModel());
+        config.ThinkingEnabled = true;
+        var client = new AgentClient(config);
+        var history = new List<ChatMessage> { new("user", "a large paste") };
+
+        var ((response, _), output) = await CaptureConsoleOutputAsync(
+            () => WithTimeout(client.ChatStreamingAsync(history)));
+
+        Assert.Equal("Paste received.", response);
+        Assert.Contains("Thinking:", output);
+        Assert.Contains("Inspect pasted text.", output);
+        Assert.Contains("Answer:", output);
+        Assert.Contains("Paste received.", output);
+        Assert.DoesNotContain("<think>", output, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("</think>", output, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task ChatWithToolsSurfacesStreamedLengthTruncation()
     {
         await using var server = new ChatCompletionStub();

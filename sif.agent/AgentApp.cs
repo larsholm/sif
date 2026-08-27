@@ -2544,8 +2544,7 @@ internal class AgentApp
 
         async Task<string> ReadBracketedPasteAsync()
         {
-            const string endMarker = "\u001b[201~";
-            var pasted = new StringBuilder();
+            var pasted = new BracketedPasteBuffer();
 
             while (true)
             {
@@ -2556,14 +2555,8 @@ internal class AgentApp
                 }
 
                 var next = Console.ReadKey(intercept: true);
-                pasted.Append(next.KeyChar);
-
-                if (pasted.Length >= endMarker.Length &&
-                    pasted.ToString().EndsWith(endMarker, StringComparison.Ordinal))
-                {
-                    pasted.Length -= endMarker.Length;
-                    return pasted.ToString().Replace("\r\n", "\n").Replace('\r', '\n');
-                }
+                if (pasted.Append(next.KeyChar))
+                    return pasted.GetText();
             }
         }
 
