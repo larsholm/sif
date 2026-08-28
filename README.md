@@ -149,6 +149,18 @@ Interactive chats are saved under `~/.sif/conversations/` after every context up
 
 Use `/resume` in an interactive chat to choose a saved session with the arrow keys. That menu reads only lightweight session metadata; the message history is loaded only after you select one. `/resume <id>` also works with full IDs and unique ID prefixes. A normally exited session remains available for later resume as well.
 
+## Goals
+
+Use `/goal <condition>` for substantial work with a verifiable end state:
+
+```text
+/goal all tests in sif.agent.tests pass
+```
+
+The condition starts a turn immediately. After each completed turn, Sif makes a separate tool-free request to the current model to judge the condition against evidence in the conversation. A `not_met` verdict starts another turn with the evaluator's reason as guidance; `met` or `impossible` ends the automatic loop. After three consecutive turns without tool use, Sif pauses automatic continuation and leaves the goal active for user guidance.
+
+Run `/goal` to inspect its status and latest evaluator reason, or `/goal clear` to stop it. Active goals are stored with saved conversations and restored by `/resume`; their timer and counters restart when resumed. Escape stops the current turn without clearing the goal, while `/clear` clears both conversation history and the active goal.
+
 The `diagnostics` tool is for inspecting sif's runtime state only. It is not a debugger and does not launch, attach to, or manage .NET debug adapter sessions. There is also a legacy `debug` tool alias for the same diagnostics behavior.
 
 Sif streams model output, including thinking/reasoning deltas exposed by compatible providers, while accumulating any tool calls before executing them. Thinking and reasoning display works for OpenAI o-series models and Qwen3.x models via vLLM. If a reasoning stream enters a substantial exact repetition loop, Sif automatically stops that generation instead of letting it run indefinitely.
@@ -325,7 +337,10 @@ During an interactive chat session:
 | Command | Description |
 |---------|-------------|
 | `/q`, `/quit`, `/exit` | Exit the chat session |
-| `/clear` | Clear conversation history, keeping the system prompt |
+| `/clear` | Clear conversation history and the active goal, keeping the system prompt |
+| `/goal <condition>` | Work autonomously until an independent evaluator confirms the condition |
+| `/goal` | Show the current or most recently completed goal |
+| `/goal clear` | Clear the active goal |
 | `/sys <prompt>` | Change the system prompt |
 | `/model` | Select a model profile interactively |
 | `/model list` | List model profiles and show the current one |

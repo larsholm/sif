@@ -575,6 +575,40 @@ public sealed class AgentClientIntegrationTests
         Assert.Single(server.Requests);
     }
 
+    [Fact]
+    public async Task GoalEvaluatorUsesSeparateToolFreeRequestAndParsesVerdict()
+    {
+        await using var server = new ChatCompletionStub();
+        server.Enqueue(ChatResponse("""
+            {"role":"assistant","content":"{\"verdict\":\"met\",\"reason\":\"The focused test output reports twelve passing tests.\"}"}
+            """));
+
+        var evaluator = new GoalEvaluator(TestConfig(server.BaseUrl, ConfiguredDefaultModel()));
+        var history = new List<ChatMessage>
+        {
+            new("user", "Run the focused tests."),
+            new("assistant", "Tool call from prior turn: bash\nResult:\nPassed: 12")
+        };
+
+        var evaluation = await WithTimeout(evaluator.EvaluateAsync(
+            "All focused tests pass.",
+            history));
+
+        Assert.Equal(GoalVerdict.Met, evaluation.Verdict);
+        Assert.Contains("twelve passing tests", evaluation.Reason);
+
+        var request = server.Requests.Single().Json.RootElement;
+        Assert.False(request.TryGetProperty("tools", out _));
+        var messages = request.GetProperty("messages").EnumerateArray().ToArray();
+        Assert.Contains(messages, message =>
+            message.GetProperty("role").GetString() == "system" &&
+            MessageText(message).Contains("strict completion-condition evaluator", StringComparison.Ordinal));
+        Assert.Contains(messages, message =>
+            message.GetProperty("role").GetString() == "user" &&
+            MessageText(message).Contains("All focused tests pass.", StringComparison.Ordinal) &&
+            MessageText(message).Contains("Passed: 12", StringComparison.Ordinal));
+    }
+
     private static AgentConfig TestConfig(string baseUrl, string model)
     {
         return new AgentConfig

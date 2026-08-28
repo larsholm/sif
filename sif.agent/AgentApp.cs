@@ -221,21 +221,29 @@ internal class AgentApp
             conversation.Save(history);
         }
 
+        var goal = RestoreGoalForResume(conversation);
+        var goalEvaluator = new GoalEvaluator(config);
+        if (goal?.IsActive == true)
+            AnsiConsole.MarkupLine($"[dim]Restored active goal: {goal.Condition.EscapeMarkup()}[/]\n");
+
         bool running = true;
         var files = new Lazy<List<string>>(GetFiles);
         var inputHistory = new List<string>();
         string? pendingInput = null;
+        bool pendingInputIsGoalContinuation = false;
 
         while (running)
         {
+            var isGoalContinuation = pendingInputIsGoalContinuation;
             string? input = pendingInput ?? await ReadChatInputAsync(files, inputHistory);
             pendingInput = null;
+            pendingInputIsGoalContinuation = false;
 
             if (input is null) break;
             if (string.IsNullOrWhiteSpace(input)) continue;
 
             var trimmed = input.Trim();
-            if (inputHistory.Count == 0 || inputHistory[^1] != trimmed)
+            if (!isGoalContinuation && (inputHistory.Count == 0 || inputHistory[^1] != trimmed))
                 inputHistory.Add(trimmed);
 
             if (trimmed.StartsWith("/"))
@@ -247,8 +255,46 @@ internal class AgentApp
                 else if (trimmed == "/clear")
                 {
                     ContextCommandHandler.ClearChatHistory(history);
+                    goal = null;
+                    conversation.SetGoal(null);
                     conversation.Save(history);
                     AnsiConsole.MarkupLine("[dim]Conversation cleared.[/]\n");
+                }
+                else if (trimmed == "/goal" || trimmed.StartsWith("/goal "))
+                {
+                    var goalArgument = trimmed.Length == "/goal".Length
+                        ? ""
+                        : trimmed["/goal".Length..].Trim();
+
+                    if (string.IsNullOrWhiteSpace(goalArgument))
+                    {
+                        ShowGoalStatus(goal);
+                    }
+                    else if (IsGoalClearAlias(goalArgument))
+                    {
+                        if (goal?.IsActive == true)
+                        {
+                            AnsiConsole.MarkupLine($"[dim]Goal cleared: {goal.Condition.EscapeMarkup()}[/]\n");
+                            goal = null;
+                            conversation.SetGoal(null);
+                        }
+                        else
+                        {
+                            AnsiConsole.MarkupLine("[dim]No active goal set.[/]\n");
+                        }
+                    }
+                    else if (goalArgument.Length > 4000)
+                    {
+                        AnsiConsole.MarkupLine("[yellow]Goal conditions are limited to 4,000 characters.[/]\n");
+                    }
+                    else
+                    {
+                        goal = new ConversationGoal(goalArgument, DateTimeOffset.UtcNow.ToString("O"));
+                        conversation.SetGoal(goal);
+                        pendingInput = BuildGoalDirective(goal.Condition, null);
+                        pendingInputIsGoalContinuation = true;
+                        AnsiConsole.MarkupLine($"[green]Goal set:[/] {goal.Condition.EscapeMarkup()}\n");
+                    }
                 }
                 else if (trimmed.StartsWith("/sys "))
                 {
@@ -285,9 +331,12 @@ internal class AgentApp
                         conversation.Close();
                         conversation = resumedConversation!;
                         history = resumedHistory!;
+                        goal = RestoreGoalForResume(conversation);
                         client.ClearLastRequestSnapshot();
                         conversation.Save(history);
                         AnsiConsole.MarkupLine($"[dim]Resumed {conversation.Session.Id.EscapeMarkup()} ({history.Count:N0} messages). The current context is now auto-saved.[/]\n");
+                        if (goal?.IsActive == true)
+                            AnsiConsole.MarkupLine($"[dim]Restored active goal: {goal.Condition.EscapeMarkup()}[/]\n");
                     }
                     else if (!string.IsNullOrWhiteSpace(id))
                     {
@@ -306,9 +355,12 @@ internal class AgentApp
                     {
                         if (client is IDisposable disp) disp.Dispose();
                         client = newClient;
+                        goalEvaluator = new GoalEvaluator(config);
                         if (shouldRestart)
                         {
                             history.Clear();
+                            goal = null;
+                            conversation.SetGoal(null);
                             var initialSys = BuildInitialSystemPrompt(null, tools, skills);
                             if (!string.IsNullOrWhiteSpace(initialSys))
                                 history.Add(new ChatMessage("system", initialSys));
@@ -327,9 +379,20 @@ internal class AgentApp
             history.Add(new ChatMessage("user", historyContent));
             conversation.Save(history);
 
+            if (!isGoalContinuation && goal?.IsActive == true && goal.ConsecutiveTurnsWithoutTools > 0)
+            {
+                goal = goal with { ConsecutiveTurnsWithoutTools = 0 };
+                conversation.SetGoal(goal);
+            }
+
             IReadOnlyList<string> queuedSteeringComments = [];
+            var turnHistoryStart = history.Count;
+            var turnCompleted = false;
             try
             {
+                if (goal?.IsActive == true)
+                    AnsiConsole.MarkupLine($"[dim]◎ /goal active · {goal.EvaluatedTurns:N0} evaluated {(goal.EvaluatedTurns == 1 ? "turn" : "turns")}[/]");
+
                 if (tools?.Length > 0)
                 {
                     AnsiConsole.Write(new Markup("[green]agent>[/] "));
@@ -374,6 +437,8 @@ internal class AgentApp
                     var ctxEstimate = ContextCommandHandler.EstimateContextSize(client.LastRequestSnapshot);
                     AnsiConsole.MarkupLine($"[dim]\n({tokenCount} tokens, {ctxEstimate} context)[/]\n");
                 }
+
+                turnCompleted = true;
             }
             catch (SteeringCommentException ex)
             {
@@ -409,8 +474,75 @@ internal class AgentApp
                 AnsiConsole.MarkupLine("[dim]Task and completed tool progress kept in context; retry or type 'continue' when the provider is available.[/]\n");
             }
 
-            if (queuedSteeringComments.Count > 0)
-                pendingInput = FormatSteeringComments(queuedSteeringComments);
+            var queuedInput = queuedSteeringComments.Count > 0
+                ? FormatSteeringComments(queuedSteeringComments)
+                : null;
+
+            if (turnCompleted && goal?.IsActive == true)
+            {
+                var usedTools = history
+                    .Skip(turnHistoryStart)
+                    .Any(message => message.Role == "assistant" &&
+                        message.Content.StartsWith("Tool call from prior turn:", StringComparison.Ordinal));
+
+                try
+                {
+                    AnsiConsole.MarkupLine("[dim]Evaluating goal...[/]");
+                    var evaluation = await RunWithEscapeCancel(ct =>
+                        goalEvaluator.EvaluateAsync(goal.Condition, history, ct));
+                    var decision = GoalLoop.Apply(goal, evaluation, usedTools, DateTimeOffset.UtcNow);
+                    goal = decision.Goal;
+                    conversation.SetGoal(goal);
+
+                    switch (evaluation.Verdict)
+                    {
+                        case GoalVerdict.Met:
+                            AnsiConsole.MarkupLine($"[green]✓ Goal achieved:[/] {goal.Condition.EscapeMarkup()}");
+                            AnsiConsole.MarkupLine($"[dim]{evaluation.Reason.EscapeMarkup()}[/]\n");
+                            pendingInput = queuedInput;
+                            break;
+
+                        case GoalVerdict.Impossible:
+                            AnsiConsole.MarkupLine($"[yellow]Goal judged impossible:[/] {goal.Condition.EscapeMarkup()}");
+                            AnsiConsole.MarkupLine($"[dim]{evaluation.Reason.EscapeMarkup()}[/]\n");
+                            pendingInput = queuedInput;
+                            break;
+
+                        default:
+                            AnsiConsole.MarkupLine($"[dim]Goal not yet met: {evaluation.Reason.EscapeMarkup()}[/]\n");
+                            if (decision.PausedForNoProgress)
+                            {
+                                AnsiConsole.MarkupLine("[yellow]Goal auto-run paused after three turns without tool use or observable progress. The goal remains active; send guidance to resume.[/]\n");
+                                pendingInput = queuedInput;
+                            }
+                            else
+                            {
+                                var goalDirective = BuildGoalDirective(goal.Condition, evaluation.Reason);
+                                pendingInput = string.IsNullOrWhiteSpace(queuedInput)
+                                    ? goalDirective
+                                    : queuedInput + "\n\n" + goalDirective;
+                                pendingInputIsGoalContinuation = true;
+                            }
+                            break;
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    AnsiConsole.MarkupLine("[dim]Goal evaluation cancelled. The goal remains active.[/]\n");
+                    pendingInput = queuedInput;
+                }
+                catch (Exception ex)
+                {
+                    var debugPath = DebugLog.Save("goal-evaluator", ex, goal.Condition);
+                    AnsiConsole.MarkupLine($"[yellow]Could not evaluate the goal:[/] {AgentErrorFormatter.ToUserMessage(ex).EscapeMarkup()}");
+                    AnsiConsole.MarkupLine($"[dim]The goal remains active. Debug saved to {debugPath.EscapeMarkup()}[/]\n");
+                    pendingInput = queuedInput;
+                }
+            }
+            else if (!string.IsNullOrWhiteSpace(queuedInput))
+            {
+                pendingInput = queuedInput;
+            }
 
             // Check if we should compact the conversation history
             _ = await HistoryCompactor.MaybeCompactAsync(history, client, config, HasContextTool(tools));
@@ -490,6 +622,84 @@ internal class AgentApp
         return comments.Count == 1
             ? $"User steering comment: {comments[0]}"
             : "User steering comments:\n" + string.Join("\n", comments.Select(comment => $"- {comment}"));
+    }
+
+    private static string BuildGoalDirective(string condition, string? evaluatorReason)
+    {
+        var guidance = string.IsNullOrWhiteSpace(evaluatorReason)
+            ? "Begin working toward the condition now. Use tools as needed and surface concrete evidence when it is satisfied."
+            : $"The independent evaluator says the condition is not yet met: {evaluatorReason}\nContinue working autonomously from the current state. Use tools and verify the result; do not merely report progress.";
+
+        return $"""
+            Active session goal:
+            {condition}
+
+            {guidance}
+            """;
+    }
+
+    private static bool IsGoalClearAlias(string argument)
+        => argument.Equals("clear", StringComparison.OrdinalIgnoreCase) ||
+           argument.Equals("stop", StringComparison.OrdinalIgnoreCase) ||
+           argument.Equals("off", StringComparison.OrdinalIgnoreCase) ||
+           argument.Equals("reset", StringComparison.OrdinalIgnoreCase) ||
+           argument.Equals("none", StringComparison.OrdinalIgnoreCase) ||
+           argument.Equals("cancel", StringComparison.OrdinalIgnoreCase);
+
+    private static ConversationGoal? RestoreGoalForResume(ConversationStore conversation)
+    {
+        var goal = conversation.Session.Goal;
+        if (goal?.IsActive != true)
+            return goal;
+
+        goal = goal with
+        {
+            StartedAt = DateTimeOffset.UtcNow.ToString("O"),
+            EvaluatedTurns = 0,
+            LastReason = null,
+            ConsecutiveTurnsWithoutTools = 0
+        };
+        conversation.SetGoal(goal);
+        return goal;
+    }
+
+    private static void ShowGoalStatus(ConversationGoal? goal)
+    {
+        if (goal is null)
+        {
+            AnsiConsole.MarkupLine("[dim]No goal set.[/]\n");
+            return;
+        }
+
+        var startedAt = DateTimeOffset.TryParse(goal.StartedAt, out var started)
+            ? started
+            : DateTimeOffset.UtcNow;
+        var endedAt = DateTimeOffset.TryParse(goal.CompletedAt, out var completed)
+            ? completed
+            : DateTimeOffset.UtcNow;
+        var elapsed = endedAt - startedAt;
+        var status = goal.Status.ToLowerInvariant() switch
+        {
+            "achieved" => "[green]achieved[/]",
+            "impossible" => "[yellow]impossible[/]",
+            _ => "[cyan]active[/]",
+        };
+
+        AnsiConsole.MarkupLine($"[bold]Goal[/] · {status}");
+        AnsiConsole.MarkupLine(goal.Condition.EscapeMarkup());
+        AnsiConsole.MarkupLine($"[dim]{goal.EvaluatedTurns:N0} evaluated {(goal.EvaluatedTurns == 1 ? "turn" : "turns")} · {FormatGoalDuration(elapsed)}[/]");
+        if (!string.IsNullOrWhiteSpace(goal.LastReason))
+            AnsiConsole.MarkupLine($"[dim]Last evaluator reason: {goal.LastReason.EscapeMarkup()}[/]");
+        AnsiConsole.WriteLine();
+    }
+
+    private static string FormatGoalDuration(TimeSpan elapsed)
+    {
+        if (elapsed.TotalHours >= 1)
+            return $"{(int)elapsed.TotalHours}h {elapsed.Minutes}m";
+        if (elapsed.TotalMinutes >= 1)
+            return $"{(int)elapsed.TotalMinutes}m {elapsed.Seconds}s";
+        return $"{Math.Max(0, (int)elapsed.TotalSeconds)}s";
     }
 
     private static string PrepareUserMessageForHistory(string message, string[]? tools)
@@ -896,7 +1106,10 @@ internal class AgentApp
         table.AddColumn("Command");
         table.AddColumn("Description");
         table.AddRow("[bold]/quit[/] or [bold]/exit[/]", "Exit the chat session");
-        table.AddRow("[bold]/clear[/]", "Clear conversation history and keep the system prompt");
+        table.AddRow("[bold]/clear[/]", "Clear conversation history and the active goal; keep the system prompt");
+        table.AddRow("[bold]/goal <condition>[/]", "Keep working until an independent evaluator confirms the condition");
+        table.AddRow("[bold]/goal[/]", "Show the current or most recently completed goal");
+        table.AddRow("[bold]/goal clear[/]", "Clear the active goal");
         table.AddRow("[bold]/resume[/]", "Select a saved conversation without loading histories first");
         table.AddRow("[bold]/resume <id>[/]", "Load a saved conversation by its full or unique id prefix");
         table.AddRow("[bold]/sys <prompt>[/]", "Change the system prompt");
@@ -2313,8 +2526,9 @@ internal class AgentApp
     private static readonly (string Name, string Description, bool TakesArgs)[] ChatSlashCommands =
     [
         ("/help", "Show available commands", false),
-        ("/clear", "Clear conversation history and keep the system prompt", false),
+        ("/clear", "Clear conversation history and the active goal; keep the system prompt", false),
         ("/context", "Show the last model request and persisted-state summary", true),
+        ("/goal", "Set, inspect, or clear a session goal", true),
         ("/model", "Select a model profile interactively, or switch by name", true),
         ("/resume", "Load a saved conversation", true),
         ("/sys", "Change the system prompt", true),
@@ -2346,6 +2560,10 @@ internal class AgentApp
             ["/model"] =
             [
                 ("list", "List model profiles and show current one", false),
+            ],
+            ["/goal"] =
+            [
+                ("clear", "Clear the active goal", false),
             ],
             ["/debug"] =
             [

@@ -116,7 +116,10 @@ internal class AgentClient
     /// Send a single prompt (no conversation history, no tools).
     /// Returns (responseText, reasoningText).
     /// </summary>
-    public async Task<(string Response, string Reasoning)> CompleteAsync(string prompt, string? systemPrompt = null)
+    public async Task<(string Response, string Reasoning)> CompleteAsync(
+        string prompt,
+        string? systemPrompt = null,
+        CancellationToken cancellationToken = default)
     {
         var messages = new List<OpenAI.Chat.ChatMessage>();
 
@@ -127,7 +130,7 @@ internal class AgentClient
 
         var opts = new OpenAI.Chat.ChatCompletionOptions();
         ApplyThinkingOptions(opts);
-        var result = await CompleteChatWithRecoveryAsync(messages, opts, CancellationToken.None);
+        var result = await CompleteChatWithRecoveryAsync(messages, opts, cancellationToken);
 
         if (!ChatResponseParsing.HasChoices(result))
             throw new InvalidOperationException("The model server returned an empty response (no choices).");

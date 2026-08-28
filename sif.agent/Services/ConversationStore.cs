@@ -72,6 +72,16 @@ internal sealed class ConversationStore
         }
     }
 
+    public void SetGoal(ConversationGoal? goal)
+    {
+        Session = Session with
+        {
+            Goal = goal,
+            UpdatedAt = DateTimeOffset.UtcNow.ToString("O")
+        };
+        WriteMetadata();
+    }
+
     public void Close()
     {
         Session = Session with { Status = ClosedStatus, UpdatedAt = DateTimeOffset.UtcNow.ToString("O") };
@@ -251,6 +261,7 @@ internal sealed record ConversationSession(
     string Preview,
     string? Model,
     string? ContextSessionId = null,
-    string? WorkingDirectory = null);
+    string? WorkingDirectory = null,
+    ConversationGoal? Goal = null);
 
 internal sealed record StoredChatMessage(string Role, string Content, string? ToolCallId);

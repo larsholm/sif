@@ -33,6 +33,12 @@ public sealed class GeneralBehaviorTests
             };
 
             store.Save(history);
+            var goal = new ConversationGoal(
+                "All focused tests pass.",
+                DateTimeOffset.UtcNow.ToString("O"),
+                EvaluatedTurns: 2,
+                LastReason: "One test remains.");
+            store.SetGoal(goal);
 
             var summary = Assert.Single(ConversationStore.List(root));
             Assert.Equal(store.Session.Id, summary.Id);
@@ -40,13 +46,15 @@ public sealed class GeneralBehaviorTests
             Assert.Equal(3, summary.MessageCount);
             Assert.Equal("Remember this task.", summary.Preview);
             Assert.Equal("test-model", summary.Model);
+            Assert.Equal(goal, summary.Goal);
             Assert.Equal(Path.TrimEndingDirectorySeparator(Path.GetFullPath(Environment.CurrentDirectory)), summary.WorkingDirectory);
 
             Assert.True(ConversationStore.TryOpen(root, store.Session.Id[5..], out var reopened, out var restored, out var error), error);
             Assert.NotNull(reopened);
+            Assert.Equal(goal, reopened!.Session.Goal);
             Assert.Equal(history.Select(message => (message.Role, message.Content)), restored!.Select(message => (message.Role, message.Content)));
 
-            reopened!.Close();
+            reopened.Close();
             Assert.Equal("closed", Assert.Single(ConversationStore.List(root)).Status);
         }
         finally
