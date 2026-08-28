@@ -391,6 +391,12 @@ internal class AgentApp
                 RollbackToLastUserMessage(history);
                 conversation.Save(history);
             }
+            catch (ReasoningLoopDetectedException ex)
+            {
+                AnsiConsole.MarkupLine($"[yellow]{ex.Message.EscapeMarkup()}[/]");
+                conversation.Save(history);
+                AnsiConsole.MarkupLine("[dim]The task was kept in context; refine the prompt or type 'continue' to try again.[/]\n");
+            }
             catch (Exception ex)
             {
                 var debugPath = DebugLog.Save("chat-loop", ex, "during conversation");

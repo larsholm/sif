@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Spectre.Console;
 using sif.agent;
+using sif.agent.Services;
 using Xunit;
 
 namespace sif.agent.tests;
@@ -112,6 +113,34 @@ public sealed class AgentClientIntegrationTests
         Assert.Contains("Paste received.", output);
         Assert.DoesNotContain("<think>", output, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("</think>", output, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ChatStreamingAsyncStopsLoopingTaggedReasoning()
+    {
+        var repeatedThought = "I am checking the same premise again and reaching the same intermediate conclusion. ";
+        var loopingReasoning = string.Concat(Enumerable.Repeat(repeatedThought, 8));
+
+        await using var server = new ChatCompletionStub();
+        server.EnqueueStream(
+            ChatStreamChunk(JsonSerializer.Serialize(new
+            {
+                role = "assistant",
+                content = $"<think>{loopingReasoning}</think>"
+            })),
+            ChatStreamChunk("{}", "stop"));
+
+        var config = TestConfig(server.BaseUrl, ConfiguredDefaultModel());
+        config.ThinkingEnabled = true;
+        var client = new AgentClient(config);
+        var history = new List<ChatMessage> { new("user", "solve it") };
+
+        var exception = await Assert.ThrowsAsync<ReasoningLoopDetectedException>(
+            () => WithTimeout(client.ChatStreamingAsync(history)));
+
+        Assert.Contains("repeating loop", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("reasoning stream", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Single(server.Requests);
     }
 
     [Fact]
@@ -283,6 +312,34 @@ public sealed class AgentClientIntegrationTests
         Assert.Equal(2, server.Requests.Count);
         Assert.All(server.Requests, request =>
             Assert.True(request.Json.RootElement.GetProperty("stream").GetBoolean()));
+    }
+
+    [Fact]
+    public async Task ChatWithToolsStopsLoopingReasoningStream()
+    {
+        var repeatedThought = "I should run the same analysis once more before I can select the next tool. ";
+        var loopingReasoning = string.Concat(Enumerable.Repeat(repeatedThought, 8));
+
+        await using var server = new ChatCompletionStub();
+        server.EnqueueStream(
+            ChatStreamChunk(JsonSerializer.Serialize(new
+            {
+                role = "assistant",
+                reasoning_content = loopingReasoning
+            })),
+            ChatStreamChunk("{}", "stop"));
+
+        var config = TestConfig(server.BaseUrl, ConfiguredDefaultModel());
+        config.ThinkingEnabled = true;
+        var client = new AgentClient(config, ["read"]);
+        var history = new List<ChatMessage> { new("user", "inspect the project") };
+
+        var exception = await Assert.ThrowsAsync<ReasoningLoopDetectedException>(
+            () => WithTimeout(client.ChatWithToolsAsync(history, streaming: true)));
+
+        Assert.Contains("repeating loop", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(history, message => message.Role == "assistant");
+        Assert.Single(server.Requests);
     }
 
     [Fact]

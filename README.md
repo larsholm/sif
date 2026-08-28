@@ -151,7 +151,7 @@ Use `/resume` in an interactive chat to choose a saved session with the arrow ke
 
 The `diagnostics` tool is for inspecting sif's runtime state only. It is not a debugger and does not launch, attach to, or manage .NET debug adapter sessions. There is also a legacy `debug` tool alias for the same diagnostics behavior.
 
-Sif streams model output, including thinking/reasoning deltas exposed by compatible providers, while accumulating any tool calls before executing them. Thinking and reasoning display works for OpenAI o-series models and Qwen3.x models via vLLM.
+Sif streams model output, including thinking/reasoning deltas exposed by compatible providers, while accumulating any tool calls before executing them. Thinking and reasoning display works for OpenAI o-series models and Qwen3.x models via vLLM. If a reasoning stream enters a substantial exact repetition loop, Sif automatically stops that generation instead of letting it run indefinitely.
 
 ## C# Development with Roslyn
 

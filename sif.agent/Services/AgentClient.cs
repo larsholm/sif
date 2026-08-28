@@ -464,6 +464,8 @@ internal class AgentClient
             try
             {
                 var content = new StringBuilder();
+                var reasoningLoopDetector = new StreamingLoopDetector();
+                var taggedContent = new ThinkingTagStreamParser();
                 var toolCalls = new Dictionary<int, StreamingToolCallBuilder>();
                 var totalTokens = 0;
                 var outputTokens = 0;
@@ -473,10 +475,11 @@ internal class AgentClient
 
                 await foreach (var update in stream.WithCancellation(cancellationToken))
                 {
-                    if (_thinkingEnabled)
+                    var reasoningDelta = ChatResponseParsing.ExtractReasoningDelta(update);
+                    if (reasoningDelta.Length > 0)
                     {
-                        var reasoningDelta = ChatResponseParsing.ExtractReasoningDelta(update);
-                        if (reasoningDelta.Length > 0)
+                        ThrowIfReasoningLoops(reasoningLoopDetector, reasoningDelta);
+                        if (_thinkingEnabled)
                         {
                             if (!showedReasoning)
                             {
@@ -487,7 +490,13 @@ internal class AgentClient
                         }
                     }
 
-                    content.Append(ExtractText(update.ContentUpdate));
+                    var contentDelta = ExtractText(update.ContentUpdate);
+                    content.Append(contentDelta);
+                    foreach (var segment in taggedContent.Append(contentDelta))
+                    {
+                        if (segment.IsReasoning)
+                            ThrowIfReasoningLoops(reasoningLoopDetector, segment.Text);
+                    }
 
                     var updateFinishReason = ChatResponseParsing.ExtractFinishReasonDelta(update);
                     if (updateFinishReason.Length > 0)
@@ -513,6 +522,12 @@ internal class AgentClient
                         totalTokens = usage.TotalTokenCount;
                         outputTokens = usage.OutputTokenCount;
                     }
+                }
+
+                foreach (var segment in taggedContent.Complete())
+                {
+                    if (segment.IsReasoning)
+                        ThrowIfReasoningLoops(reasoningLoopDetector, segment.Text);
                 }
 
                 if (showedReasoning)
@@ -561,12 +576,18 @@ internal class AgentClient
         int outputTokens = 0;
         var displayedSection = StreamDisplaySection.None;
         var taggedContent = new ThinkingTagStreamParser();
+        var reasoningLoopDetector = new StreamingLoopDetector();
         var finishReason = "";
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
         void DisplayReasoning(string text)
         {
-            if (!_thinkingEnabled || text.Length == 0)
+            if (text.Length == 0)
+                return;
+
+            ThrowIfReasoningLoops(reasoningLoopDetector, text);
+
+            if (!_thinkingEnabled)
                 return;
 
             if (displayedSection != StreamDisplaySection.Reasoning)
@@ -606,12 +627,9 @@ internal class AgentClient
 
         await foreach (var update in stream.WithCancellation(cancellationToken))
         {
-            if (_thinkingEnabled)
-            {
-                var reasoningDelta = ChatResponseParsing.ExtractReasoningDelta(update);
-                if (reasoningDelta.Length > 0)
-                    DisplayReasoning(reasoningDelta);
-            }
+            var reasoningDelta = ChatResponseParsing.ExtractReasoningDelta(update);
+            if (reasoningDelta.Length > 0)
+                DisplayReasoning(reasoningDelta);
 
             if (update.ContentUpdate is not null)
             {
@@ -652,6 +670,12 @@ internal class AgentClient
         }
 
         return (sb.ToString(), totalTokens);
+    }
+
+    private static void ThrowIfReasoningLoops(StreamingLoopDetector detector, string text)
+    {
+        if (detector.Append(text) is { } repetition)
+            throw new ReasoningLoopDetectedException(repetition);
     }
 
     private enum StreamDisplaySection
