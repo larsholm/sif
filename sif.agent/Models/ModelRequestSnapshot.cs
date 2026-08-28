@@ -16,6 +16,17 @@ internal sealed record ModelRequestSnapshot(
         Tools.Sum(tool => tool.Name.Length + tool.Description.Length + (tool.ParametersJson?.Length ?? 0));
 }
 
+internal sealed record ModelRequestBudget(
+    int ApproximateInputCharacters,
+    int EstimatedInputTokens,
+    int ReservedOutputTokens,
+    int? ContextLength)
+{
+    public int? AvailableInputTokens => ContextLength.HasValue
+        ? Math.Max(0, ContextLength.Value - ReservedOutputTokens)
+        : null;
+}
+
 internal sealed record ModelRequestMessage
 {
     public string Role { get; }

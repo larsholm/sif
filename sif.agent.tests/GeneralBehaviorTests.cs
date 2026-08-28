@@ -8,14 +8,85 @@ namespace sif.agent.tests;
 public sealed class GeneralBehaviorTests
 {
     [Theory]
-    [InlineData(32768, 27852)]
-    [InlineData(100000, 85000)]
-    [InlineData(200000, AgentConfig.DefaultCompactionThreshold)]
-    public void AutomaticCompactionThresholdUsesSmallerOfDefaultAndEightyFivePercent(
+    [InlineData(32768, 19660)]
+    [InlineData(100000, 60000)]
+    [InlineData(400000, AgentConfig.DefaultCompactionThreshold)]
+    public void AutomaticCompactionThresholdUsesSmallerOfDefaultAndSixtyPercent(
         int modelContextLength,
         int expected)
     {
         Assert.Equal(expected, AgentApp.CalculateAutomaticCompactionThreshold(modelContextLength));
+    }
+
+    [Fact]
+    public void NativeLmStudioMetadataUsesLoadedInstanceContextInsteadOfModelMaximum()
+    {
+        using var document = JsonDocument.Parse("""
+            {
+              "models": [
+                {
+                  "key": "qwen-local",
+                  "max_context_length": 262144,
+                  "loaded_instances": [
+                    {
+                      "id": "qwen-local",
+                      "config": { "context_length": 160000 }
+                    }
+                  ]
+                }
+              ]
+            }
+            """);
+
+        var info = AgentApp.TryReadModelEndpointInfo(document.RootElement, "qwen-local");
+
+        Assert.NotNull(info);
+        Assert.Equal(160000, info.ContextLength);
+    }
+
+    [Fact]
+    public void LegacyLmStudioMetadataUsesLoadedContextLength()
+    {
+        using var document = JsonDocument.Parse("""
+            {
+              "data": [
+                {
+                  "id": "qwen-local",
+                  "max_context_length": 262144,
+                  "loaded_context_length": 120000
+                }
+              ]
+            }
+            """);
+
+        var info = AgentApp.TryReadModelEndpointInfo(document.RootElement, "qwen-local");
+
+        Assert.NotNull(info);
+        Assert.Equal(120000, info.ContextLength);
+    }
+
+    [Fact]
+    public void RequestBudgetIncludesToolSchemasAndReservesOutputContext()
+    {
+        var config = new AgentConfig
+        {
+            BaseUrl = "http://localhost:1234/v1",
+            Model = "test-model",
+            MaxTokens = null
+        };
+        var history = new List<ChatMessage>
+        {
+            new("system", "system"),
+            new("user", new string('x', 3000))
+        };
+
+        var withoutTools = new AgentClient(config).EstimateRequestBudget(history, 160000);
+        var withTools = new AgentClient(config, ["read", "edit"]).EstimateRequestBudget(history, 160000);
+
+        Assert.True(withTools.ApproximateInputCharacters > withoutTools.ApproximateInputCharacters);
+        Assert.True(withTools.EstimatedInputTokens > withoutTools.EstimatedInputTokens);
+        Assert.Equal(24000, withTools.ReservedOutputTokens);
+        Assert.Equal(136000, withTools.AvailableInputTokens);
     }
 
     [Fact]

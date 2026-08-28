@@ -163,6 +163,27 @@ public sealed class AgentClientIntegrationTests
     }
 
     [Fact]
+    public async Task ChatAsyncReportsLengthFinishReasonAndConfiguredOutputLimit()
+    {
+        await using var server = new ChatCompletionStub();
+        server.Enqueue(ChatResponse(
+            """{"role":"assistant","content":"partial"}""",
+            finishReason: "length"));
+
+        var config = TestConfig(server.BaseUrl, ConfiguredDefaultModel());
+        config.MaxTokens = 321;
+        var client = new AgentClient(config);
+        var history = new List<ChatMessage> { new("user", "produce a long answer") };
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => WithTimeout(client.ChatAsync(history)));
+
+        Assert.Contains("finish_reason=length", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("321", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("output-token limit", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task ChatWithToolsExecutesToolAndContinuesWithToolResult()
     {
         var dir = CreateTempDirectory();
@@ -253,6 +274,93 @@ public sealed class AgentClientIntegrationTests
             ContextCommandHandler.Handle("/context history", history, client, () => { }));
         Assert.Contains("Stored Conversation History", historyOutput);
         Assert.Contains("done", historyOutput);
+    }
+
+    [Fact]
+    public async Task ChatAsyncCompactsBeforeBuildingTheProviderRequest()
+    {
+        await using var server = new ChatCompletionStub();
+        server.Enqueue(ChatResponse("""{"role":"assistant","content":"done"}"""));
+
+        var client = new AgentClient(TestConfig(server.BaseUrl, ConfiguredDefaultModel()));
+        var history = new List<ChatMessage>
+        {
+            new("system", "system prompt"),
+            new("user", "old conversation that should be compacted"),
+            new("assistant", "old response"),
+            new("user", "current task")
+        };
+        var compactionCalls = 0;
+
+        await WithTimeout(client.ChatAsync(
+            history,
+            maybeCompact: _ =>
+            {
+                compactionCalls++;
+                history.Clear();
+                history.Add(new ChatMessage("system", "compacted continuation summary"));
+                history.Add(new ChatMessage("user", "current task"));
+                return Task.FromResult(true);
+            }));
+
+        Assert.Equal(1, compactionCalls);
+        var requestText = server.Requests.Single().Json.RootElement.GetRawText();
+        Assert.Contains("compacted continuation summary", requestText, StringComparison.Ordinal);
+        Assert.DoesNotContain("old conversation that should be compacted", requestText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ChatWithToolsCanCompactBetweenToolRequests()
+    {
+        var dir = CreateTempDirectory();
+        var file = Path.Combine(dir, "note.txt");
+        await File.WriteAllTextAsync(file, "tool result retained across compaction");
+
+        await using var server = new ChatCompletionStub();
+        server.Enqueue(ChatResponse("""
+            {
+              "role": "assistant",
+              "content": null,
+              "tool_calls": [
+                {
+                  "id": "call_read_compact",
+                  "type": "function",
+                  "function": {
+                    "name": "read",
+                    "arguments": "__ARGS__"
+                  }
+                }
+              ]
+            }
+            """.Replace("__ARGS__", JsonEncodedText.Encode($$"""{"path":"{{file}}"}""").ToString()), finishReason: "tool_calls"));
+        server.Enqueue(ChatResponse("""{"role":"assistant","content":"done"}"""));
+
+        var client = new AgentClient(TestConfig(server.BaseUrl, ConfiguredDefaultModel()), ["read"]);
+        var history = new List<ChatMessage> { new("user", "original task") };
+        var compactionCalls = 0;
+
+        var (response, _) = await WithTimeout(client.ChatWithToolsAsync(
+            history,
+            maybeCompact: _ =>
+            {
+                compactionCalls++;
+                if (compactionCalls == 1)
+                    return Task.FromResult(false);
+
+                var persistedToolResult = history[^1];
+                history.Clear();
+                history.Add(new ChatMessage("system", "compacted after tool execution"));
+                history.Add(persistedToolResult);
+                return Task.FromResult(true);
+            }));
+
+        Assert.Equal("done", response);
+        Assert.Equal(2, compactionCalls);
+        Assert.Equal(2, server.Requests.Count);
+        var secondRequestText = server.Requests[1].Json.RootElement.GetRawText();
+        Assert.Contains("compacted after tool execution", secondRequestText, StringComparison.Ordinal);
+        Assert.Contains("tool result retained across compaction", secondRequestText, StringComparison.Ordinal);
+        Assert.DoesNotContain("original task", secondRequestText, StringComparison.Ordinal);
     }
 
     [Fact]

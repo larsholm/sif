@@ -53,12 +53,20 @@ internal class AgentConfig
     public string? CurrentProfile { get; set; }
     /// <summary>
     /// Token threshold at which the chat history is compacted (summarized) via the LLM.
-    /// Default is 60000 tokens (~240k chars), roughly 60% of a 100k context window.
+    /// The built-in fallback is 180000 tokens. When the provider advertises a
+    /// context window and this value was not explicitly configured, runtime setup
+    /// replaces it with 60% of that window, capped at the fallback.
     /// Set to 0 to disable compaction.
     /// </summary>
     public int CompactionThreshold { get; set; } = DefaultCompactionThreshold;
     [JsonIgnore]
     public bool CompactionThresholdConfigured { get; set; }
+    /// <summary>
+    /// Context length reported for the currently loaded model instance. This is
+    /// runtime metadata and must never be persisted into the user's config.
+    /// </summary>
+    [JsonIgnore]
+    public int? DetectedContextLength { get; set; }
     public Dictionary<string, McpServerConfig> McpServers { get; set; } = new();
     public Dictionary<string, string> Values { get; set; } = new();
 

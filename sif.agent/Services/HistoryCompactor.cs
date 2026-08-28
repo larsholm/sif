@@ -33,13 +33,19 @@ internal static class HistoryCompactor
         if (history.Count < 5)
             return false;
 
-        // Estimate chat history size in tokens. Stored context is intentionally excluded:
-        // compaction moves data there, so counting it would immediately retrigger compaction.
+        // Keep the configured threshold compatible with the historical chars/4
+        // estimate, but also protect the actual request budget using all messages,
+        // tool schemas, conservative token estimation, and reserved model output.
+        // Stored out-of-band context is intentionally excluded: compaction moves
+        // data there, so counting it would immediately retrigger compaction.
         var chars = history.Sum(m => m.Content.Length);
-        var estimatedTokens = chars / 4;
+        var estimatedHistoryTokens = (chars + 3) / 4;
+        var requestBudget = client.EstimateRequestBudget(history, config.DetectedContextLength);
+        var thresholdExceeded = estimatedHistoryTokens >= config.CompactionThreshold;
+        var requestBudgetExceeded = requestBudget.AvailableInputTokens.HasValue &&
+                                    requestBudget.EstimatedInputTokens >= requestBudget.AvailableInputTokens.Value;
 
-        // Check if we've crossed the threshold
-        if (estimatedTokens < config.CompactionThreshold)
+        if (!thresholdExceeded && !requestBudgetExceeded)
             return false;
 
         // Find the system prompt
@@ -155,7 +161,10 @@ Conversation:
 
         var chunks = BuildCompactionChunks();
         var contentToSummarize = string.Concat(chunks);
-        AnsiConsole.MarkupLine($"[dim]Compacting history ({estimatedTokens / 1000:0.0}k tokens, threshold {config.CompactionThreshold / 1000:0.0}k tokens, {chunks.Count:N0} chunk(s))...[/]");
+        var reason = requestBudgetExceeded
+            ? $"request ~{requestBudget.EstimatedInputTokens / 1000.0:0.0}k + {requestBudget.ReservedOutputTokens / 1000.0:0.0}k reserved output / {requestBudget.ContextLength!.Value / 1000.0:0.0}k context"
+            : $"history ~{estimatedHistoryTokens / 1000.0:0.0}k, threshold {config.CompactionThreshold / 1000.0:0.0}k";
+        AnsiConsole.MarkupLine($"[dim]Compacting history ({reason}, {chunks.Count:N0} chunk(s))...[/]");
 
         try
         {

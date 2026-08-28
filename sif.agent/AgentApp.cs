@@ -224,6 +224,13 @@ internal class AgentApp
         var goal = RestoreGoalForResume(conversation);
         var goalEvaluator = new GoalEvaluator(config);
         var modelReadiness = new ModelReadinessService(config);
+        Task<bool> CompactHistoryIfNeeded(CancellationToken cancellationToken) =>
+            HistoryCompactor.MaybeCompactAsync(
+                history,
+                client,
+                config,
+                HasContextTool(tools),
+                cancellationToken);
         if (goal?.IsActive == true)
             AnsiConsole.MarkupLine($"[dim]Restored active goal: {goal.Condition.EscapeMarkup()}[/]\n");
 
@@ -403,7 +410,8 @@ internal class AgentApp
                         ct,
                         mailbox.TakeAll,
                         () => conversation.Save(history),
-                        streaming: !opts.NoStream));
+                        streaming: !opts.NoStream,
+                        maybeCompact: CompactHistoryIfNeeded));
                     var (response, tokenCount) = turn.Result;
                     queuedSteeringComments = turn.PendingComments;
                     var ctxEstimate = ContextCommandHandler.EstimateContextSize(client.LastRequestSnapshot);
@@ -412,7 +420,10 @@ internal class AgentApp
                 else if (opts.NoStream)
                 {
                     AnsiConsole.Write(new Markup("[green]agent>[/] "));
-                    var turn = await RunWithChatControls((ct, _) => client.ChatAsync(history, ct));
+                    var turn = await RunWithChatControls((ct, _) => client.ChatAsync(
+                        history,
+                        ct,
+                        CompactHistoryIfNeeded));
                     var (response, reasoning) = turn.Result;
                     queuedSteeringComments = turn.PendingComments;
                     if (!string.IsNullOrEmpty(reasoning))
@@ -431,7 +442,10 @@ internal class AgentApp
                 else
                 {
                     AnsiConsole.Write(new Markup("[green]agent>[/] "));
-                    var turn = await RunWithChatControls((ct, _) => client.ChatStreamingAsync(history, ct));
+                    var turn = await RunWithChatControls((ct, _) => client.ChatStreamingAsync(
+                        history,
+                        ct,
+                        CompactHistoryIfNeeded));
                     var (response, tokenCount) = turn.Result;
                     queuedSteeringComments = turn.PendingComments;
                     history.Add(new ChatMessage("assistant", response));
@@ -1643,7 +1657,7 @@ internal class AgentApp
         return new List<string>();
     }
 
-    private record ModelEndpointInfo(int? ContextLength, decimal? OutputPricePerMillion);
+    internal sealed record ModelEndpointInfo(int? ContextLength, decimal? OutputPricePerMillion);
 
     /// <summary>
     /// Build the one-line chat session header summarizing the active model, pricing,
@@ -1676,6 +1690,8 @@ internal class AgentApp
     /// </summary>
     private static void ApplyCompactionThreshold(AgentConfig config, int? contextLength)
     {
+        config.DetectedContextLength = contextLength;
+
         if (config.CompactionThreshold <= 0 || !contextLength.HasValue)
             return;
 
@@ -1691,8 +1707,8 @@ internal class AgentApp
         if (modelContextLength <= 0)
             throw new ArgumentOutOfRangeException(nameof(modelContextLength));
 
-        var eightyFivePercent = (long)modelContextLength * 85 / 100;
-        return (int)Math.Min(AgentConfig.DefaultCompactionThreshold, eightyFivePercent);
+        var sixtyPercent = (long)modelContextLength * 60 / 100;
+        return (int)Math.Min(AgentConfig.DefaultCompactionThreshold, sixtyPercent);
     }
 
     private static async Task<ModelEndpointInfo> FetchModelInfoAsync(string baseUrl, string apiKey, string modelId)
@@ -1705,6 +1721,7 @@ internal class AgentApp
         if (!string.IsNullOrWhiteSpace(apiKey))
             http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
 
+        decimal? discoveredOutputPrice = null;
         foreach (var url in GetModelEndpointCandidates(baseUrl))
         {
             try
@@ -1715,22 +1732,11 @@ internal class AgentApp
 
                 await using var stream = await response.Content.ReadAsStreamAsync();
                 using var doc = await JsonDocument.ParseAsync(stream);
-                if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
-                    continue;
-
-                foreach (var item in data.EnumerateArray())
+                if (TryReadModelEndpointInfo(doc.RootElement, modelId) is { } info)
                 {
-                    if (!item.TryGetProperty("id", out var idElement))
-                        continue;
-
-                    var id = idElement.GetString();
-                    if (!string.Equals(id, modelId, StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    var contextLength = TryReadContextLength(item);
-                    var outputPrice = TryReadOutputPricePerMillion(item);
-                    if (contextLength.HasValue || outputPrice.HasValue)
-                        return new ModelEndpointInfo(contextLength, outputPrice);
+                    discoveredOutputPrice ??= info.OutputPricePerMillion;
+                    if (info.ContextLength.HasValue)
+                        return new ModelEndpointInfo(info.ContextLength, discoveredOutputPrice);
                 }
             }
             catch
@@ -1739,7 +1745,75 @@ internal class AgentApp
             }
         }
 
-        return new ModelEndpointInfo(null, null);
+        return new ModelEndpointInfo(null, discoveredOutputPrice);
+    }
+
+    /// <summary>
+    /// Read model metadata from OpenAI-compatible model lists as well as LM
+    /// Studio's native v1/v0 lists. Native metadata exposes the context length
+    /// of the loaded instance, which may be lower than the model-file maximum.
+    /// </summary>
+    internal static ModelEndpointInfo? TryReadModelEndpointInfo(JsonElement root, string modelId)
+    {
+        JsonElement models;
+        if (root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Array)
+            models = data;
+        else if (root.TryGetProperty("models", out var nativeModels) && nativeModels.ValueKind == JsonValueKind.Array)
+            models = nativeModels;
+        else
+            return null;
+
+        foreach (var item in models.EnumerateArray())
+        {
+            var id = TryReadStringProperty(item, "id") ?? TryReadStringProperty(item, "key");
+            if (!string.Equals(id, modelId, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var contextLength = TryReadLoadedContextLength(item, modelId) ?? TryReadContextLength(item);
+            var outputPrice = TryReadOutputPricePerMillion(item);
+            if (contextLength.HasValue || outputPrice.HasValue)
+                return new ModelEndpointInfo(contextLength, outputPrice);
+        }
+
+        return null;
+    }
+
+    private static int? TryReadLoadedContextLength(JsonElement model, string modelId)
+    {
+        if (TryReadIntProperty(model, "loaded_context_length", out var loadedContextLength))
+            return loadedContextLength;
+
+        if (!model.TryGetProperty("loaded_instances", out var instances) || instances.ValueKind != JsonValueKind.Array)
+            return null;
+
+        JsonElement? firstLoaded = null;
+        foreach (var instance in instances.EnumerateArray())
+        {
+            firstLoaded ??= instance;
+            var instanceId = TryReadStringProperty(instance, "id");
+            if (string.Equals(instanceId, modelId, StringComparison.OrdinalIgnoreCase) &&
+                TryReadInstanceContextLength(instance, out var matchingContextLength))
+                return matchingContextLength;
+        }
+
+        return firstLoaded.HasValue && TryReadInstanceContextLength(firstLoaded.Value, out var firstContextLength)
+            ? firstContextLength
+            : null;
+    }
+
+    private static bool TryReadInstanceContextLength(JsonElement instance, out int contextLength)
+    {
+        contextLength = 0;
+        return instance.TryGetProperty("config", out var instanceConfig) &&
+               instanceConfig.ValueKind == JsonValueKind.Object &&
+               TryReadIntProperty(instanceConfig, "context_length", out contextLength);
+    }
+
+    private static string? TryReadStringProperty(JsonElement element, string name)
+    {
+        return element.TryGetProperty(name, out var property) && property.ValueKind == JsonValueKind.String
+            ? property.GetString()
+            : null;
     }
 
     private static decimal? TryReadOutputPricePerMillion(JsonElement model)
@@ -1840,6 +1914,19 @@ internal class AgentApp
                 };
                 yield return builder.Uri.ToString();
             }
+
+            // LM Studio's OpenAI-compatible /v1/models response intentionally
+            // contains only identifiers. Its native endpoints expose the loaded
+            // instance context, so probe those as fallbacks.
+            var nativeBuilder = new UriBuilder(uri)
+            {
+                Path = "/api/v1/models",
+                Query = ""
+            };
+            yield return nativeBuilder.Uri.ToString();
+
+            nativeBuilder.Path = "/api/v0/models";
+            yield return nativeBuilder.Uri.ToString();
         }
     }
 

@@ -43,7 +43,7 @@ internal class ModelProfile
     public bool ThinkingEnabled { get; set; } = true;
 
     /// <summary>
-    /// Per-profile token threshold for compaction. Null means use the global default (100000).
+    /// Per-profile token threshold for compaction. Null means use the global setting.
     /// Different models with different context windows may benefit from different thresholds.
     /// </summary>
     public int? CompactionThreshold { get; set; }

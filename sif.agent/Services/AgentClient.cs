@@ -16,6 +16,10 @@ namespace sif.agent;
 internal class AgentClient
 {
     private const int MaxTransientModelRetries = 2;
+    private const int ConservativeCharactersPerToken = 3;
+    private const int DefaultOutputReservePercent = 15;
+    private const int MinimumOutputReserveTokens = 4096;
+    private const int MaximumOutputReserveTokens = 32768;
     private const string ToolParseRetryInstruction =
         "The previous completion was rejected because the tool call was malformed. Retry once. " +
         "If you need a tool, call the provided function directly with a valid JSON object for arguments. " +
@@ -100,6 +104,56 @@ internal class AgentClient
     }
 
     /// <summary>
+    /// Estimate the complete request budget, including tool schemas. Character
+    /// counting cannot replace the model tokenizer, so use a deliberately more
+    /// conservative ratio than the UI's historical chars/4 display estimate.
+    /// </summary>
+    internal ModelRequestBudget EstimateRequestBudget(
+        IReadOnlyList<ChatMessage> history,
+        int? contextLength)
+    {
+        var messages = history.Select(ToRequestSnapshotMessage).ToArray();
+        var tools = GetCurrentTools()
+            .Select(tool => new ModelRequestTool(
+                tool.FunctionName,
+                tool.FunctionDescription ?? "",
+                tool.FunctionParameters?.ToString()))
+            .ToArray();
+
+        var snapshot = new ModelRequestSnapshot(
+            DateTimeOffset.UtcNow,
+            _modelName,
+            Streaming: false,
+            _temperature,
+            _maxTokens,
+            _thinkingEnabled && _isOModel ? "high" : null,
+            messages,
+            tools);
+
+        // Account for role markers and chat-template framing that are not present
+        // in message content or JSON schemas themselves.
+        var framingCharacters = (messages.Length * 24) + (tools.Length * 48);
+        var inputCharacters = snapshot.ApproximateInputCharacters + framingCharacters;
+        var inputTokens = (inputCharacters + ConservativeCharactersPerToken - 1) /
+                          ConservativeCharactersPerToken;
+
+        var outputReserve = 0;
+        if (_maxTokens is > 0)
+        {
+            outputReserve = _maxTokens.Value;
+        }
+        else if (contextLength is > 0)
+        {
+            outputReserve = Math.Clamp(
+                contextLength.Value * DefaultOutputReservePercent / 100,
+                MinimumOutputReserveTokens,
+                MaximumOutputReserveTokens);
+        }
+
+        return new ModelRequestBudget(inputCharacters, inputTokens, outputReserve, contextLength);
+    }
+
+    /// <summary>
     /// Generate a focused summary of arbitrary content using the LLM.
     /// Capped at 4000 characters.
     /// </summary>
@@ -153,7 +207,8 @@ internal class AgentClient
         CancellationToken cancellationToken = default,
         Func<IReadOnlyList<string>>? takeSteeringComments = null,
         Action? onHistoryChanged = null,
-        bool streaming = false)
+        bool streaming = false,
+        Func<CancellationToken, Task<bool>>? maybeCompact = null)
     {
         var messages = history.Select(m => ToRequestMessage(m)).ToList();
         var requestMessages = history.Select(ToRequestSnapshotMessage).ToList();
@@ -169,6 +224,15 @@ internal class AgentClient
 
         while (true)
             {
+                // A tool result can make the next request much larger than the
+                // first request in this turn. Compact at every request boundary,
+                // then rebuild the provider messages from the compacted history.
+                if (maybeCompact is not null && await maybeCompact(cancellationToken))
+                {
+                    messages = history.Select(ToRequestMessage).ToList();
+                    requestMessages = history.Select(ToRequestSnapshotMessage).ToList();
+                }
+
                 AnsiConsole.Write(new Markup("[dim]Thinking...[/]"));
                 var opts = new OpenAI.Chat.ChatCompletionOptions();
                 foreach (var tool in GetCurrentTools())
@@ -228,9 +292,7 @@ internal class AgentClient
 
                 if (string.Equals(finishReason, "length", StringComparison.OrdinalIgnoreCase))
                 {
-                    throw new InvalidOperationException(
-                        "The model response was truncated because it reached the available context or output-token limit. " +
-                        "Increase the model context size or reduce the conversation before continuing.");
+                    throw new InvalidOperationException(BuildLengthLimitMessage(generatedTokens, inputAndOutputTokens));
                 }
 
                 // Fall back to extracting thinking tags from content if no separate reasoning field
@@ -404,8 +466,14 @@ internal class AgentClient
     /// Send a full conversation and get a complete response (no tools).
     /// Returns (responseText, reasoningText) where reasoning is displayed separately.
     /// </summary>
-    public async Task<(string Response, string Reasoning)> ChatAsync(List<ChatMessage> history, CancellationToken cancellationToken = default)
+    public async Task<(string Response, string Reasoning)> ChatAsync(
+        List<ChatMessage> history,
+        CancellationToken cancellationToken = default,
+        Func<CancellationToken, Task<bool>>? maybeCompact = null)
     {
+        if (maybeCompact is not null)
+            _ = await maybeCompact(cancellationToken);
+
         var messages = history.Select(m => ToRequestMessage(m)).ToList();
         var opts = new OpenAI.Chat.ChatCompletionOptions();
         ApplyThinkingOptions(opts);
@@ -417,6 +485,13 @@ internal class AgentClient
 
         string reasoningText = ChatResponseParsing.ExtractReasoningFromRawResponse(result);
         var contentText = ExtractText(result.Value.Content);
+        var finishReason = ChatResponseParsing.ExtractFinishReason(result);
+        if (string.Equals(finishReason, "length", StringComparison.OrdinalIgnoreCase))
+        {
+            var outputTokens = result.Value.Usage?.OutputTokenCount ?? 0;
+            var totalTokens = result.Value.Usage?.TotalTokenCount ?? 0;
+            throw new InvalidOperationException(BuildLengthLimitMessage(outputTokens, totalTokens));
+        }
 
         // Fall back to extracting thinking tags from content
         if (string.IsNullOrEmpty(reasoningText))
@@ -566,8 +641,14 @@ internal class AgentClient
     /// Send a full conversation with streaming output.
     /// Returns the full response text and total token count.
     /// </summary>
-    public async Task<(string Response, int TokenCount)> ChatStreamingAsync(List<ChatMessage> history, CancellationToken cancellationToken = default)
+    public async Task<(string Response, int TokenCount)> ChatStreamingAsync(
+        List<ChatMessage> history,
+        CancellationToken cancellationToken = default,
+        Func<CancellationToken, Task<bool>>? maybeCompact = null)
     {
+        if (maybeCompact is not null)
+            _ = await maybeCompact(cancellationToken);
+
         var messages = history.Select(m => ToRequestMessage(m)).ToList();
         var opts = new OpenAI.Chat.ChatCompletionOptions();
         ApplyThinkingOptions(opts);
@@ -656,9 +737,7 @@ internal class AgentClient
 
         if (string.Equals(finishReason, "length", StringComparison.OrdinalIgnoreCase))
         {
-            throw new InvalidOperationException(
-                "The model response was truncated because it reached the available context or output-token limit. " +
-                "Increase the model context size or reduce the conversation before continuing.");
+            throw new InvalidOperationException(BuildLengthLimitMessage(outputTokens, totalTokens));
         }
 
         AnsiConsole.WriteLine();
@@ -673,6 +752,22 @@ internal class AgentClient
         }
 
         return (sb.ToString(), totalTokens);
+    }
+
+    private string BuildLengthLimitMessage(int outputTokens, int totalTokens)
+    {
+        var usage = outputTokens > 0
+            ? $" after {outputTokens:N0} output tokens" +
+              (totalTokens > 0 ? $" ({totalTokens:N0} total tokens)" : "")
+            : "";
+        var configuredLimit = _maxTokens is > 0
+            ? $" The configured maximum output is {_maxTokens.Value:N0} tokens."
+            : " No maximum output value was sent, so the provider default applies.";
+
+        return $"The model response was truncated: the provider stopped with finish_reason=length{usage}. " +
+               "This can mean either that the output-token limit was reached or that the input plus generated output exhausted the context window." +
+               configuredLimit +
+               " Reduce/compact the conversation or raise the relevant provider limit before continuing.";
     }
 
     private static void ThrowIfReasoningLoops(StreamingLoopDetector detector, string text)

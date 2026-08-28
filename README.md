@@ -141,7 +141,7 @@ sif
 
 When `context` is enabled, large local and MCP tool results are stored under `~/.sif/context/` and replaced in model context with a compact handle such as `ctx_abc123`. The model can then call `ctx_search` for focused snippets or `ctx_read` for a specific stored result. Defaults are sized for large local-model contexts: `read` returns up to 1,000 lines by default, shell output returns up to 24,000 characters, `ctx_read` returns up to 32,000 characters, and automatic context storage starts above 60,000 characters.
 
-When chat history grows past the compaction threshold, `sif` summarizes older messages, stores the raw compacted history and summary in the context store, and keeps the system prompt plus the most recent messages in active history. On startup, `sif` probes the configured `/models` endpoint for context-window metadata such as `context_length`, `context_window`, `max_model_len`, or `n_ctx`. If the provider reports a context window and the threshold is still the built-in default, compaction starts at about 60% of that window. Set `AGENT_COMPACTION_THRESHOLD` or `sif config --set COMPACTION_THRESHOLD=<tokens>` to override it, or set it to `0` to disable compaction.
+Before every model request, including follow-up requests after tool calls, `sif` checks whether chat history should be compacted. It summarizes older messages, stores the raw compacted history and summary in the context store, and keeps the system prompt plus the most recent messages in active history. The check uses the complete request size (messages, tool calls, and tool schemas), a conservative token estimate, and reserved output space so an explicit history threshold cannot crowd out the next response. On startup, `sif` probes OpenAI-compatible model metadata and LM Studio's native model endpoints for the loaded context window. If the provider reports a context window and the threshold is still the built-in default, compaction starts at about 60% of that window. Set `AGENT_COMPACTION_THRESHOLD` or `sif config --set COMPACTION_THRESHOLD=<tokens>` to override the history threshold, or set it to `0` to disable compaction entirely.
 
 ## Saved Conversations
 
@@ -281,7 +281,7 @@ Configuration is loaded from `~/.sif/sif-agent.json`, then overridden by environ
 | `AGENT_TEMPERATURE` | Sampling temperature | model default |
 | `AGENT_MODEL_TIMEOUT_SECONDS` | Model request network timeout in seconds | SDK default |
 | `AGENT_THINKING_ENABLED` | Enable model thinking or reasoning display | `true` |
-| `AGENT_COMPACTION_THRESHOLD` | Chat-history token threshold for automatic compaction; `0` disables it | auto from model context window when available, otherwise `60000` |
+| `AGENT_COMPACTION_THRESHOLD` | Chat-history token threshold for automatic compaction; `0` disables it | 60% of the detected context window, capped at `180000`; otherwise `180000` |
 
 `AGENT_COMPACT_THRESHOLD` is accepted as a backwards-compatible alias for `AGENT_COMPACTION_THRESHOLD`.
 
