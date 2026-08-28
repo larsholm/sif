@@ -11,14 +11,17 @@ internal class AgentConfig
 {
     public const int DefaultCompactionThreshold = 180000;
 
+    public static string[] CreateDefaultTools() =>
+        ["bash", "read", "edit", "write", "sleep", "serve", "context"];
+
     public string BaseUrl { get; set; } = "http://localhost:1234/v1";
     public string? ApiKey { get; set; }
     public string Model { get; set; } = "qwen3.6-27b-autoround";
     public int? MaxTokens { get; set; }
     public float? Temperature { get; set; }
     public int? ModelTimeoutSeconds { get; set; }
-    public string[]? Tools { get; set; }
-    public string[]? ShellAllowedCommands { get; set; }
+    public string[]? Tools { get; set; } = CreateDefaultTools();
+    public string[]? ShellAllowedCommands { get; set; } = [];
     public bool? ThinkingEnabled { get; set; } = true;
     /// <summary>
     /// If true, the API key is stored in the OS secure credential store
@@ -136,7 +139,7 @@ internal class AgentConfig
                     config.Profiles = loaded.Profiles ?? new();
                     config.CurrentProfile = loaded.CurrentProfile;
 
-                    if (NormalizeProfiles(config))
+                    if (MigrateLegacyFormat(config, json))
                         config.Save();
                 }
             }
@@ -145,8 +148,6 @@ internal class AgentConfig
                 // Ignore parse errors
             }
         }
-
-        ApplyValues(config);
 
         // Switch to the current profile so flat properties reflect it
         // (Environment variables below will still override if set)
@@ -303,7 +304,7 @@ internal class AgentConfig
 
         foreach (var (name, profile) in config.Profiles)
         {
-            if (string.IsNullOrWhiteSpace(profile.Name))
+            if (!string.Equals(profile.Name, name, StringComparison.Ordinal))
             {
                 profile.Name = name;
                 changed = true;
@@ -329,8 +330,14 @@ internal class AgentConfig
             }
         }
 
-        foreach (var provider in config.Providers.Values)
+        foreach (var (name, provider) in config.Providers)
         {
+            if (!string.Equals(provider.Name, name, StringComparison.Ordinal))
+            {
+                provider.Name = name;
+                changed = true;
+            }
+
             if (!provider.TimeoutSeconds.HasValue && provider.ModelTimeoutSeconds.HasValue)
             {
                 provider.TimeoutSeconds = provider.ModelTimeoutSeconds;
@@ -350,6 +357,144 @@ internal class AgentConfig
         return changed;
     }
 
+    internal static bool MigrateLegacyFormat(AgentConfig config, string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        var hadProfiles = root.TryGetProperty(nameof(Profiles), out var profilesElement) &&
+                          profilesElement.ValueKind == JsonValueKind.Object &&
+                          profilesElement.EnumerateObject().Any();
+        var hadValues = config.Values.Count > 0;
+        var hadFlatSettings = LegacyFlatSettingNames.Any(name => root.TryGetProperty(name, out _));
+
+        // Values was an intermediate persistence format. Materialize its recognized
+        // settings before converting the flat active-model snapshot.
+        ApplyValues(config);
+
+        var changed = NormalizeProfiles(config);
+        if (hadProfiles && (hadFlatSettings || hadValues))
+            changed |= MigrateActiveFlatSettings(config, root);
+
+        if (hadValues)
+        {
+            config.Values.Clear();
+            changed = true;
+        }
+
+        // Even when all values already agree, rewrite files containing legacy root
+        // fields so the next save has only the provider/profile representation.
+        return changed || hadFlatSettings;
+    }
+
+    private static readonly string[] LegacyFlatSettingNames =
+    [
+        nameof(BaseUrl),
+        nameof(ApiKey),
+        nameof(Model),
+        nameof(MaxTokens),
+        nameof(Temperature),
+        nameof(ModelTimeoutSeconds),
+        nameof(ThinkingEnabled),
+        nameof(UseSecureApiKeyStorage)
+    ];
+
+    private static bool MigrateActiveFlatSettings(AgentConfig config, JsonElement root)
+    {
+        if (string.IsNullOrWhiteSpace(config.CurrentProfile) ||
+            !config.Profiles.TryGetValue(config.CurrentProfile, out var profile))
+        {
+            return false;
+        }
+
+        var changed = false;
+        var providerName = string.IsNullOrWhiteSpace(profile.Provider)
+            ? config.CurrentProfile
+            : profile.Provider;
+
+        if (!config.Providers.TryGetValue(providerName, out var provider))
+        {
+            provider = new ProviderConfig { Name = providerName };
+            config.Providers[providerName] = provider;
+            changed = true;
+        }
+
+        if (!string.Equals(profile.Provider, providerName, StringComparison.Ordinal))
+        {
+            profile.Provider = providerName;
+            changed = true;
+        }
+
+        if (HasLegacySetting(root, config, nameof(BaseUrl)) && provider.BaseUrl != config.BaseUrl)
+        {
+            provider.BaseUrl = config.BaseUrl.TrimEnd('/');
+            changed = true;
+        }
+        if (HasLegacySetting(root, config, nameof(ApiKey)) && provider.ApiKey != config.ApiKey)
+        {
+            provider.ApiKey = config.ApiKey;
+            changed = true;
+        }
+        if (HasLegacySetting(root, config, nameof(UseSecureApiKeyStorage)) &&
+            provider.UseSecureApiKeyStorage != config.UseSecureApiKeyStorage)
+        {
+            provider.UseSecureApiKeyStorage = config.UseSecureApiKeyStorage;
+            changed = true;
+        }
+        if (HasLegacySetting(root, config, nameof(ModelTimeoutSeconds), "TimeoutSeconds") &&
+            provider.TimeoutSeconds != config.ModelTimeoutSeconds)
+        {
+            provider.TimeoutSeconds = config.ModelTimeoutSeconds;
+            changed = true;
+        }
+        if (HasLegacySetting(root, config, nameof(Model)) && profile.Model != config.Model)
+        {
+            profile.Model = config.Model;
+            changed = true;
+        }
+        if (HasLegacySetting(root, config, nameof(Temperature)) && profile.Temperature != config.Temperature)
+        {
+            profile.Temperature = config.Temperature;
+            changed = true;
+        }
+        if (HasLegacySetting(root, config, nameof(MaxTokens)) && profile.MaxTokens != config.MaxTokens)
+        {
+            profile.MaxTokens = config.MaxTokens;
+            changed = true;
+        }
+        if (HasLegacySetting(root, config, nameof(ThinkingEnabled)) &&
+            profile.ThinkingEnabled != (config.ThinkingEnabled ?? true))
+        {
+            profile.ThinkingEnabled = config.ThinkingEnabled ?? true;
+            changed = true;
+        }
+
+        return changed;
+    }
+
+    private static bool HasLegacySetting(
+        JsonElement root,
+        AgentConfig config,
+        string propertyName,
+        params string[] aliases)
+    {
+        if (root.TryGetProperty(propertyName, out _))
+            return true;
+
+        var normalizedNames = aliases
+            .Append(propertyName)
+            .Select(NormalizeSettingName)
+            .ToHashSet(StringComparer.Ordinal);
+        return config.Values.Keys.Any(key =>
+            normalizedNames.Contains(NormalizeSettingName(key)));
+    }
+
+    private static string NormalizeSettingName(string name)
+    {
+        return name.Replace("AGENT_", "", StringComparison.OrdinalIgnoreCase)
+            .Replace("_", "", StringComparison.Ordinal)
+            .ToUpperInvariant();
+    }
+
     private static void LoadProviderApiKeyFromSecureStorage(ModelProfile profile, ProviderConfig? provider)
     {
         if (provider == null || !provider.UseSecureApiKeyStorage || !string.IsNullOrEmpty(provider.ApiKey))
@@ -359,6 +504,8 @@ internal class AgentConfig
         var secureKey = credentialStore.RetrieveAsync($"api-key-{provider.Name}").GetAwaiter().GetResult();
         if (string.IsNullOrEmpty(secureKey) && !string.IsNullOrEmpty(profile.Name))
             secureKey = credentialStore.RetrieveAsync($"api-key-{profile.Name}").GetAwaiter().GetResult();
+        if (string.IsNullOrEmpty(secureKey) && string.Equals(provider.Name, "default", StringComparison.Ordinal))
+            secureKey = credentialStore.RetrieveAsync("default-api-key").GetAwaiter().GetResult();
 
         if (!string.IsNullOrEmpty(secureKey))
             provider.ApiKey = secureKey;
@@ -367,6 +514,7 @@ internal class AgentConfig
     public void ApplyValue(string key, string value)
     {
         ApplyValue(this, key, value);
+        UpdateActiveProfileSetting(key);
     }
 
     private static void ApplyValues(AgentConfig config)
@@ -443,8 +591,78 @@ internal class AgentConfig
         }
     }
 
+    private void UpdateActiveProfileSetting(string key)
+    {
+        if (string.IsNullOrWhiteSpace(CurrentProfile) || !Profiles.TryGetValue(CurrentProfile, out var profile))
+            return;
+
+        var normalizedKey = NormalizeSettingName(key);
+        ProviderConfig? provider = null;
+        if (normalizedKey is "BASEURL" or "APIKEY" or "MODELTIMEOUTSECONDS" or "TIMEOUTSECONDS")
+        {
+            var providerName = string.IsNullOrWhiteSpace(profile.Provider) ? CurrentProfile : profile.Provider;
+            if (!Providers.TryGetValue(providerName, out provider))
+            {
+                provider = new ProviderConfig { Name = providerName };
+                Providers[providerName] = provider;
+            }
+            profile.Provider = providerName;
+        }
+
+        switch (normalizedKey)
+        {
+            case "BASEURL" when provider != null:
+                provider.BaseUrl = BaseUrl;
+                break;
+            case "APIKEY" when provider != null:
+                provider.ApiKey = ApiKey;
+                break;
+            case "MODEL":
+                profile.Model = Model;
+                break;
+            case "MAXTOKENS":
+                profile.MaxTokens = MaxTokens;
+                break;
+            case "TEMPERATURE":
+                profile.Temperature = Temperature;
+                break;
+            case "MODELTIMEOUTSECONDS" when provider != null:
+            case "TIMEOUTSECONDS" when provider != null:
+                provider.TimeoutSeconds = ModelTimeoutSeconds;
+                break;
+            case "THINKINGENABLED":
+                profile.ThinkingEnabled = ThinkingEnabled ?? true;
+                break;
+        }
+    }
+
+    internal void UpdateActiveProfileFromFlat()
+    {
+        if (string.IsNullOrWhiteSpace(CurrentProfile) || !Profiles.TryGetValue(CurrentProfile, out var profile))
+            return;
+
+        var providerName = string.IsNullOrWhiteSpace(profile.Provider) ? CurrentProfile : profile.Provider;
+        if (!Providers.TryGetValue(providerName, out var provider))
+        {
+            provider = new ProviderConfig { Name = providerName };
+            Providers[providerName] = provider;
+        }
+
+        profile.Provider = providerName;
+        provider.BaseUrl = BaseUrl.TrimEnd('/');
+        provider.ApiKey = ApiKey;
+        provider.UseSecureApiKeyStorage = UseSecureApiKeyStorage;
+        provider.TimeoutSeconds = ModelTimeoutSeconds;
+        profile.Model = Model;
+        profile.Temperature = Temperature;
+        profile.MaxTokens = MaxTokens;
+        profile.ThinkingEnabled = ThinkingEnabled ?? true;
+    }
+
     public void Save()
     {
+        NormalizeProfiles(this);
+
         var dir = Path.GetDirectoryName(ConfigPath)!;
         if (!Directory.Exists(dir))
             Directory.CreateDirectory(dir);
@@ -462,24 +680,7 @@ internal class AgentConfig
             }
         }
 
-        // Handle legacy global secure storage
-        var apiKeyBackup = ApiKey;
-        if (UseSecureApiKeyStorage && !string.IsNullOrEmpty(ApiKey))
-        {
-            // Save to secure store and remove from config
-            var credentialStore = SecureCredentialStoreFactory.Create();
-            var success = credentialStore.StoreAsync("default-api-key", ApiKey).GetAwaiter().GetResult();
-            if (success)
-            {
-                ApiKey = null; // Remove from plaintext config
-            }
-        }
-
-        var json = JsonSerializer.Serialize(this, new JsonSerializerOptions
-        {
-            WriteIndented = true,
-            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
-        });
+        var json = ToFileJson();
 
         File.WriteAllText(ConfigPath, json);
 
@@ -488,10 +689,28 @@ internal class AgentConfig
         {
             Providers[name].ApiKey = key;
         }
-        if (apiKeyBackup != null)
+    }
+
+    internal string ToFileJson()
+    {
+        var persisted = new
         {
-            ApiKey = apiKeyBackup;
-        }
+            Tools,
+            ShellAllowedCommands,
+            AutoUpdateEnabled,
+            AutoUpdateSource,
+            Providers,
+            Profiles,
+            CurrentProfile,
+            CompactionThreshold,
+            McpServers
+        };
+
+        return JsonSerializer.Serialize(persisted, new JsonSerializerOptions
+        {
+            WriteIndented = true,
+            DefaultIgnoreCondition = JsonIgnoreCondition.Never
+        });
     }
 }
 

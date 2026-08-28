@@ -1032,7 +1032,7 @@ internal class AgentApp
             return config.Tools;
 
         // Default: keep Roslyn ambient instead of exposing it as model-callable tools.
-        return new[] { "bash", "read", "edit", "write", "sleep", "serve", "context" };
+        return AgentConfig.CreateDefaultTools();
     }
 
     private static string BuildInitialSystemPrompt(string? cliSystemPrompt, string[]? tools, IReadOnlyList<SkillFile> skills)
@@ -1284,7 +1284,7 @@ internal class AgentApp
             new TextPrompt<string>("Tools")
                 .DefaultValue(config.Tools is { Length: > 0 }
                     ? string.Join(",", config.Tools)
-                    : "bash,read,edit,write,sleep,serve,context")
+                    : string.Join(",", AgentConfig.CreateDefaultTools()))
                 .Validate(value => string.IsNullOrWhiteSpace(value)
                     ? ValidationResult.Error("[red]Enter at least one tool, or rerun with --tools for a custom set.[/]")
                     : ValidationResult.Success()));
@@ -1298,18 +1298,11 @@ internal class AgentApp
         config.Tools = tools.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         config.ThinkingEnabled = thinking;
 
-        config.Values["BASE_URL"] = config.BaseUrl;
-        config.Values["MODEL"] = config.Model;
-        config.Values["TOOLS"] = string.Join(",", config.Tools);
-        config.Values["THINKING_ENABLED"] = thinking.ToString().ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(config.ApiKey))
-        {
-            config.Values.Remove("API_KEY");
             config.UseSecureApiKeyStorage = false;
-        }
-        else
-            config.Values["API_KEY"] = config.ApiKey;
 
+        AgentConfig.NormalizeProfiles(config);
+        config.UpdateActiveProfileFromFlat();
         config.Save();
 
         AnsiConsole.MarkupLine("\n[green]Configuration saved.[/]");
@@ -1621,7 +1614,6 @@ internal class AgentApp
             var parts = value.Split('=', 2);
             if (parts.Length == 2)
             {
-                config.Values[parts[0].Trim().ToUpperInvariant()] = parts[1];
                 config.ApplyValue(parts[0], parts[1]);
                 config.Save();
                 AnsiConsole.MarkupLine("[green]Configuration updated.[/]\n");
@@ -1818,22 +1810,6 @@ internal class AgentApp
                     }
                 }
 
-                // Migrate global legacy key
-                if (!string.IsNullOrEmpty(config.ApiKey))
-                {
-                    var success = await credentialStore.StoreAsync("default-api-key", config.ApiKey);
-                    if (success)
-                    {
-                        config.ApiKey = null;
-                        config.UseSecureApiKeyStorage = true;
-                        migrationsPerformed = true;
-                    }
-                    else
-                    {
-                        AnsiConsole.MarkupLine($"[red]✗ Failed to migrate global API key.[/]");
-                    }
-                }
-
                 if (migrationsPerformed)
                 {
                     config.Save();
@@ -1852,7 +1828,6 @@ internal class AgentApp
                 table.AddColumn("Name");
                 table.AddColumn("Secure");
                 
-                table.AddRow("Global", "default", config.UseSecureApiKeyStorage ? "[green]Yes[/]" : "[red]No[/]");
                 foreach(var p in config.Providers.Values)
                 {
                     table.AddRow("Provider", p.Name, p.UseSecureApiKeyStorage ? "[green]Yes[/]" : "[red]No[/]");

@@ -213,7 +213,6 @@ internal static class ShellCommandPolicy
         config.ShellAllowedCommands = commands
             .OrderBy(item => item, StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        config.Values["SHELL_ALLOWED_COMMANDS"] = string.Join(",", config.ShellAllowedCommands);
         config.Save();
     }
 }

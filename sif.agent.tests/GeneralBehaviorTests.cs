@@ -190,6 +190,159 @@ public sealed class GeneralBehaviorTests
     }
 
     [Fact]
+    public void AgentConfigApplyValueUpdatesTheActiveProviderAndProfile()
+    {
+        var config = new AgentConfig();
+        AgentConfig.NormalizeProfiles(config);
+
+        config.ApplyValue("BASE_URL", "http://localhost:9000/v1/");
+        config.ApplyValue("MODEL", "updated-model");
+        config.ApplyValue("MODEL_TIMEOUT_SECONDS", "450");
+        config.ApplyValue("THINKING_ENABLED", "false");
+
+        var provider = config.Providers["default"];
+        var profile = config.Profiles["default"];
+        Assert.Equal("http://localhost:9000/v1", provider.BaseUrl);
+        Assert.Equal(450, provider.TimeoutSeconds);
+        Assert.Equal("updated-model", profile.Model);
+        Assert.False(profile.ThinkingEnabled);
+    }
+
+    [Fact]
+    public void NewAgentConfigSerializesEveryAvailableSettingWithDefaults()
+    {
+        var config = new AgentConfig();
+        AgentConfig.NormalizeProfiles(config);
+
+        using var document = JsonDocument.Parse(config.ToFileJson());
+        var root = document.RootElement;
+        string[] expectedSettings =
+        [
+            "Tools",
+            "ShellAllowedCommands",
+            "AutoUpdateEnabled",
+            "AutoUpdateSource",
+            "Providers",
+            "Profiles",
+            "CurrentProfile",
+            "CompactionThreshold",
+            "McpServers"
+        ];
+
+        Assert.Equal(expectedSettings, root.EnumerateObject().Select(property => property.Name));
+
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("AutoUpdateSource").ValueKind);
+        Assert.Equal(
+            AgentConfig.CreateDefaultTools(),
+            root.GetProperty("Tools").EnumerateArray().Select(item => item.GetString()));
+        Assert.Empty(root.GetProperty("ShellAllowedCommands").EnumerateArray());
+        Assert.False(root.GetProperty("AutoUpdateEnabled").GetBoolean());
+        Assert.Equal(AgentConfig.DefaultCompactionThreshold, root.GetProperty("CompactionThreshold").GetInt32());
+
+        var provider = root.GetProperty("Providers").GetProperty("default");
+        var profile = root.GetProperty("Profiles").GetProperty("default");
+        Assert.False(provider.GetProperty("UseSecureApiKeyStorage").GetBoolean());
+        Assert.True(profile.GetProperty("ThinkingEnabled").GetBoolean());
+    }
+
+    [Fact]
+    public void AgentConfigMigratesFlatAndValuesSettingsIntoActiveProviderAndProfile()
+    {
+        const string json = """
+            {
+              "BaseUrl": "http://localhost:8020/v1/",
+              "Model": "new-model",
+              "Temperature": 0.25,
+              "ModelTimeoutSeconds": 300,
+              "ThinkingEnabled": false,
+              "Providers": {
+                "local": {
+                  "Name": "wrong-name",
+                  "BaseUrl": "http://old-host/v1"
+                }
+              },
+              "Profiles": {
+                "active": {
+                  "Name": "wrong-name",
+                  "Provider": "local",
+                  "Model": "old-model"
+                }
+              },
+              "CurrentProfile": "active",
+              "Values": {
+                "SHELL_ALLOWED_COMMANDS": "dotnet,git"
+              }
+            }
+            """;
+        var config = JsonSerializer.Deserialize<AgentConfig>(json)!;
+
+        Assert.True(AgentConfig.MigrateLegacyFormat(config, json));
+
+        var provider = config.Providers["local"];
+        var profile = config.Profiles["active"];
+        Assert.Equal("local", provider.Name);
+        Assert.Equal("http://localhost:8020/v1", provider.BaseUrl);
+        Assert.Equal(300, provider.TimeoutSeconds);
+        Assert.Equal("active", profile.Name);
+        Assert.Equal("new-model", profile.Model);
+        Assert.Equal(0.25f, profile.Temperature);
+        Assert.False(profile.ThinkingEnabled);
+        Assert.Equal(["dotnet", "git"], config.ShellAllowedCommands!);
+        Assert.Empty(config.Values);
+
+        using var migratedDocument = JsonDocument.Parse(config.ToFileJson());
+        Assert.False(migratedDocument.RootElement.TryGetProperty("BaseUrl", out _));
+        Assert.False(migratedDocument.RootElement.TryGetProperty("Model", out _));
+        Assert.False(migratedDocument.RootElement.TryGetProperty("Values", out _));
+    }
+
+    [Fact]
+    public void AgentConfigMigratesFlatOnlyConfigToDefaultProviderAndProfile()
+    {
+        const string json = """
+            {
+              "BaseUrl": "http://localhost:11434/v1",
+              "ApiKey": "local-key",
+              "Model": "llama3.2",
+              "MaxTokens": 2048,
+              "ModelTimeoutSeconds": 120
+            }
+            """;
+        var config = JsonSerializer.Deserialize<AgentConfig>(json)!;
+
+        Assert.True(AgentConfig.MigrateLegacyFormat(config, json));
+
+        Assert.Equal("default", config.CurrentProfile);
+        Assert.Equal("http://localhost:11434/v1", config.Providers["default"].BaseUrl);
+        Assert.Equal("local-key", config.Providers["default"].ApiKey);
+        Assert.Equal(120, config.Providers["default"].TimeoutSeconds);
+        Assert.Equal("llama3.2", config.Profiles["default"].Model);
+        Assert.Equal(2048, config.Profiles["default"].MaxTokens);
+    }
+
+    [Fact]
+    public void FirstRunConfigIncludesACompleteDefaultProviderAndProfile()
+    {
+        var config = new AgentConfig();
+
+        Assert.True(AgentConfig.NormalizeProfiles(config));
+
+        using var document = JsonDocument.Parse(config.ToFileJson());
+        var root = document.RootElement;
+        var provider = root.GetProperty("Providers").GetProperty("default");
+        var profile = root.GetProperty("Profiles").GetProperty("default");
+
+        Assert.Equal("default", root.GetProperty("CurrentProfile").GetString());
+        Assert.Equal(config.BaseUrl, provider.GetProperty("BaseUrl").GetString());
+        Assert.Equal(JsonValueKind.Null, provider.GetProperty("ApiKey").ValueKind);
+        Assert.Equal(JsonValueKind.Null, provider.GetProperty("TimeoutSeconds").ValueKind);
+        Assert.Equal(config.Model, profile.GetProperty("Model").GetString());
+        Assert.Equal(JsonValueKind.Null, profile.GetProperty("Temperature").ValueKind);
+        Assert.Equal(JsonValueKind.Null, profile.GetProperty("MaxTokens").ValueKind);
+        Assert.Equal(JsonValueKind.Null, profile.GetProperty("CompactionThreshold").ValueKind);
+    }
+
+    [Fact]
     public void CliParserReadsModelTimeoutAliases()
     {
         var opts = CliParser.ParseArgs(["--timeout", "240"]);
