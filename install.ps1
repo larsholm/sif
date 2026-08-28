@@ -16,7 +16,6 @@ function Require-Command {
 Require-Command dotnet
 
 $packageId = "sif.agent"
-$packageVersion = "2026.5.31"
 $extensionId = "sif.sif-vscode"
 $extensionVersion = "0.1.0"
 $archiveUrl = "$($RepoUrl.TrimEnd('/'))/archive/refs/heads/$Ref.zip"
@@ -37,6 +36,12 @@ try {
 
     if (-not $sourceDir) {
         throw "Downloaded archive did not contain sif.agent/sif.agent.csproj"
+    }
+
+    [xml]$project = Get-Content (Join-Path $sourceDir.FullName "sif.agent/sif.agent.csproj")
+    $packageVersion = [string]($project.Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1)
+    if (-not $packageVersion) {
+        throw "Downloaded project did not define a package version"
     }
 
     Write-Host "Building package..."

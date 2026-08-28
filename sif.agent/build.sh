@@ -6,6 +6,8 @@ set -e
 
 cd "$(dirname "$0")"
 ROOT_DIR="$(cd .. && pwd)"
+PROJECT_FILE="$ROOT_DIR/sif.agent/sif.agent.csproj"
+PACKAGE_VERSION="$(dotnet msbuild "$PROJECT_FILE" -nologo -getProperty:Version)"
 EXTENSION_SRC="$ROOT_DIR/sif.vscode"
 EXTENSION_ID="sif.sif-vscode"
 EXTENSION_VERSION="0.1.0"
@@ -41,12 +43,12 @@ SETTINGS
 cp "$ROOT_DIR/README.md" /tmp/sif-pack/
 
 # Create proper nuspec
-cat > /tmp/sif-pack/sif.agent.nuspec << 'NUSPEC'
+cat > /tmp/sif-pack/sif.agent.nuspec << NUSPEC
 <?xml version="1.0" encoding="utf-8"?>
 <package xmlns="http://schemas.microsoft.com/packaging/2012/06/nuspec.xsd">
   <metadata>
     <id>sif.agent</id>
-    <version>2026.5.31</version>
+    <version>${PACKAGE_VERSION}</version>
     <authors>sif</authors>
     <license type="expression">MIT</license>
     <readme>README.md</readme>
@@ -62,8 +64,7 @@ NUSPEC
 
 # Create the package using zip (nupkg is just a zip with specific structure)
 cd /tmp/sif-pack
-rm -f sif.agent.2026.5.31.nupkg
-PACKAGE_VERSION=2026.5.31
+rm -f "sif.agent.${PACKAGE_VERSION}.nupkg"
 PACKAGE_ID=sif.agent
 PACKAGE_DIR="$ROOT_DIR/sif.agent/nupkg"
 
