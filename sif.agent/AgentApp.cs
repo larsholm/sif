@@ -2559,6 +2559,18 @@ internal class AgentApp
                     continue;
                 }
 
+                // Windows console hosts that do not emit bracketed-paste markers
+                // queue pasted text as ordinary key events. If more input follows an
+                // Enter, keep it as part of the paste instead of submitting one line.
+                if (OperatingSystem.IsWindows() &&
+                    TerminalInputClassifier.IsQueuedPasteNewline(key, Console.KeyAvailable))
+                {
+                    sb.Insert(cursor, '\n');
+                    cursor++;
+                    Redraw();
+                    continue;
+                }
+
                 void AcceptSuggestion()
                 {
                     SetInput(currentSuggestions[suggestionIndex].Insert);
