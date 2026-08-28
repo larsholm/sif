@@ -223,6 +223,7 @@ internal class AgentApp
 
         var goal = RestoreGoalForResume(conversation);
         var goalEvaluator = new GoalEvaluator(config);
+        var modelReadiness = new ModelReadinessService(config);
         if (goal?.IsActive == true)
             AnsiConsole.MarkupLine($"[dim]Restored active goal: {goal.Condition.EscapeMarkup()}[/]\n");
 
@@ -356,6 +357,7 @@ internal class AgentApp
                         if (client is IDisposable disp) disp.Dispose();
                         client = newClient;
                         goalEvaluator = new GoalEvaluator(config);
+                        modelReadiness = new ModelReadinessService(config);
                         if (shouldRestart)
                         {
                             history.Clear();
@@ -489,7 +491,12 @@ internal class AgentApp
                 {
                     AnsiConsole.MarkupLine("[dim]Evaluating goal...[/]");
                     var evaluation = await RunWithEscapeCancel(ct =>
-                        goalEvaluator.EvaluateAsync(goal.Condition, history, ct));
+                        EvaluateGoalWithRecoveryAsync(
+                            goalEvaluator,
+                            modelReadiness,
+                            goal.Condition,
+                            history,
+                            ct));
                     var decision = GoalLoop.Apply(goal, evaluation, usedTools, DateTimeOffset.UtcNow);
                     goal = decision.Goal;
                     conversation.SetGoal(goal);
@@ -572,6 +579,33 @@ internal class AgentApp
         {
             cts.Cancel();
             try { await escapeTask; } catch { }
+        }
+    }
+
+    private static async Task<GoalEvaluation> EvaluateGoalWithRecoveryAsync(
+        GoalEvaluator evaluator,
+        ModelReadinessService modelReadiness,
+        string condition,
+        IReadOnlyList<ChatMessage> history,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await evaluator.EvaluateAsync(condition, history, cancellationToken);
+        }
+        catch (Exception ex) when (
+            !cancellationToken.IsCancellationRequested &&
+            ChatResponseParsing.IsModelRuntimeUnavailable(ex))
+        {
+            AnsiConsole.MarkupLine("[yellow]The model runtime became unavailable. Waiting for LM Studio to reload the model before continuing the goal...[/]");
+            var readiness = await modelReadiness.EnsureLoadedAsync(cancellationToken);
+            if (readiness == ModelReadinessResult.Unavailable)
+                throw;
+
+            AnsiConsole.MarkupLine(readiness == ModelReadinessResult.Loaded
+                ? "[dim]Model loaded. Retrying goal evaluation...[/]"
+                : "[dim]Model runtime recovered. Retrying goal evaluation...[/]");
+            return await evaluator.EvaluateAsync(condition, history, cancellationToken);
         }
     }
 

@@ -1,5 +1,7 @@
 using sif.agent;
 using sif.agent.Services;
+using System.Net;
+using System.Text;
 using Xunit;
 
 namespace sif.agent.tests;
@@ -110,5 +112,68 @@ public sealed class GoalEvaluatorTests
         Assert.False(decision.Goal.IsActive);
         Assert.Equal(expectedStatus, decision.Goal.Status);
         Assert.NotNull(decision.Goal.CompletedAt);
+    }
+
+    [Fact]
+    public async Task ModelReadinessRequestsLmStudioLoadAndWaitsUntilLoaded()
+    {
+        var requests = new List<(HttpMethod Method, string Path, string Body)>();
+        var handler = new StubHttpHandler(async request =>
+        {
+            var body = request.Content is null ? "" : await request.Content.ReadAsStringAsync();
+            requests.Add((request.Method, request.RequestUri!.AbsolutePath, body));
+
+            if (request.Method == HttpMethod.Post)
+                return JsonResponse(HttpStatusCode.OK, """{"status":"loaded"}""");
+
+            var getCount = requests.Count(entry => entry.Method == HttpMethod.Get);
+            return JsonResponse(HttpStatusCode.OK, getCount == 1
+                ? """{"models":[{"key":"test-model","loaded_instances":[]}]}"""
+                : """{"models":[{"key":"test-model","loaded_instances":[{"id":"test-model"}]}]}""");
+        });
+        using var http = new HttpClient(handler);
+        var config = new AgentConfig
+        {
+            BaseUrl = "http://model-host:4321/v1",
+            Model = "test-model"
+        };
+        var readiness = new ModelReadinessService(
+            config,
+            http,
+            TimeSpan.Zero,
+            maximumPolls: 2);
+
+        var result = await readiness.EnsureLoadedAsync();
+
+        Assert.Equal(ModelReadinessResult.Loaded, result);
+        Assert.Collection(
+            requests,
+            request =>
+            {
+                Assert.Equal(HttpMethod.Get, request.Method);
+                Assert.Equal("/api/v1/models", request.Path);
+            },
+            request =>
+            {
+                Assert.Equal(HttpMethod.Post, request.Method);
+                Assert.Equal("/api/v1/models/load", request.Path);
+                Assert.Contains("test-model", request.Body);
+            },
+            request =>
+            {
+                Assert.Equal(HttpMethod.Get, request.Method);
+                Assert.Equal("/api/v1/models", request.Path);
+            });
+    }
+
+    private static HttpResponseMessage JsonResponse(HttpStatusCode status, string json)
+        => new(status) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
+
+    private sealed class StubHttpHandler(Func<HttpRequestMessage, Task<HttpResponseMessage>> handle) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+            => handle(request);
     }
 }

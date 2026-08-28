@@ -206,6 +206,9 @@ internal static class ChatResponseParsing
             if (IsProviderToolParseError(clientEx))
                 return false;
 
+            if (IsModelRuntimeUnavailable(clientEx))
+                return true;
+
             if (TryReadProviderCompletionError(clientEx) is { } providerError &&
                 IsTransientProviderCompletionError(providerError))
             {
@@ -227,6 +230,35 @@ internal static class ChatResponseParsing
             return true;
 
         return ex.InnerException is not null && IsTransientModelFailure(ex.InnerException);
+    }
+
+    /// <summary>
+    /// Identifies responses emitted while a local model runtime is restarting or
+    /// loading. Some OpenAI-compatible routers report this temporary state as an
+    /// HTTP 400 even though retrying after the model reloads is safe.
+    /// </summary>
+    public static bool IsModelRuntimeUnavailable(Exception ex)
+    {
+        if (ex is ClientResultException clientEx)
+        {
+            var text = (clientEx.Message + "\n" + TryReadRawResponse(clientEx)).ToLowerInvariant();
+            if ((text.Contains("engine protocol", StringComparison.Ordinal) &&
+                 text.Contains("fetch failed", StringComparison.Ordinal)) ||
+                text.Contains("model is loading", StringComparison.Ordinal) ||
+                text.Contains("model currently loading", StringComparison.Ordinal) ||
+                text.Contains("model runtime is unavailable", StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        if (ex is AggregateException aggregate &&
+            aggregate.InnerExceptions.Any(IsModelRuntimeUnavailable))
+        {
+            return true;
+        }
+
+        return ex.InnerException is not null && IsModelRuntimeUnavailable(ex.InnerException);
     }
 
     public static ProviderCompletionError? TryReadProviderCompletionError(ClientResultException ex)
@@ -260,6 +292,9 @@ internal static class ChatResponseParsing
 
     public static string DescribeTransientModelFailure(Exception ex)
     {
+        if (IsModelRuntimeUnavailable(ex))
+            return "model runtime unavailable";
+
         if (TryFindClientResultException(ex) is { } providerEx &&
             TryReadProviderCompletionError(providerEx) is { } providerError)
         {

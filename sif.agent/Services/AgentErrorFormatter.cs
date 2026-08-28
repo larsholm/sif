@@ -9,6 +9,9 @@ internal static class AgentErrorFormatter
 {
     public static string ToUserMessage(Exception ex)
     {
+        if (ChatResponseParsing.IsModelRuntimeUnavailable(ex))
+            return "The local model runtime is temporarily unavailable or restarting. Wait for the model to load, then retry.";
+
         if (TryFind<ClientResultException>(ex, out var clientEx) && clientEx is not null)
             return FormatClientResult(clientEx);
 

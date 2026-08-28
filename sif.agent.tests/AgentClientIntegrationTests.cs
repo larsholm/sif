@@ -554,6 +554,22 @@ public sealed class AgentClientIntegrationTests
     }
 
     [Fact]
+    public async Task ChatAsyncRetriesLmStudioEngineFetchFailure()
+    {
+        await using var server = new ChatCompletionStub();
+        server.Enqueue(400, """{"error":"Engine protocol predict request failed: fetch failed"}""");
+        server.Enqueue(ChatResponse("""{"role":"assistant","content":"recovered after reload"}"""));
+
+        var client = new AgentClient(TestConfig(server.BaseUrl, ConfiguredDefaultModel()));
+        var history = new List<ChatMessage> { new("user", "continue") };
+
+        var (response, _) = await WithTimeout(client.ChatAsync(history));
+
+        Assert.Equal("recovered after reload", response);
+        Assert.Equal(2, server.Requests.Count);
+    }
+
+    [Fact]
     public async Task ChatAsyncSurfacesEmbeddedOpenRouterErrorDetails()
     {
         await using var server = new ChatCompletionStub();

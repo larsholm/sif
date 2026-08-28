@@ -157,7 +157,7 @@ Use `/goal <condition>` for substantial work with a verifiable end state:
 /goal all tests in sif.agent.tests pass
 ```
 
-The condition starts a turn immediately. After each completed turn, Sif makes a separate tool-free request to the current model to judge the condition against evidence in the conversation. A `not_met` verdict starts another turn with the evaluator's reason as guidance; `met` or `impossible` ends the automatic loop. After three consecutive turns without tool use, Sif pauses automatic continuation and leaves the goal active for user guidance.
+The condition starts a turn immediately. After each completed turn, Sif makes a separate tool-free request to the current model to judge the condition against evidence in the conversation. A `not_met` verdict starts another turn with the evaluator's reason as guidance; `met` or `impossible` ends the automatic loop. After three consecutive turns without tool use, Sif pauses automatic continuation and leaves the goal active for user guidance. If an LM Studio backend crashes or unloads during evaluation, Sif waits for the runtime, requests the configured model through LM Studio's model-management API when necessary, and retries evaluation before continuing.
 
 Run `/goal` to inspect its status and latest evaluator reason, or `/goal clear` to stop it. Active goals are stored with saved conversations and restored by `/resume`; their timer and counters restart when resumed. Escape stops the current turn without clearing the goal, while `/clear` clears both conversation history and the active goal.
 
