@@ -2394,6 +2394,7 @@ internal class AgentApp
         bool suggestionsDismissed = false;
         bool suggestionNavigationInProgress = false;
         string suggestionFilter = "";
+        bool redrawPending = false;
 
         void Redraw()
         {
@@ -2477,6 +2478,7 @@ internal class AgentApp
 
             renderedRowCount = totalRows;
             renderedCursorRow = cursorPosition.Row;
+            redrawPending = false;
         }
 
         void SetInput(string text)
@@ -2549,6 +2551,15 @@ internal class AgentApp
                 }
 
                 var key = Console.ReadKey(intercept: true);
+                var hasQueuedWindowsInput = OperatingSystem.IsWindows() && Console.KeyAvailable;
+
+                void RedrawAfterEdit()
+                {
+                    if (hasQueuedWindowsInput)
+                        redrawPending = true;
+                    else
+                        Redraw();
+                }
 
                 if (key.Key == ConsoleKey.Escape && TryReadEscapeSequence("[200~"))
                 {
@@ -2563,11 +2574,11 @@ internal class AgentApp
                 // queue pasted text as ordinary key events. If more input follows an
                 // Enter, keep it as part of the paste instead of submitting one line.
                 if (OperatingSystem.IsWindows() &&
-                    TerminalInputClassifier.IsQueuedPasteNewline(key, Console.KeyAvailable))
+                    TerminalInputClassifier.IsQueuedPasteNewline(key, hasQueuedWindowsInput))
                 {
                     sb.Insert(cursor, '\n');
                     cursor++;
-                    Redraw();
+                    RedrawAfterEdit();
                     continue;
                 }
 
@@ -2602,6 +2613,9 @@ internal class AgentApp
 
                 if (key.Key == ConsoleKey.Enter)
                 {
+                    if (redrawPending)
+                        Redraw();
+
                     if (key.Modifiers.HasFlag(ConsoleModifiers.Alt))
                     {
                         sb.Insert(cursor, '\n');
@@ -2779,7 +2793,7 @@ internal class AgentApp
                 {
                     sb.Insert(cursor, key.KeyChar);
                     cursor++;
-                    Redraw();
+                    RedrawAfterEdit();
                 }
             }
         }
