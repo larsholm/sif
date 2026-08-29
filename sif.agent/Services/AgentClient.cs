@@ -365,14 +365,16 @@ internal class AgentClient
                             call.ToolCall.FunctionName,
                             call.ArgumentsJson)).ToArray()));
 
-                    foreach (var normalizedCall in toolCalls)
+                    for (var toolIndex = 0; toolIndex < toolCalls.Count; toolIndex++)
                     {
+                        var normalizedCall = toolCalls[toolIndex];
                         var toolCall = normalizedCall.ToolCall;
                         var toolName = toolCall.FunctionName;
                         var argsJson = normalizedCall.ArgumentsJson;
 
                         var preview = argsJson.Length > 80 ? argsJson.Substring(0, 80) + "..." : argsJson;
-                        AnsiConsole.MarkupLine($"\n[dim]Tool: {toolName.EscapeMarkup()} ({preview.EscapeMarkup()})[/]");
+                        if (streamedResult?.ToolCallAnnouncements.ElementAtOrDefault(toolIndex) != true)
+                            AnsiConsole.MarkupLine($"\n[dim]Tool: {toolName.EscapeMarkup()} ({preview.EscapeMarkup()})[/]");
 
                         var toolSw = System.Diagnostics.Stopwatch.StartNew();
                         string toolResult;
@@ -578,6 +580,8 @@ internal class AgentClient
         OpenAI.Chat.ChatCompletionOptions options,
         CancellationToken cancellationToken)
     {
+        var announcedToolCalls = new HashSet<string>(StringComparer.Ordinal);
+
         for (var retry = 0; ; retry++)
         {
             try
@@ -633,7 +637,22 @@ internal class AgentClient
                             builder.Id = toolCallUpdate.ToolCallId;
                         if (!string.IsNullOrEmpty(toolCallUpdate.FunctionName))
                             builder.FunctionName.Append(toolCallUpdate.FunctionName);
-                        builder.Arguments.Append(toolCallUpdate.FunctionArgumentsUpdate.ToString());
+
+                        var argumentsDelta = toolCallUpdate.FunctionArgumentsUpdate.ToString();
+                        builder.Arguments.Append(argumentsDelta);
+
+                        // Function names can arrive in multiple deltas. The first
+                        // arguments delta marks the point where the complete name is
+                        // available and the call itself has begun streaming.
+                        if (!builder.Announced &&
+                            argumentsDelta.Length > 0 &&
+                            builder.FunctionName.Length > 0)
+                        {
+                            var announcementKey = $"{toolCallUpdate.Index}:{builder.FunctionName}";
+                            if (announcedToolCalls.Add(announcementKey))
+                                AnsiConsole.MarkupLine($"\n[dim]Tool: {builder.FunctionName.ToString().EscapeMarkup()}[/]");
+                            builder.Announced = true;
+                        }
                     }
 
                     if (update.Usage is { } usage)
@@ -652,15 +671,23 @@ internal class AgentClient
                 if (showedReasoning)
                     AnsiConsole.WriteLine();
 
-                var completedToolCalls = toolCalls
+                var orderedToolCalls = toolCalls
                     .OrderBy(pair => pair.Key)
+                    .ToList();
+                var completedToolCalls = orderedToolCalls
                     .Select(pair => OpenAI.Chat.ChatToolCall.CreateFunctionToolCall(
                         pair.Value.Id,
                         pair.Value.FunctionName.ToString(),
                         BinaryData.FromString(pair.Value.Arguments.ToString())))
                     .ToList();
 
-                return new StreamedChatCompletion(content.ToString(), completedToolCalls, totalTokens, outputTokens, finishReason);
+                return new StreamedChatCompletion(
+                    content.ToString(),
+                    completedToolCalls,
+                    orderedToolCalls.Select(pair => pair.Value.Announced).ToArray(),
+                    totalTokens,
+                    outputTokens,
+                    finishReason);
             }
             catch (Exception ex) when (
                 !cancellationToken.IsCancellationRequested &&
@@ -1039,6 +1066,7 @@ internal class AgentClient
     private sealed record StreamedChatCompletion(
         string Content,
         IReadOnlyList<OpenAI.Chat.ChatToolCall> ToolCalls,
+        IReadOnlyList<bool> ToolCallAnnouncements,
         int TotalTokenCount,
         int OutputTokenCount,
         string FinishReason);
@@ -1048,5 +1076,6 @@ internal class AgentClient
         public string Id { get; set; } = "";
         public StringBuilder FunctionName { get; } = new();
         public StringBuilder Arguments { get; } = new();
+        public bool Announced { get; set; }
     }
 }

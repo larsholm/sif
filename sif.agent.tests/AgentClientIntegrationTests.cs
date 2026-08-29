@@ -458,6 +458,10 @@ public sealed class AgentClientIntegrationTests
         Assert.Contains("Need the file.", output);
         Assert.Contains("Now answer.", output);
         Assert.Contains("streamed tool result", output);
+        Assert.Single(Regex.Matches(output, "Tool: read", RegexOptions.CultureInvariant).Cast<Match>());
+        Assert.True(
+            output.IndexOf("Tool: read", StringComparison.Ordinal) <
+            output.IndexOf("Result (", StringComparison.Ordinal));
         Assert.Equal(2, server.Requests.Count);
         Assert.All(server.Requests, request =>
             Assert.True(request.Json.RootElement.GetProperty("stream").GetBoolean()));
