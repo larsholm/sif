@@ -57,11 +57,9 @@ internal static class HistoryCompactor
         var baseSystemPrompt = markerIndex >= 0 ? systemPrompt[..markerIndex] : systemPrompt;
 
         var nonSystemMessages = history.Where(m => m.Role != "system").ToList();
-        var keepCount = Math.Min(RecentMessageCount, nonSystemMessages.Count);
-        var recentMessages = nonSystemMessages.TakeLast(keepCount).ToList();
-
-        // Build content to summarize: all non-system messages except the recent ones
-        var messagesToSummarize = nonSystemMessages.Take(nonSystemMessages.Count - keepCount).ToList();
+        var (messagesToSummarize, recentMessages) = PartitionMessagesForCompaction(
+            nonSystemMessages,
+            RecentMessageCount);
 
         if (messagesToSummarize.Count == 0)
             return false;
@@ -227,5 +225,42 @@ Conversation:
             AnsiConsole.MarkupLine($"[yellow]Compaction failed ({ex.Message}), continuing with existing history.[/]");
             return false;
         }
+    }
+
+    /// <summary>
+    /// Split non-system history into summarized and retained messages. In addition
+    /// to the recent tail, retain the newest user message so tool-heavy turns do
+    /// not compact into a system/assistant-only request. Some OpenAI-compatible
+    /// providers reject such requests, and the user message is also the clearest
+    /// statement of the active task.
+    /// </summary>
+    internal static (List<ChatMessage> MessagesToSummarize, List<ChatMessage> RecentMessages)
+        PartitionMessagesForCompaction(IReadOnlyList<ChatMessage> messages, int recentMessageCount)
+    {
+        if (recentMessageCount < 0)
+            throw new ArgumentOutOfRangeException(nameof(recentMessageCount));
+
+        var firstRecentIndex = Math.Max(0, messages.Count - recentMessageCount);
+        var newestUserIndex = -1;
+        for (var i = messages.Count - 1; i >= 0; i--)
+        {
+            if (string.Equals(messages[i].Role, "user", StringComparison.OrdinalIgnoreCase))
+            {
+                newestUserIndex = i;
+                break;
+            }
+        }
+
+        var messagesToSummarize = new List<ChatMessage>();
+        var recentMessages = new List<ChatMessage>();
+        for (var i = 0; i < messages.Count; i++)
+        {
+            if (i >= firstRecentIndex || i == newestUserIndex)
+                recentMessages.Add(messages[i]);
+            else
+                messagesToSummarize.Add(messages[i]);
+        }
+
+        return (messagesToSummarize, recentMessages);
     }
 }
