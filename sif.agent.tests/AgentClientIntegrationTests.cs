@@ -61,6 +61,47 @@ public sealed class AgentClientIntegrationTests
     }
 
     [Fact]
+    public async Task CompleteCompactionAsyncDisablesReasoningAndBoundsOutput()
+    {
+        await using var server = new ChatCompletionStub();
+        server.Enqueue(ChatResponse("""{"role":"assistant","content":"compact summary"}"""));
+
+        var config = TestConfig(server.BaseUrl, ConfiguredDefaultModel());
+        config.ThinkingEnabled = true;
+        config.MaxTokens = null;
+        var client = new AgentClient(config);
+
+        var response = await WithTimeout(client.CompleteCompactionAsync(
+            "large conversation chunk",
+            "compact it",
+            maxOutputTokens: 1024));
+
+        Assert.Equal("compact summary", response);
+        var request = server.Requests.Single().Json.RootElement;
+        Assert.Equal(1024, request.GetProperty("max_completion_tokens").GetInt32());
+        Assert.Equal("none", request.GetProperty("reasoning_effort").GetString());
+    }
+
+    [Fact]
+    public async Task CompleteCompactionAsyncHonorsSmallerConfiguredOutputLimit()
+    {
+        await using var server = new ChatCompletionStub();
+        server.Enqueue(ChatResponse("""{"role":"assistant","content":"compact summary"}"""));
+
+        var config = TestConfig(server.BaseUrl, ConfiguredDefaultModel());
+        config.MaxTokens = 512;
+        var client = new AgentClient(config);
+
+        await WithTimeout(client.CompleteCompactionAsync(
+            "large conversation chunk",
+            "compact it",
+            maxOutputTokens: 1024));
+
+        Assert.Equal(512, server.Requests.Single().Json.RootElement
+            .GetProperty("max_completion_tokens").GetInt32());
+    }
+
+    [Fact]
     public async Task ChatStreamingAsyncDisplaysReasoningDeltasWithoutReturningThemAsAnswerText()
     {
         await using var server = new ChatCompletionStub();

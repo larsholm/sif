@@ -19,6 +19,8 @@ internal static class HistoryCompactor
     {
         const int RecentMessageCount = 4;
         const int MaxCompactionChunkChars = 48000;
+        const int ChunkSummaryMaxOutputTokens = 1024;
+        const int MergedSummaryMaxOutputTokens = 2048;
         const string CompactionSystemMarker = "--- Compacted conversation context ---\n";
 
         // Compaction disabled if threshold is 0 or negative
@@ -99,18 +101,21 @@ internal static class HistoryCompactor
             return chunks;
         }
 
-        async Task<string> SummarizeChunkAsync(string content, string focus)
+        async Task<string> SummarizeChunkAsync(string content, string focus, int maxOutputTokens)
         {
             var prompt = $@"Summarize this conversation history for compaction.
 Preserve decisions, facts, user preferences, unresolved tasks, code/file changes, tool results, ids, paths, errors, and assumptions needed to continue the conversation.
+Be concise and fit the complete summary within the available output budget.
 Focus: {focus}
 
 Conversation:
 {content}";
 
-            var (summary, _) = await client.CompleteAsync(
+            var summary = await client.CompleteCompactionAsync(
                 prompt,
-                "You compact chat history. Produce a concise but complete continuation summary. Do not invent facts.");
+                "You compact chat history. Produce a concise but complete continuation summary. Do not invent facts.",
+                maxOutputTokens,
+                cancellationToken);
             return summary.Trim();
         }
 
@@ -121,12 +126,15 @@ Conversation:
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var focus = chunks.Count == 1 ? "complete conversation state" : $"chunk {i + 1} of {chunks.Count}";
-                summaries.Add(await SummarizeChunkAsync(chunks[i], focus));
+                AnsiConsole.MarkupLine($"[dim]Compacting history: summarizing chunk {i + 1:N0}/{chunks.Count:N0}...[/]");
+                summaries.Add(await SummarizeChunkAsync(chunks[i], focus, ChunkSummaryMaxOutputTokens));
             }
 
+            var mergeRound = 0;
             while (summaries.Count > 1)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                mergeRound++;
                 var combinedChunks = new List<string>();
                 var current = new StringBuilder();
 
@@ -149,11 +157,24 @@ Conversation:
                     combinedChunks.Add(current.ToString());
 
                 if (combinedChunks.Count == 1)
-                    return await SummarizeChunkAsync(combinedChunks[0], "merge all chunk summaries into one continuation summary");
+                {
+                    AnsiConsole.MarkupLine($"[dim]Compacting history: merging summaries (round {mergeRound:N0})...[/]");
+                    return await SummarizeChunkAsync(
+                        combinedChunks[0],
+                        "merge all chunk summaries into one continuation summary",
+                        MergedSummaryMaxOutputTokens);
+                }
 
                 summaries.Clear();
                 for (int i = 0; i < combinedChunks.Count; i++)
-                    summaries.Add(await SummarizeChunkAsync(combinedChunks[i], $"merge summary chunk {i + 1} of {combinedChunks.Count}"));
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    AnsiConsole.MarkupLine($"[dim]Compacting history: merging summary {i + 1:N0}/{combinedChunks.Count:N0} (round {mergeRound:N0})...[/]");
+                    summaries.Add(await SummarizeChunkAsync(
+                        combinedChunks[i],
+                        $"merge summary chunk {i + 1} of {combinedChunks.Count}",
+                        MergedSummaryMaxOutputTokens));
+                }
             }
 
             return summaries[0];
@@ -196,6 +217,10 @@ Conversation:
 
             AnsiConsole.MarkupLine($"[dim]Compaction complete. Reduced history to {history.Count} messages.[/]\n");
             return true;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {

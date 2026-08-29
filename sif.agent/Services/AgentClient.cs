@@ -174,6 +174,47 @@ internal class AgentClient
         string prompt,
         string? systemPrompt = null,
         CancellationToken cancellationToken = default)
+        => await CompleteAsyncCore(
+            prompt,
+            systemPrompt,
+            options => ApplyThinkingOptions(options),
+            cancellationToken);
+
+    /// <summary>
+    /// Complete a compaction summary with a bounded output and reasoning disabled.
+    /// Compaction can require many sequential requests, so inheriting the normal
+    /// model's thinking mode and provider-default output budget makes it needlessly
+    /// slow, especially for local models.
+    /// </summary>
+    internal async Task<string> CompleteCompactionAsync(
+        string prompt,
+        string systemPrompt,
+        int maxOutputTokens,
+        CancellationToken cancellationToken = default)
+    {
+        if (maxOutputTokens <= 0)
+            throw new ArgumentOutOfRangeException(nameof(maxOutputTokens));
+
+        var effectiveMaxOutputTokens = _maxTokens is > 0
+            ? Math.Min(_maxTokens.Value, maxOutputTokens)
+            : maxOutputTokens;
+        var (response, _) = await CompleteAsyncCore(
+            prompt,
+            systemPrompt,
+            options =>
+            {
+                options.MaxOutputTokenCount = effectiveMaxOutputTokens;
+                options.ReasoningEffortLevel = OpenAI.Chat.ChatReasoningEffortLevel.None;
+            },
+            cancellationToken);
+        return response;
+    }
+
+    private async Task<(string Response, string Reasoning)> CompleteAsyncCore(
+        string prompt,
+        string? systemPrompt,
+        Action<OpenAI.Chat.ChatCompletionOptions> configureOptions,
+        CancellationToken cancellationToken)
     {
         var messages = new List<OpenAI.Chat.ChatMessage>();
 
@@ -183,7 +224,7 @@ internal class AgentClient
         messages.Add(OpenAI.Chat.ChatMessage.CreateUserMessage(prompt));
 
         var opts = new OpenAI.Chat.ChatCompletionOptions();
-        ApplyThinkingOptions(opts);
+        configureOptions(opts);
         var result = await CompleteChatWithRecoveryAsync(messages, opts, cancellationToken);
 
         if (!ChatResponseParsing.HasChoices(result))
