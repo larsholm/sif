@@ -61,7 +61,9 @@ internal sealed class ConversationStore
             UpdatedAt = now,
             Status = ActiveStatus,
             MessageCount = messages.Count,
-            Preview = MakePreview(messages)
+            Preview = MakePreview(messages),
+            HasUserMessages = messages.Any(message =>
+                message.Role.Equals("user", StringComparison.OrdinalIgnoreCase))
         };
 
         lock (FileLock)
@@ -103,6 +105,7 @@ internal sealed class ConversationStore
         }
 
         return sessions
+            .Where(session => session.HasUserMessages == true)
             .OrderByDescending(session => ParseTimestamp(session.UpdatedAt))
             .ThenByDescending(session => session.Id, StringComparer.Ordinal)
             .ToList();
@@ -195,13 +198,38 @@ internal sealed class ConversationStore
         {
             var session = JsonSerializer.Deserialize<ConversationSession>(File.ReadAllText(path), JsonOptions);
             if (session != null && !string.IsNullOrWhiteSpace(session.Id))
+            {
+                session = EnsureHasUserMessagesMetadata(path, session);
                 sessions.Add(session);
+            }
         }
         catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
         {
             // A corrupt or half-written session must not prevent the user from
             // resuming any other conversation.
         }
+    }
+
+    private static ConversationSession EnsureHasUserMessagesMetadata(string metadataPath, ConversationSession session)
+    {
+        if (session.HasUserMessages.HasValue)
+            return session;
+
+        var directory = Path.GetDirectoryName(metadataPath);
+        var historyPath = directory == null ? "" : Path.Combine(directory, "history.json");
+        var hasUserMessages = false;
+
+        if (historyPath.Length > 0 && File.Exists(historyPath))
+        {
+            var saved = JsonSerializer.Deserialize<List<StoredChatMessage>>(File.ReadAllText(historyPath), JsonOptions);
+            hasUserMessages = saved?.Any(message =>
+                message.Role.Equals("user", StringComparison.OrdinalIgnoreCase)) == true;
+        }
+
+        var migrated = session with { HasUserMessages = hasUserMessages };
+        lock (FileLock)
+            WriteJsonAtomically(metadataPath, migrated);
+        return migrated;
     }
 
     private static void WriteJsonAtomically<T>(string path, T value)
@@ -262,6 +290,7 @@ internal sealed record ConversationSession(
     string? Model,
     string? ContextSessionId = null,
     string? WorkingDirectory = null,
-    ConversationGoal? Goal = null);
+    ConversationGoal? Goal = null,
+    bool? HasUserMessages = null);
 
 internal sealed record StoredChatMessage(string Role, string Content, string? ToolCallId);

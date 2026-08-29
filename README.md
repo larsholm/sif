@@ -149,6 +149,8 @@ Interactive chats are saved under `~/.sif/conversations/` after every context up
 
 Use `/resume` in an interactive chat to choose a saved session with the arrow keys. That menu reads only lightweight session metadata; the message history is loaded only after you select one. `/resume <id>` also works with full IDs and unique ID prefixes. A normally exited session remains available for later resume as well.
 
+Sessions that contain only startup configuration or system messages are omitted from resume and crash-recovery prompts. Older session metadata is classified once from its saved history and then upgraded, keeping subsequent resume menus metadata-only.
+
 ## Goals
 
 Use `/goal <condition>` for substantial work with a verifiable end state:

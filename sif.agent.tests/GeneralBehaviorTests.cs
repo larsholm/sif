@@ -117,6 +117,7 @@ public sealed class GeneralBehaviorTests
             Assert.Equal(3, summary.MessageCount);
             Assert.Equal("Remember this task.", summary.Preview);
             Assert.Equal("test-model", summary.Model);
+            Assert.True(summary.HasUserMessages);
             Assert.Equal(goal, summary.Goal);
             Assert.Equal(Path.TrimEndingDirectorySeparator(Path.GetFullPath(Environment.CurrentDirectory)), summary.WorkingDirectory);
 
@@ -144,7 +145,9 @@ public sealed class GeneralBehaviorTests
         try
         {
             var matching = ConversationStore.Create(root, null, currentFolder);
-            ConversationStore.Create(root, null, otherFolder);
+            matching.Save([new ChatMessage("user", "Current project task")]);
+            var other = ConversationStore.Create(root, null, otherFolder);
+            other.Save([new ChatMessage("user", "Other project task")]);
 
             var found = ConversationStore.FindMostRecentActive(root, currentFolder + Path.DirectorySeparatorChar);
 
@@ -166,6 +169,7 @@ public sealed class GeneralBehaviorTests
         try
         {
             var store = ConversationStore.Create(root, null, Path.Combine(root, "project"));
+            store.Save([new ChatMessage("user", "A legacy project task")]);
             var metadataPath = Path.Combine(root, store.Session.Id, "session.json");
             var metadata = File.ReadAllText(metadataPath).Replace(
                 $",\"WorkingDirectory\":{JsonSerializer.Serialize(store.Session.WorkingDirectory)}",
@@ -173,6 +177,43 @@ public sealed class GeneralBehaviorTests
             File.WriteAllText(metadataPath, metadata);
 
             Assert.Null(ConversationStore.FindMostRecentActive(root, Path.Combine(root, "project")));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ConversationListFiltersConfigOnlySessionsAndMigratesLegacyMetadata()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "sif-conversations-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var configOnly = ConversationStore.Create(root, "test-model");
+            configOnly.Save([new ChatMessage("system", "System configuration")]);
+            var resumable = ConversationStore.Create(root, "test-model");
+            resumable.Save([
+                new ChatMessage("system", "System configuration"),
+                new ChatMessage("user", "A real task")
+            ]);
+
+            var configOnlyMetadataPath = Path.Combine(root, configOnly.Session.Id, "session.json");
+            var resumableMetadataPath = Path.Combine(root, resumable.Session.Id, "session.json");
+            File.WriteAllText(configOnlyMetadataPath, File.ReadAllText(configOnlyMetadataPath)
+                .Replace(",\"HasUserMessages\":false", "", StringComparison.Ordinal));
+            File.WriteAllText(resumableMetadataPath, File.ReadAllText(resumableMetadataPath)
+                .Replace(",\"HasUserMessages\":true", "", StringComparison.Ordinal));
+
+            var listed = Assert.Single(ConversationStore.List(root));
+
+            Assert.Equal(resumable.Session.Id, listed.Id);
+            Assert.True(listed.HasUserMessages);
+            using var configOnlyMetadata = JsonDocument.Parse(File.ReadAllText(configOnlyMetadataPath));
+            using var resumableMetadata = JsonDocument.Parse(File.ReadAllText(resumableMetadataPath));
+            Assert.False(configOnlyMetadata.RootElement.GetProperty("HasUserMessages").GetBoolean());
+            Assert.True(resumableMetadata.RootElement.GetProperty("HasUserMessages").GetBoolean());
         }
         finally
         {
