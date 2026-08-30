@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using sif.agent;
 using sif.agent.Services;
@@ -66,6 +67,34 @@ public sealed class GeneralBehaviorTests
     }
 
     [Fact]
+    public async Task ModelMetadataProbeUsesOneShortDeadlineForAllCandidates()
+    {
+        var requestCount = 0;
+        using var http = new HttpClient(new StubHttpHandler(async (_, cancellationToken) =>
+        {
+            requestCount++;
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new InvalidOperationException("The cancellation token should end the request.");
+        }))
+        {
+            Timeout = Timeout.InfiniteTimeSpan
+        };
+        var stopwatch = Stopwatch.StartNew();
+
+        var info = await AgentApp.FetchModelInfoAsync(
+            "http://unresponsive-model-host:1234/v1",
+            "test-model",
+            http,
+            TimeSpan.FromMilliseconds(50));
+
+        stopwatch.Stop();
+        Assert.Null(info.ContextLength);
+        Assert.Null(info.OutputPricePerMillion);
+        Assert.Equal(1, requestCount);
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(2));
+    }
+
+    [Fact]
     public void RequestBudgetIncludesToolSchemasAndReservesOutputContext()
     {
         var config = new AgentConfig
@@ -87,6 +116,15 @@ public sealed class GeneralBehaviorTests
         Assert.True(withTools.EstimatedInputTokens > withoutTools.EstimatedInputTokens);
         Assert.Equal(24000, withTools.ReservedOutputTokens);
         Assert.Equal(136000, withTools.AvailableInputTokens);
+    }
+
+    private sealed class StubHttpHandler(
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handle) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+            => handle(request, cancellationToken);
     }
 
     [Fact]

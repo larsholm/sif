@@ -14,6 +14,7 @@ namespace sif.agent;
 internal class AgentApp
 {
     private const string DefaultNuGetSource = "https://api.nuget.org/v3/index.json";
+    private static readonly TimeSpan StartupModelProbeTimeout = TimeSpan.FromSeconds(2);
 
     public async Task<int> Run(string[] args)
     {
@@ -1715,29 +1716,51 @@ internal class AgentApp
     {
         using var http = new HttpClient
         {
-            Timeout = TimeSpan.FromSeconds(8)
+            // FetchModelInfoAsync applies one deadline to the complete set of
+            // optional endpoint probes instead of waiting once per candidate.
+            Timeout = Timeout.InfiniteTimeSpan
         };
 
         if (!string.IsNullOrWhiteSpace(apiKey))
             http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
 
+        return await FetchModelInfoAsync(baseUrl, modelId, http, StartupModelProbeTimeout);
+    }
+
+    internal static async Task<ModelEndpointInfo> FetchModelInfoAsync(
+        string baseUrl,
+        string modelId,
+        HttpClient http,
+        TimeSpan timeout)
+    {
+        if (timeout <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(timeout));
+
         decimal? discoveredOutputPrice = null;
+        using var timeoutCts = new CancellationTokenSource(timeout);
         foreach (var url in GetModelEndpointCandidates(baseUrl))
         {
             try
             {
-                using var response = await http.GetAsync(url);
+                using var response = await http.GetAsync(
+                    url,
+                    HttpCompletionOption.ResponseHeadersRead,
+                    timeoutCts.Token);
                 if (!response.IsSuccessStatusCode)
                     continue;
 
-                await using var stream = await response.Content.ReadAsStreamAsync();
-                using var doc = await JsonDocument.ParseAsync(stream);
+                await using var stream = await response.Content.ReadAsStreamAsync(timeoutCts.Token);
+                using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: timeoutCts.Token);
                 if (TryReadModelEndpointInfo(doc.RootElement, modelId) is { } info)
                 {
                     discoveredOutputPrice ??= info.OutputPricePerMillion;
                     if (info.ContextLength.HasValue)
                         return new ModelEndpointInfo(info.ContextLength, discoveredOutputPrice);
                 }
+            }
+            catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
+            {
+                break;
             }
             catch
             {
