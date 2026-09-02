@@ -348,6 +348,20 @@ public sealed class GeneralBehaviorTests
     }
 
     [Fact]
+    public void AgentConfigAppliesLoopDetectedMessage()
+    {
+        var config = new AgentConfig();
+
+        config.ApplyValue("LOOP_DETECTED_MESSAGE", "Stop repeating and take a different approach");
+
+        Assert.Equal("Stop repeating and take a different approach", config.LoopDetectedMessage);
+
+        config.ApplyValue("AGENT_LOOP_DETECTED_MESSAGE", "");
+
+        Assert.Equal(AgentConfig.DefaultLoopDetectedMessage, config.LoopDetectedMessage);
+    }
+
+    [Fact]
     public void AgentConfigApplyValueUpdatesTheActiveProviderAndProfile()
     {
         var config = new AgentConfig();
@@ -380,6 +394,7 @@ public sealed class GeneralBehaviorTests
             "ShellAllowedCommands",
             "AutoUpdateEnabled",
             "AutoUpdateSource",
+            "LoopDetectedMessage",
             "Providers",
             "Profiles",
             "CurrentProfile",
@@ -395,6 +410,7 @@ public sealed class GeneralBehaviorTests
             root.GetProperty("Tools").EnumerateArray().Select(item => item.GetString()));
         Assert.Empty(root.GetProperty("ShellAllowedCommands").EnumerateArray());
         Assert.False(root.GetProperty("AutoUpdateEnabled").GetBoolean());
+        Assert.Equal(AgentConfig.DefaultLoopDetectedMessage, root.GetProperty("LoopDetectedMessage").GetString());
         Assert.Equal(AgentConfig.DefaultCompactionThreshold, root.GetProperty("CompactionThreshold").GetInt32());
 
         var provider = root.GetProperty("Providers").GetProperty("default");

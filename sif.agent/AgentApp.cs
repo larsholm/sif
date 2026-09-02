@@ -132,6 +132,7 @@ internal class AgentApp
         AnsiConsole.WriteLine("  AGENT_MODEL     - Model name");
         AnsiConsole.WriteLine("  AGENT_TOOLS     - Comma-separated list of tools to enable");
         AnsiConsole.WriteLine("  AGENT_THINKING_ENABLED - Enable model thinking/reasoning");
+        AnsiConsole.WriteLine("  AGENT_LOOP_DETECTED_MESSAGE - Message sent after a reasoning loop is detected");
         AnsiConsole.WriteLine("  AGENT_MAX_TOKENS - Max tokens to generate");
         AnsiConsole.WriteLine("  AGENT_TEMPERATURE - Sampling temperature");
         AnsiConsole.WriteLine("  AGENT_MODEL_TIMEOUT_SECONDS - Model request network timeout");
@@ -239,23 +240,23 @@ internal class AgentApp
         var files = new Lazy<List<string>>(GetFiles);
         var inputHistory = new List<string>();
         string? pendingInput = null;
-        bool pendingInputIsGoalContinuation = false;
+        bool pendingInputIsAutomatic = false;
 
         while (running)
         {
-            var isGoalContinuation = pendingInputIsGoalContinuation;
+            var isAutomaticInput = pendingInputIsAutomatic;
             string? input = pendingInput ?? await ReadChatInputAsync(files, inputHistory);
             pendingInput = null;
-            pendingInputIsGoalContinuation = false;
+            pendingInputIsAutomatic = false;
 
             if (input is null) break;
             if (string.IsNullOrWhiteSpace(input)) continue;
 
             var trimmed = input.Trim();
-            if (!isGoalContinuation && (inputHistory.Count == 0 || inputHistory[^1] != trimmed))
+            if (!isAutomaticInput && (inputHistory.Count == 0 || inputHistory[^1] != trimmed))
                 inputHistory.Add(trimmed);
 
-            if (trimmed.StartsWith("/"))
+            if (!isAutomaticInput && trimmed.StartsWith("/"))
             {
                 if (trimmed == "/q" || trimmed == "/quit" || trimmed == "/exit")
                 {
@@ -301,7 +302,7 @@ internal class AgentApp
                         goal = new ConversationGoal(goalArgument, DateTimeOffset.UtcNow.ToString("O"));
                         conversation.SetGoal(goal);
                         pendingInput = BuildGoalDirective(goal.Condition, null);
-                        pendingInputIsGoalContinuation = true;
+                        pendingInputIsAutomatic = true;
                         AnsiConsole.MarkupLine($"[green]Goal set:[/] {goal.Condition.EscapeMarkup()}\n");
                     }
                 }
@@ -389,7 +390,7 @@ internal class AgentApp
             history.Add(new ChatMessage("user", historyContent));
             conversation.Save(history);
 
-            if (!isGoalContinuation && goal?.IsActive == true && goal.ConsecutiveTurnsWithoutTools > 0)
+            if (!isAutomaticInput && goal?.IsActive == true && goal.ConsecutiveTurnsWithoutTools > 0)
             {
                 goal = goal with { ConsecutiveTurnsWithoutTools = 0 };
                 conversation.SetGoal(goal);
@@ -477,7 +478,9 @@ internal class AgentApp
             {
                 AnsiConsole.MarkupLine($"[yellow]{ex.Message.EscapeMarkup()}[/]");
                 conversation.Save(history);
-                AnsiConsole.MarkupLine("[dim]The task was kept in context; refine the prompt or type 'continue' to try again.[/]\n");
+                pendingInput = config.LoopDetectedMessage;
+                pendingInputIsAutomatic = true;
+                AnsiConsole.MarkupLine("[dim]The task was kept in context; continuing with the configured loop-detected message.[/]\n");
             }
             catch (Exception ex)
             {
@@ -543,7 +546,7 @@ internal class AgentApp
                                 pendingInput = string.IsNullOrWhiteSpace(queuedInput)
                                     ? goalDirective
                                     : queuedInput + "\n\n" + goalDirective;
-                                pendingInputIsGoalContinuation = true;
+                                pendingInputIsAutomatic = true;
                             }
                             break;
                     }
@@ -1997,6 +2000,7 @@ internal class AgentApp
             ("AGENT_TEMPERATURE", "Temperature", config.Temperature?.ToString() ?? "default"),
             ("AGENT_MODEL_TIMEOUT_SECONDS", "Model timeout", config.ModelTimeoutSeconds?.ToString() ?? "SDK default"),
             ("AGENT_THINKING_ENABLED", "Thinking", config.ThinkingEnabled?.ToString() ?? "default"),
+            ("AGENT_LOOP_DETECTED_MESSAGE", "Loop detected message", config.LoopDetectedMessage.EscapeMarkup()),
             ("AGENT_COMPACTION_THRESHOLD", "Compaction threshold", config.CompactionThreshold.ToString()),
             ("AGENT_AUTO_UPDATE_ENABLED", "Auto-update", config.AutoUpdateEnabled.ToString()),
             ("AGENT_AUTO_UPDATE_SOURCE", "Auto-update source", config.AutoUpdateSource ?? DefaultNuGetSource),

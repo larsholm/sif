@@ -10,6 +10,7 @@ namespace sif.agent;
 internal class AgentConfig
 {
     public const int DefaultCompactionThreshold = 180000;
+    public const string DefaultLoopDetectedMessage = "You were caught in a loop, please continue";
 
     public static string[] CreateDefaultTools() =>
         ["bash", "read", "edit", "write", "sleep", "serve", "context"];
@@ -23,6 +24,10 @@ internal class AgentConfig
     public string[]? Tools { get; set; } = CreateDefaultTools();
     public string[]? ShellAllowedCommands { get; set; } = [];
     public bool? ThinkingEnabled { get; set; } = true;
+    /// <summary>
+    /// Message sent to the model after a repeating reasoning loop is detected.
+    /// </summary>
+    public string LoopDetectedMessage { get; set; } = DefaultLoopDetectedMessage;
     /// <summary>
     /// If true, the API key is stored in the OS secure credential store
     /// instead of plaintext in the config file.
@@ -136,6 +141,9 @@ internal class AgentConfig
                     config.Tools = loaded.Tools;
                     config.ShellAllowedCommands = loaded.ShellAllowedCommands;
                     config.ThinkingEnabled = loaded.ThinkingEnabled;
+                    config.LoopDetectedMessage = string.IsNullOrWhiteSpace(loaded.LoopDetectedMessage)
+                        ? DefaultLoopDetectedMessage
+                        : loaded.LoopDetectedMessage;
                     config.CompactionThreshold = loaded.CompactionThreshold;
                     config.CompactionThresholdConfigured = loaded.CompactionThreshold != DefaultCompactionThreshold;
                     config.UseSecureApiKeyStorage = loaded.UseSecureApiKeyStorage;
@@ -181,6 +189,8 @@ internal class AgentConfig
             config.Tools = envTools.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (bool.TryParse(Environment.GetEnvironmentVariable("AGENT_THINKING_ENABLED"), out var envThinking))
             config.ThinkingEnabled = envThinking;
+        if (Environment.GetEnvironmentVariable("AGENT_LOOP_DETECTED_MESSAGE") is { Length: > 0 } envLoopDetectedMessage)
+            config.LoopDetectedMessage = envLoopDetectedMessage;
         var envCompactionThreshold =
             Environment.GetEnvironmentVariable("AGENT_COMPACTION_THRESHOLD") ??
             Environment.GetEnvironmentVariable("AGENT_COMPACT_THRESHOLD");
@@ -569,6 +579,12 @@ internal class AgentConfig
                 if (bool.TryParse(value, out var thinkingEnabled))
                     config.ThinkingEnabled = thinkingEnabled;
                 break;
+            case "LOOP_DETECTED_MESSAGE":
+            case "AGENT_LOOP_DETECTED_MESSAGE":
+                config.LoopDetectedMessage = string.IsNullOrWhiteSpace(value)
+                    ? DefaultLoopDetectedMessage
+                    : value;
+                break;
             case "COMPACT_THRESHOLD":
             case "AGENT_COMPACT_THRESHOLD":
             case "COMPACTION_THRESHOLD":
@@ -707,6 +723,7 @@ internal class AgentConfig
             ShellAllowedCommands,
             AutoUpdateEnabled,
             AutoUpdateSource,
+            LoopDetectedMessage,
             Providers,
             Profiles,
             CurrentProfile,

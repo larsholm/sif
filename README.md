@@ -165,7 +165,7 @@ Run `/goal` to inspect its status and latest evaluator reason, or `/goal clear` 
 
 The `diagnostics` tool is for inspecting sif's runtime state only. It is not a debugger and does not launch, attach to, or manage .NET debug adapter sessions. There is also a legacy `debug` tool alias for the same diagnostics behavior.
 
-Sif streams model output, including thinking/reasoning deltas exposed by compatible providers, while accumulating any tool calls before executing them. Thinking and reasoning display works for OpenAI o-series models and Qwen3.x models via vLLM. If a reasoning stream enters a substantial exact repetition loop, Sif automatically stops that generation instead of letting it run indefinitely.
+Sif streams model output, including thinking/reasoning deltas exposed by compatible providers, while accumulating any tool calls before executing them. Thinking and reasoning display works for OpenAI o-series models and Qwen3.x models via vLLM. If a reasoning stream enters a substantial exact repetition loop, Sif automatically stops that generation and asks the model to continue using the configured loop-detected message.
 
 ## C# Development with Roslyn
 
@@ -267,6 +267,7 @@ sif config --set BASE_URL=http://localhost:11434/v1
 sif config --set MODEL=llama3.2
 sif config --set TOOLS=bash,read,edit,write,context
 sif config --set THINKING_ENABLED=true
+sif config --set LOOP_DETECTED_MESSAGE="Try a different approach and continue"
 sif config --set COMPACTION_THRESHOLD=60000
 sif config --set MODEL_TIMEOUT_SECONDS=300
 ```
@@ -283,6 +284,7 @@ Configuration is loaded from `~/.sif/sif-agent.json`, then overridden by environ
 | `AGENT_TEMPERATURE` | Sampling temperature | model default |
 | `AGENT_MODEL_TIMEOUT_SECONDS` | Model request network timeout in seconds | SDK default |
 | `AGENT_THINKING_ENABLED` | Enable model thinking or reasoning display | `true` |
+| `AGENT_LOOP_DETECTED_MESSAGE` | Message sent to the model after a reasoning loop is detected | `You were caught in a loop, please continue` |
 | `AGENT_COMPACTION_THRESHOLD` | Chat-history token threshold for automatic compaction; `0` disables it | 60% of the detected context window, capped at `180000`; otherwise `180000` |
 
 `AGENT_COMPACT_THRESHOLD` is accepted as a backwards-compatible alias for `AGENT_COMPACTION_THRESHOLD`.
