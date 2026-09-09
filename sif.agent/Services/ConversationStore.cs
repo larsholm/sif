@@ -55,6 +55,9 @@ internal sealed class ConversationStore
     public void Save(IReadOnlyList<ChatMessage> history)
     {
         var messages = history.Select(message => new StoredChatMessage(message.Role, message.Content, message.ToolCallId)).ToList();
+        var firstUserMessage = messages.FirstOrDefault(message =>
+            message.Role.Equals("user", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(message.Content));
         var now = DateTimeOffset.UtcNow.ToString("O");
         Session = Session with
         {
@@ -62,6 +65,7 @@ internal sealed class ConversationStore
             Status = ActiveStatus,
             MessageCount = messages.Count,
             Preview = MakePreview(messages),
+            Title = firstUserMessage == null ? null : Session.Title ?? MakeTitle(firstUserMessage.Content),
             HasUserMessages = messages.Any(message =>
                 message.Role.Equals("user", StringComparison.OrdinalIgnoreCase))
         };
@@ -169,7 +173,7 @@ internal sealed class ConversationStore
             history = saved.Select(message => new ChatMessage(message.Role, message.Content, message.ToolCallId)).ToList();
             if (!string.IsNullOrWhiteSpace(session.ContextSessionId))
                 ContextStore.UseSession(session.ContextSessionId);
-            store = new ConversationStore(rootPath, session with { Status = ActiveStatus });
+            store = new ConversationStore(rootPath, session with { Status = ActiveStatus, Title = session.DisplayTitle });
             store.WriteMetadata();
             return true;
         }
@@ -255,6 +259,23 @@ internal sealed class ConversationStore
         return normalized.Length <= 120 ? normalized : normalized[..117] + "...";
     }
 
+    internal static string MakeTitle(string? text)
+    {
+        var normalized = string.Join(" ", (text ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        if (normalized.Length == 0)
+            return "Untitled chat";
+        if (normalized.Length <= 60)
+            return normalized;
+
+        var end = normalized.LastIndexOf(' ', 57);
+        if (end < 30)
+            end = 57;
+        // Avoid splitting a Unicode surrogate pair in a long word.
+        if (char.IsHighSurrogate(normalized[end - 1]))
+            end--;
+        return normalized[..end] + "...";
+    }
+
     private static DateTimeOffset ParseTimestamp(string timestamp)
         => DateTimeOffset.TryParse(timestamp, out var value) ? value : DateTimeOffset.MinValue;
 
@@ -291,6 +312,11 @@ internal sealed record ConversationSession(
     string? ContextSessionId = null,
     string? WorkingDirectory = null,
     ConversationGoal? Goal = null,
-    bool? HasUserMessages = null);
+    bool? HasUserMessages = null,
+    string? Title = null)
+{
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string DisplayTitle => ConversationStore.MakeTitle(string.IsNullOrWhiteSpace(Title) ? Preview : Title);
+}
 
 internal sealed record StoredChatMessage(string Role, string Content, string? ToolCallId);

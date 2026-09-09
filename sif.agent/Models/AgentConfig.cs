@@ -513,6 +513,16 @@ internal class AgentConfig
             .ToUpperInvariant();
     }
 
+    internal string? GetProviderApiKey(string providerName)
+    {
+        if (!Providers.TryGetValue(providerName, out var provider))
+            return null;
+        var profile = Profiles.Values.FirstOrDefault(profile => profile.Provider == providerName)
+            ?? new ModelProfile();
+        LoadProviderApiKeyFromSecureStorage(profile, provider);
+        return provider.ApiKey;
+    }
+
     private static void LoadProviderApiKeyFromSecureStorage(ModelProfile profile, ProviderConfig? provider)
     {
         if (provider == null || !provider.UseSecureApiKeyStorage || !string.IsNullOrEmpty(provider.ApiKey))

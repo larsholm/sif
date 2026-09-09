@@ -149,6 +149,8 @@ Interactive chats are saved under `~/.sif/conversations/` after every context up
 
 Use `/resume` in an interactive chat to choose a saved session with the arrow keys. That menu reads only lightweight session metadata; the message history is loaded only after you select one. `/resume <id>` also works with full IDs and unique ID prefixes. A normally exited session remains available for later resume as well.
 
+The startup recovery prompt and `/resume` menu show a short title derived from the first user message, alongside the timestamp and message count. Titles are saved with session metadata and kept as the conversation continues or is compacted. Older chats use their saved message preview as a title.
+
 Sessions that contain only startup configuration or system messages are omitted from resume and crash-recovery prompts. Older session metadata is classified once from its saved history and then upgraded, keeping subsequent resume menus metadata-only.
 
 ## Goals
@@ -301,6 +303,12 @@ sif models
 sif models add ollama --url http://localhost:11434/v1 --model llama3.2
 sif models add local --url http://localhost:8020/v1 --model qwen3.6-27b-autoround --compact 60000 --timeout 300
 
+# Browse the provider's models interactively (or enter a model manually)
+sif models add studio --url http://localhost:1234/v1
+
+# Search saved profiles and models discovered from configured providers
+sif models switch
+
 # Switch the active profile
 sif models switch ollama
 
@@ -310,10 +318,16 @@ sif models remove ollama
 
 `sif models add` accepts `--url`/`-u`, `--model`/`-m`, `--key`/`-k`, `--compact` (per-profile compaction threshold; falls back to the global setting when omitted), and `--timeout` (per-profile model request timeout in seconds).
 
+During setup, or when `--model` is omitted from an interactive `sif models add`, the model picker uses the provider's model list when available and always offers manual entry. Scripts still require `--model`.
+
+`sif models switch` and `/model` first let you choose a provider, with the current provider first. The next picker shows only that provider's saved profiles and discovered models, keeping local and commercial catalogs separate. Type to search; press Escape to go back to providers. With just one provider, its models open directly. Only the selected provider is queried. Choosing a discovered model saves a new profile using the existing provider. Saved profiles remain available if discovery fails.
+
+Models reported as unloaded appear in grey with an `(unloaded)` label and remain selectable. Load status is supported through LM Studio's native model lists and Ollama's running-model list. Providers without load metadata use neutral styling. Discovery does not load or unload models.
+
 During a chat session you can list and switch profiles inline. Switching clears the current conversation:
 
 ```text
-/model              # select a profile interactively
+/model              # search saved profiles and provider models
 /model list         # list profiles and show the current one
 /model switch local # switch to the "local" profile
 /model local        # shorthand for switching
@@ -346,7 +360,7 @@ During an interactive chat session:
 | `/goal` | Show the current or most recently completed goal |
 | `/goal clear` | Clear the active goal |
 | `/sys <prompt>` | Change the system prompt |
-| `/model` | Select a model profile interactively |
+| `/model` | Search and select a saved profile or provider model |
 | `/model list` | List model profiles and show the current one |
 | `/model <name>` | Switch to a model profile (clears conversation) |
 | `/context` | Show the last model request and persisted-state summary |

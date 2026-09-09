@@ -83,7 +83,7 @@ internal class AgentApp
             case "uninstall":
                 return await RunUninstall(rest);
             case "models":
-                return RunModels(rest);
+                return await RunModels(rest);
             case "secure":
                 return await RunSecure(rest);
             case "update":
@@ -202,13 +202,13 @@ internal class AgentApp
         ConversationStore conversation;
         var interruptedConversation = ConversationStore.FindMostRecentActive();
         if (interruptedConversation != null && AnsiConsole.Confirm(
-                $"[yellow]An unfinished chat from {interruptedConversation.UpdatedAt.EscapeMarkup()} was found. Resume it?[/]", false))
+                FormatResumeConfirmation(interruptedConversation), false))
         {
             if (ConversationStore.TryOpen(interruptedConversation.Id, out var resumedConversation, out var resumedHistory, out var resumeError))
             {
                 conversation = resumedConversation!;
                 history = resumedHistory!;
-                AnsiConsole.MarkupLine($"[dim]Resumed {conversation.Session.Id.EscapeMarkup()} ({history.Count:N0} messages).[/]\n");
+                AnsiConsole.MarkupLine($"[dim]Resumed[/] [bold]{conversation.Session.DisplayTitle.EscapeMarkup()}[/] [dim]({conversation.Session.Id.EscapeMarkup()}, {history.Count:N0} messages).[/]\n");
             }
             else
             {
@@ -344,7 +344,7 @@ internal class AgentApp
                         goal = RestoreGoalForResume(conversation);
                         client.ClearLastRequestSnapshot();
                         conversation.Save(history);
-                        AnsiConsole.MarkupLine($"[dim]Resumed {conversation.Session.Id.EscapeMarkup()} ({history.Count:N0} messages). The current context is now auto-saved.[/]\n");
+                        AnsiConsole.MarkupLine($"[dim]Resumed[/] [bold]{conversation.Session.DisplayTitle.EscapeMarkup()}[/] [dim]({conversation.Session.Id.EscapeMarkup()}, {history.Count:N0} messages). The current context is now auto-saved.[/]\n");
                         if (goal?.IsActive == true)
                             AnsiConsole.MarkupLine($"[dim]Restored active goal: {goal.Condition.EscapeMarkup()}[/]\n");
                     }
@@ -972,7 +972,7 @@ internal class AgentApp
 
         if (string.IsNullOrWhiteSpace(rest))
         {
-            var selectedProfile = PromptForModelProfile(config);
+            var selectedProfile = await PromptForModelProfile(config);
             if (selectedProfile is null)
                 return (newClient, shouldRestart);
 
@@ -1012,19 +1012,19 @@ internal class AgentApp
                 }
                 break;
             case "help":
-                AnsiConsole.MarkupLine("[bold]/model[/]             Select a model profile interactively");
+                AnsiConsole.MarkupLine("[bold]/model[/]             Select a saved profile or provider model");
                 AnsiConsole.MarkupLine("[bold]/model list[/]        List model profiles and show current one");
                 AnsiConsole.MarkupLine("[bold]/model switch <n>[/]  Switch to profile <name> (clears conversation)\n");
                 break;
             default:
                 // Treat unknown subcommand as a profile name to switch to
-                if (TrySwitchProfile(config, subcommand))
+                if (TrySwitchProfile(config, parts[0]))
                 {
                     (newClient, shouldRestart) = await CreateClientAfterProfileSwitch(config, tools, mcpService, skillsCount);
                 }
                 else
                 {
-                    AnsiConsole.MarkupLine($"[red]Profile '{subcommand.EscapeMarkup()}' not found. Use '/model list' to see profiles.[/]");
+                    AnsiConsole.MarkupLine($"[red]Profile '{parts[0].EscapeMarkup()}' not found. Use '/model list' to see profiles.[/]");
                 }
                 break;
         }
@@ -1032,33 +1032,63 @@ internal class AgentApp
         return (newClient, shouldRestart);
     }
 
-    private static string? PromptForModelProfile(AgentConfig config)
+    private static async Task<string?> PromptForModelProfile(AgentConfig config)
     {
-        var profiles = config.Profiles;
-        if (profiles.Count == 0)
-        {
-            ShowModelProfiles(config);
-            return null;
-        }
-
         if (Console.IsInputRedirected || Console.IsOutputRedirected)
         {
             ShowModelProfiles(config);
             return null;
         }
 
-        var current = config.CurrentProfile ?? "default";
-        var choices = profiles.Keys
-            .OrderBy(name => string.Equals(name, current, StringComparison.Ordinal) ? 0 : 1)
-            .ThenBy(name => name, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        var providers = ModelSelection.BuildProviderChoices(config);
+        if (providers.Count == 0)
+        {
+            ShowModelProfiles(config);
+            return null;
+        }
 
-        return AnsiConsole.Prompt(
-            new SelectionPrompt<string>()
-                .Title($"Model profile [dim](current: {current.EscapeMarkup()})[/]")
-                .PageSize(12)
-                .MoreChoicesText("[grey](Move up and down to show more profiles)[/]")
-                .AddChoices(choices));
+        var cancelProvider = new ModelProviderSelection(null, "[dim]Cancel[/]");
+        while (true)
+        {
+            var provider = providers.Count == 1 ? providers[0] : AnsiConsole.Prompt(
+                new SelectionPrompt<ModelProviderSelection> { CancelResult = () => cancelProvider }
+                    .Title("Model provider")
+                    .PageSize(12)
+                    .EnableSearch()
+                    .SearchPlaceholderText("[grey]Type to search providers[/]")
+                    .UseConverter(choice => choice.Label)
+                    .AddChoices(providers.Append(cancelProvider)));
+            if (provider == cancelProvider)
+                return null;
+
+            var catalogs = new Dictionary<string, IReadOnlyList<AvailableModel>>();
+            if (provider.Name is not null && config.Providers.TryGetValue(provider.Name, out var settings))
+            {
+                catalogs[provider.Name] = await AnsiConsole.Status().StartAsync("Fetching provider models...",
+                    _ => ModelCatalogService.FetchAsync(settings.BaseUrl, config.GetProviderApiKey(provider.Name)));
+            }
+            var choices = ModelSelection.BuildChoices(config, catalogs, provider.Name).ToList();
+            if (choices.Count == 0)
+                AnsiConsole.MarkupLine("[yellow]No models found for this provider. Use 'sif models add' to add one manually.[/]");
+
+            var back = new ModelSelection(null, null, "", null);
+            choices.Add(back);
+            var selected = AnsiConsole.Prompt(
+                new SelectionPrompt<ModelSelection> { CancelResult = () => back }
+                    .Title($"Model — {provider.Label}")
+                    .PageSize(12)
+                    .EnableSearch()
+                    .SearchPlaceholderText("[grey]Type to search models or profiles[/]")
+                    .UseConverter(choice => choice == back
+                        ? providers.Count > 1 ? "[dim]Back to providers[/]" : "[dim]Cancel[/]"
+                        : choice.Label)
+                    .MoreChoicesText("[grey](Move up and down to show more models)[/]")
+                    .AddChoices(choices));
+            if (selected != back)
+                return selected.GetOrCreateProfile(config);
+            if (providers.Count == 1)
+                return null;
+        }
     }
 
     private static async Task<(AgentClient? newClient, bool shouldRestart)> SwitchProfileAndCreateClient(string name, AgentConfig config, string[]? tools, McpService? mcpService, int skillsCount)
@@ -1165,7 +1195,7 @@ internal class AgentApp
         table.AddRow("[bold]/resume[/]", "Select a saved conversation without loading histories first");
         table.AddRow("[bold]/resume <id>[/]", "Load a saved conversation by its full or unique id prefix");
         table.AddRow("[bold]/sys <prompt>[/]", "Change the system prompt");
-        table.AddRow("[bold]/model[/]", "Select a model profile interactively");
+        table.AddRow("[bold]/model[/]", "Select a saved profile or provider model");
         table.AddRow("[bold]/model list[/]", "List model profiles and show current one");
         table.AddRow("[bold]/model <name>[/]", "Switch to a model profile (clears conversation)");
         table.AddRow("[bold]/context[/]", "Show the last model request and persisted-state summary");
@@ -1215,7 +1245,10 @@ internal class AgentApp
         return selected.Session?.Id;
     }
 
-    private static string FormatResumeChoice(ConversationSession session)
+    internal static string FormatResumeConfirmation(ConversationSession session)
+        => $"[yellow]An unfinished chat [bold]{session.DisplayTitle.EscapeMarkup()}[/] from {session.UpdatedAt.EscapeMarkup()} ({session.MessageCount:N0} messages) was found. Resume it?[/]";
+
+    internal static string FormatResumeChoice(ConversationSession session)
     {
         var updatedAt = DateTimeOffset.TryParse(session.UpdatedAt, out var timestamp)
             ? timestamp.ToString("yyyy-MM-dd HH:mm") + " UTC"
@@ -1223,7 +1256,7 @@ internal class AgentApp
         var state = session.Status.Equals("active", StringComparison.OrdinalIgnoreCase)
             ? "[yellow]unfinished[/]"
             : "[dim]closed[/]";
-        return $"[bold]{session.Id.EscapeMarkup()}[/]  {state}  [dim]{updatedAt.EscapeMarkup()} · {session.MessageCount:N0} messages · {session.Preview.EscapeMarkup()}[/]";
+        return $"[bold]{session.DisplayTitle.EscapeMarkup()}[/]  {state}  [dim]{updatedAt.EscapeMarkup()} · {session.MessageCount:N0} messages · {session.Id.EscapeMarkup()}[/]";
     }
 
     private sealed record ResumeChoice(ConversationSession? Session, string Label);
@@ -1584,29 +1617,35 @@ internal class AgentApp
 
     private static async Task<string> PromptForModelAsync(string baseUrl, string apiKey, string currentModel)
     {
-        var models = await FetchModelIdsAsync(baseUrl, apiKey);
+        var models = await AnsiConsole.Status().StartAsync("Fetching provider models...",
+            _ => ModelCatalogService.FetchAsync(baseUrl, apiKey));
         if (models.Count == 0)
         {
             AnsiConsole.MarkupLine("[yellow]Could not fetch models from the endpoint; enter the model name manually.[/]");
             return PromptForManualModel(currentModel);
         }
 
-        const string manualChoice = "Enter manually...";
+        var manualChoice = new AvailableModel("");
         var choices = models
-            .OrderBy(model => string.Equals(model, currentModel, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
-            .ThenBy(model => model, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(model => string.Equals(model.Id, currentModel, StringComparison.Ordinal) ? 0 : 1)
+            .ThenBy(model => model.IsLoaded == false ? 1 : 0)
+            .ThenBy(model => model.Id, StringComparer.OrdinalIgnoreCase)
             .ToList();
         choices.Add(manualChoice);
 
         var selected = AnsiConsole.Prompt(
-            new SelectionPrompt<string>()
+            new SelectionPrompt<AvailableModel>()
                 .Title("Model")
                 .PageSize(12)
+                .EnableSearch()
+                .SearchPlaceholderText("[grey]Type to search models[/]")
+                .UseConverter(model => model == manualChoice ? "Enter manually..." :
+                    ModelSelection.FormatLabel(model.Id.EscapeMarkup(), model.IsLoaded))
                 .AddChoices(choices));
 
         return selected == manualChoice
             ? PromptForManualModel(currentModel)
-            : selected;
+            : selected.Id;
     }
 
     private static string PromptForManualModel(string currentModel)
@@ -1617,48 +1656,6 @@ internal class AgentApp
                 .Validate(value => string.IsNullOrWhiteSpace(value)
                     ? ValidationResult.Error("[red]Model name is required.[/]")
                     : ValidationResult.Success()));
-    }
-
-    private static async Task<List<string>> FetchModelIdsAsync(string baseUrl, string apiKey)
-    {
-        using var http = new HttpClient
-        {
-            Timeout = TimeSpan.FromSeconds(8)
-        };
-
-        if (!string.IsNullOrWhiteSpace(apiKey))
-            http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
-
-        foreach (var url in GetModelEndpointCandidates(baseUrl))
-        {
-            try
-            {
-                using var response = await http.GetAsync(url);
-                if (!response.IsSuccessStatusCode)
-                    continue;
-
-                await using var stream = await response.Content.ReadAsStreamAsync();
-                using var doc = await JsonDocument.ParseAsync(stream);
-                if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
-                    continue;
-
-                var models = data.EnumerateArray()
-                    .Select(item => item.TryGetProperty("id", out var id) ? id.GetString() : null)
-                    .Where(id => !string.IsNullOrWhiteSpace(id))
-                    .Select(id => id!)
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToList();
-
-                if (models.Count > 0)
-                    return models;
-            }
-            catch
-            {
-                // Ignore endpoint probe failures; the wizard falls back to manual entry.
-            }
-        }
-
-        return new List<string>();
     }
 
     internal sealed record ModelEndpointInfo(int? ContextLength, decimal? OutputPricePerMillion);
@@ -2218,11 +2215,11 @@ internal class AgentApp
         }
     }
 
-    private static int RunModels(string[] args)
+    private static async Task<int> RunModels(string[] args)
     {
         var config = AgentConfig.Load();
 
-        if (args.Length == 0)
+        if (args.Length == 0 || args[0] == "list")
         {
             ShowModelsList(config);
             return 0;
@@ -2232,10 +2229,9 @@ internal class AgentApp
 
         return subcommand switch
         {
-            "add" => AddProfile(config, args.Skip(1).ToArray()),
-            "switch" => SwitchProfile(config, args.Skip(1).ToArray()),
+            "add" => await AddProfile(config, args.Skip(1).ToArray()),
+            "switch" => await SwitchProfile(config, args.Skip(1).ToArray()),
             "remove" => RemoveProfile(config, args.Skip(1).ToArray()),
-            "list" => 0, // already shown above
             _ => ShowHelpAndExit("Unknown subcommand. Use: add, switch, remove, list"),
         };
     }
@@ -2277,12 +2273,12 @@ internal class AgentApp
 
         AnsiConsole.Write(table);
         AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine("[dim]Use 'sif models switch <name>' to change the active profile.[/]");
+        AnsiConsole.MarkupLine("[dim]Use 'sif models switch' to browse models, or 'sif models switch <name>' to change profiles.[/]");
         AnsiConsole.MarkupLine("[dim]Use 'sif models add <name> --url <url> --model <model> [--compact <tokens>] [--timeout <seconds>]' to add a profile.[/]");
         AnsiConsole.MarkupLine("[dim]Use 'sif models remove <name>' to delete a profile.[/]");
     }
 
-    private static int AddProfile(AgentConfig config, string[] args)
+    private static async Task<int> AddProfile(AgentConfig config, string[] args)
     {
         if (args.Length == 0)
         {
@@ -2359,8 +2355,12 @@ internal class AgentApp
         }
         if (string.IsNullOrEmpty(model))
         {
-            AnsiConsole.MarkupLine("[yellow]--model is required.[/]");
-            return 1;
+            if (Console.IsInputRedirected || Console.IsOutputRedirected)
+            {
+                AnsiConsole.MarkupLine("[yellow]--model is required in a non-interactive terminal.[/]");
+                return 1;
+            }
+            model = await PromptForModelAsync(baseUrl, apiKey ?? "", config.Model);
         }
 
         if (config.Profiles.ContainsKey(name))
@@ -2399,15 +2399,11 @@ internal class AgentApp
         return 0;
     }
 
-    private static int SwitchProfile(AgentConfig config, string[] args)
+    private static async Task<int> SwitchProfile(AgentConfig config, string[] args)
     {
-        if (args.Length == 0)
-        {
-            AnsiConsole.MarkupLine("[yellow]Usage: sif models switch <name>[/]");
-            return 1;
-        }
-
-        var name = args[0];
+        var name = args.Length == 0 ? await PromptForModelProfile(config) : args[0];
+        if (name is null)
+            return 0;
         if (TrySwitchProfile(config, name))
             return 0;
 
@@ -2677,7 +2673,7 @@ internal class AgentApp
         ("/clear", "Clear conversation history and the active goal; keep the system prompt", false),
         ("/context", "Show the last model request and persisted-state summary", true),
         ("/goal", "Set, inspect, or clear a session goal", true),
-        ("/model", "Select a model profile interactively, or switch by name", true),
+        ("/model", "Select a saved profile or provider model, or switch by name", true),
         ("/resume", "Load a saved conversation", true),
         ("/sys", "Change the system prompt", true),
         ("/vscode", "Show detected VS Code terminal/editor context", false),
