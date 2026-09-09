@@ -294,20 +294,23 @@ internal class AgentClient
                 catch (ClientResultException ex) when (malformedToolCallRetries == 0 && ChatResponseParsing.IsProviderToolParseError(ex))
                 {
                     malformedToolCallRetries++;
-                    sw.Stop();
                     AnsiConsole.MarkupLine("\n[yellow]Provider rejected a malformed tool call; retrying once with stricter tool-call instructions.[/]");
                     messages.Add(OpenAI.Chat.ChatMessage.CreateSystemMessage(ToolParseRetryInstruction));
                     requestMessages.Add(new ModelRequestMessage("system", ToolParseRetryInstruction));
                     continue;
                 }
-                sw.Stop();
+                finally
+                {
+                    sw.Stop();
+                    totalTime += sw.Elapsed;
+                    modelCalls++;
+                    AnsiConsole.MarkupLine($"\n[dim]⏱ model round {modelCalls}: {FormatDuration(sw.Elapsed)}[/]");
+                }
 
                 var inputAndOutputTokens = streamedResult?.TotalTokenCount ?? result!.Value.Usage?.TotalTokenCount ?? 0;
                 var generatedTokens = streamedResult?.OutputTokenCount ?? result!.Value.Usage?.OutputTokenCount ?? 0;
                 totalTokens += inputAndOutputTokens;
                 totalOutputTokens += generatedTokens;
-                totalTime += sw.Elapsed;
-                modelCalls++;
 
                 // Guard against a degenerate completion with an empty `choices` array.
                 // The SDK's flattened accessors (.Content, .ToolCalls, …) dereference
@@ -443,9 +446,9 @@ internal class AgentClient
 
                         // Display tool result
                         if (toolResult.Length > 8000)
-                            AnsiConsole.MarkupLine($"[dim]Result ({toolSw.Elapsed.TotalSeconds:F1}s): {toolResult.Substring(0, 8000).EscapeMarkup()}... (truncated)[/]");
+                            AnsiConsole.MarkupLine($"[dim]Result ({FormatDuration(toolSw.Elapsed)}): {toolResult.Substring(0, 8000).EscapeMarkup()}... (truncated)[/]");
                         else
-                            AnsiConsole.MarkupLine($"[dim]Result ({toolSw.Elapsed.TotalSeconds:F1}s): {toolResult.EscapeMarkup()}[/]");
+                            AnsiConsole.MarkupLine($"[dim]Result ({FormatDuration(toolSw.Elapsed)}): {toolResult.EscapeMarkup()}[/]");
 
                         // Truncate long results for the model
                         if (toolResult.Length > 120000)
@@ -490,7 +493,7 @@ internal class AgentClient
                 {
                     var tps = totalOutputTokens / totalTime.TotalSeconds;
                     AnsiConsole.MarkupLine($"[dim]⚡ {totalOutputTokens:N0} output tokens in {totalTime.TotalSeconds:F1}s ({tps:F1} tps) | {totalTokens:N0} total tokens[/]");
-                    AnsiConsole.MarkupLine($"[dim]⏱ turn {turnSw.Elapsed.TotalSeconds:F1}s | model {totalTime.TotalSeconds:F1}s ({modelCalls} {(modelCalls == 1 ? "call" : "calls")}) | tools {toolTime.TotalSeconds:F1}s ({toolCallCount} {(toolCallCount == 1 ? "call" : "calls")})[/]");
+                    AnsiConsole.MarkupLine($"[dim]⏱ turn {turnSw.Elapsed.TotalSeconds:F1}s | model {totalTime.TotalSeconds:F1}s ({modelCalls} {(modelCalls == 1 ? "call" : "calls")}) | tools {FormatDuration(toolTime)} ({toolCallCount} {(toolCallCount == 1 ? "call" : "calls")})[/]");
                 }
                 else if (totalTokens > 0)
                 {
@@ -503,6 +506,17 @@ internal class AgentClient
 
                 return (cleanContent, totalTokens);
             }
+    }
+
+    private static string FormatDuration(TimeSpan elapsed)
+    {
+        if (elapsed == TimeSpan.Zero)
+            return "0ms";
+        if (elapsed.TotalMilliseconds < 1)
+            return "<1ms";
+        if (elapsed.TotalSeconds < 1)
+            return $"{elapsed.TotalMilliseconds:F0}ms";
+        return $"{elapsed.TotalSeconds:F1}s";
     }
 
     /// <summary>
