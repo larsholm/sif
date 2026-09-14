@@ -276,6 +276,11 @@ internal static class ChatResponseParsing
 
     private static bool IsTransientProviderCompletionError(ProviderCompletionError error)
     {
+        // A bare finish_reason "error" gives no permanent failure to act on.
+        // Allow the same bounded recovery as an interrupted connection.
+        if (error is { Code: null, Type.Length: 0, Message.Length: 0 })
+            return true;
+
         if (error.Code is 408 or 429 || error.Code >= 500)
             return true;
 
@@ -302,6 +307,7 @@ internal static class ChatResponseParsing
                 return providerError.Type.Replace('_', ' ');
             if (providerError.Code is { } code)
                 return $"provider error {code}";
+            return "provider stopped generation";
         }
 
         if (TryFindClientResultException(ex) is { } clientEx && TryGetStatus(clientEx) is > 0 and var status)
@@ -343,6 +349,9 @@ internal static class ChatResponseParsing
 
     public static string TryReadRawResponse(ClientResultException ex)
     {
+        if (ex is ProviderStreamException streamEx)
+            return streamEx.RawEvent;
+
         try
         {
             return ex.GetRawResponse()?.Content.ToString() ?? "";

@@ -610,7 +610,7 @@ internal class AgentClient
                 var showedReasoning = false;
                 var stream = _chatClient.CompleteChatStreamingAsync(messages, options, cancellationToken);
 
-                await foreach (var update in stream.WithCancellation(cancellationToken))
+                await foreach (var update in OpenAICompatibleStreaming.ReadAsync(stream, cancellationToken))
                 {
                     var reasoningDelta = ChatResponseParsing.ExtractReasoningDelta(update);
                     if (reasoningDelta.Length > 0)
@@ -791,7 +791,7 @@ internal class AgentClient
             }
         }
 
-        await foreach (var update in stream.WithCancellation(cancellationToken))
+        await foreach (var update in OpenAICompatibleStreaming.ReadAsync(stream, cancellationToken))
         {
             var reasoningDelta = ChatResponseParsing.ExtractReasoningDelta(update);
             if (reasoningDelta.Length > 0)

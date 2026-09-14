@@ -161,7 +161,7 @@ internal static class DebugLog
         return string.Join(" -> ", parts);
     }
 
-    private static string FormatResponse(Exception ex)
+    internal static string FormatResponse(Exception ex)
     {
         if (ex is not ClientResultException clientEx)
             return "";
@@ -179,7 +179,7 @@ internal static class DebugLog
 
             try
             {
-                var content = response.Content.ToString();
+                var content = ChatResponseParsing.TryReadRawResponse(clientEx);
                 if (!string.IsNullOrWhiteSpace(content))
                     sb.AppendLine().Append(content.Trim());
             }

@@ -706,6 +706,142 @@ public sealed class AgentClientIntegrationTests
         Assert.Equal(2, server.Requests.Count);
     }
 
+    [Theory]
+    [InlineData("choice")]
+    [InlineData("top-level")]
+    [InlineData("bare")]
+    public async Task ChatWithToolsRetriesStreamedProviderErrorAndDiscardsPartialOutput(string errorShape)
+    {
+        await using var server = new ChatCompletionStub();
+        var error = errorShape switch
+        {
+            "choice" => OpenRouterErrorResponse(502, "Provider disconnected", "provider_unavailable"),
+            "top-level" => """{"error":{"code":502,"message":"Provider disconnected"},"choices":[]}""",
+            _ => ChatStreamChunk("{}", "error")
+        };
+        server.EnqueueStream(ChatStreamChunk("""{"content":"discard this partial answer"}"""), error);
+        server.EnqueueStream(
+            ChatStreamChunk("""{"content":"recovered response"}"""),
+            ChatStreamChunk("{}", "stop"));
+
+        var client = new AgentClient(TestConfig(server.BaseUrl, ConfiguredDefaultModel()));
+        var history = new List<ChatMessage> { new("user", "continue") };
+
+        var (response, _) = await WithTimeout(client.ChatWithToolsAsync(history, streaming: true));
+
+        Assert.Equal("recovered response", response);
+        Assert.Equal(2, server.Requests.Count);
+        Assert.Equal(server.Requests[0].Json.RootElement.GetProperty("messages").GetRawText(),
+            server.Requests[1].Json.RootElement.GetProperty("messages").GetRawText());
+        Assert.DoesNotContain(history, message => message.Content.Contains("discard this"));
+    }
+
+    [Theory]
+    [InlineData(401, "Authentication failed", false)]
+    [InlineData(402, "billing or quota", false)]
+    [InlineData(400, "error 400", false)]
+    [InlineData(402, "billing or quota", true)]
+    public async Task StreamingSurfacesPermanentProviderErrorWithoutRetry(
+        int code, string expectedMessage, bool plainChat)
+    {
+        await using var server = new ChatCompletionStub();
+        var error = OpenRouterErrorResponse(code, "Provider failure detail", "invalid_request");
+        server.EnqueueStream(error);
+        var client = new AgentClient(TestConfig(server.BaseUrl, ConfiguredDefaultModel()));
+        var history = new List<ChatMessage> { new("user", "continue") };
+
+        var exception = await Assert.ThrowsAsync<ProviderStreamException>(() => WithTimeout(plainChat
+            ? client.ChatStreamingAsync(history)
+            : client.ChatWithToolsAsync(history, streaming: true)));
+
+        var userMessage = AgentErrorFormatter.ToUserMessage(exception);
+        Assert.Contains(expectedMessage, userMessage);
+        Assert.Contains("Provider failure detail", userMessage);
+        Assert.Equal(error.Replace("\r", "").Replace("\n", ""),
+            ChatResponseParsing.TryReadRawResponse(exception));
+        Assert.Contains(ChatResponseParsing.TryReadRawResponse(exception), DebugLog.FormatResponse(exception));
+        Assert.False(ChatResponseParsing.IsTransientModelFailure(exception));
+        Assert.Single(server.Requests);
+        Assert.Single(history);
+    }
+
+    [Fact]
+    public async Task ChatWithToolsStopsAfterBoundedStreamRetriesAndRetainsFinalError()
+    {
+        await using var server = new ChatCompletionStub();
+        for (var attempt = 1; attempt <= 3; attempt++)
+            server.EnqueueStream(OpenRouterErrorResponse(503, $"Unavailable on attempt {attempt}", "provider_unavailable"));
+
+        var client = new AgentClient(TestConfig(server.BaseUrl, ConfiguredDefaultModel()));
+        var history = new List<ChatMessage> { new("user", "continue") };
+
+        var exception = await Assert.ThrowsAsync<ProviderStreamException>(
+            () => WithTimeout(client.ChatWithToolsAsync(history, streaming: true)));
+
+        Assert.Equal(3, server.Requests.Count);
+        Assert.Contains("Unavailable on attempt 3", AgentErrorFormatter.ToUserMessage(exception));
+        Assert.Contains("Unavailable on attempt 3", ChatResponseParsing.TryReadRawResponse(exception));
+        Assert.Single(history);
+    }
+
+    [Fact]
+    public async Task ChatWithToolsKeepsCompletedToolProgressWhenStreamFails()
+    {
+        var dir = CreateTempDirectory();
+        var file = Path.Combine(dir, "progress.txt");
+        await File.WriteAllTextAsync(file, "completed tool work");
+
+        await using var server = new ChatCompletionStub();
+        var toolDelta = JsonSerializer.Serialize(new
+        {
+            tool_calls = new[] { new
+            {
+                index = 0, id = "call_read", type = "function",
+                function = new { name = "read", arguments = JsonSerializer.Serialize(new { path = file }) }
+            } }
+        });
+        server.EnqueueStream(ChatStreamChunk(toolDelta), ChatStreamChunk("{}", "tool_calls"));
+        // A fully received tool call in a failed completion must not execute.
+        server.EnqueueStream(ChatStreamChunk(toolDelta),
+            OpenRouterErrorResponse(502, "Provider disconnected", "provider_unavailable"));
+        server.EnqueueStream(ChatStreamChunk("""{"content":"finished after recovery"}"""),
+            ChatStreamChunk("{}", "stop"));
+
+        var client = new AgentClient(TestConfig(server.BaseUrl, ConfiguredDefaultModel()), ["read"]);
+        var history = new List<ChatMessage> { new("user", "read the file and finish") };
+
+        var (response, _) = await WithTimeout(client.ChatWithToolsAsync(history, streaming: true));
+
+        Assert.Equal("finished after recovery", response);
+        Assert.Equal(3, server.Requests.Count);
+        var retryMessages = server.Requests[2].Json.RootElement.GetProperty("messages");
+        Assert.Equal(server.Requests[1].Json.RootElement.GetProperty("messages").GetRawText(),
+            retryMessages.GetRawText());
+        Assert.Contains(retryMessages.EnumerateArray(), message =>
+            message.GetProperty("role").GetString() == "tool" &&
+            MessageText(message).Contains("completed tool work"));
+        Assert.Single(history, message => message.Content.Contains("Tool call from prior turn: read"));
+    }
+
+    [Fact]
+    public async Task ChatStreamingHandlesMultilineEventsCommentsAndUsage()
+    {
+        await using var server = new ChatCompletionStub();
+        var chunk = ChatStreamChunk("""{"content":"Hello æøå"}""");
+        var eventData = string.Join("\r\n", chunk.Split('\n').Select(line => $"data: {line}"));
+        server.EnqueueEventStream(": keep-alive\r\n\r\nevent: message\r\n" + eventData + "\r\n\r\n" +
+            "data: " + ChatStreamChunk("{}", "stop").Replace("\n", "") + "\r\n\r\n" +
+            "data: {\"id\":\"chatcmpl-test\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"test-model\",\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}\r\n\r\n" +
+            "data: [DONE]\r\n\r\ndata: ignored after done\r\n\r\n");
+
+        var client = new AgentClient(TestConfig(server.BaseUrl, ConfiguredDefaultModel()));
+        var (response, tokens) = await WithTimeout(client.ChatStreamingAsync([new("user", "hello")]));
+
+        Assert.Equal("Hello æøå", response);
+        Assert.Equal(15, tokens);
+        Assert.Single(server.Requests);
+    }
+
     [Fact]
     public async Task ChatAsyncRetriesLmStudioEngineFetchFailure()
     {
@@ -981,6 +1117,11 @@ public sealed class AgentClientIntegrationTests
         {
             var body = string.Join("", responseJsonChunks.Select(chunk =>
                 $"data: {chunk.Replace("\r", "").Replace("\n", "")}\n\n")) + "data: [DONE]\n\n";
+            EnqueueEventStream(body);
+        }
+
+        public void EnqueueEventStream(string body)
+        {
             _responses.Enqueue(new StubResponse(200, body, "text/event-stream"));
         }
 

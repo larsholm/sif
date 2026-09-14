@@ -60,17 +60,22 @@ internal sealed record ProviderCompletionError(int? Code, string Type, string Me
         if (root.ValueKind != JsonValueKind.Object)
             return false;
 
-        if (!HasErrorFinishReason(root, out var choiceError))
+        var hasErrorFinishReason = HasErrorFinishReason(root, out var choiceError);
+        var hasTopLevelError = root.TryGetProperty("error", out var topLevelError) &&
+                              topLevelError.ValueKind == JsonValueKind.Object;
+        if (!hasErrorFinishReason && !hasTopLevelError)
             return false;
 
         JsonElement error;
         if (choiceError is { } embedded)
             error = embedded;
-        else if (!root.TryGetProperty("error", out error) || error.ValueKind != JsonValueKind.Object)
+        else if (!hasTopLevelError)
         {
             providerError = new ProviderCompletionError(null, "", "");
             return true;
         }
+        else
+            error = topLevelError;
 
         int? code = null;
         if (error.TryGetProperty("code", out var codeElement))
