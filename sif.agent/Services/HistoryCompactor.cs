@@ -222,7 +222,12 @@ Conversation:
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[yellow]Compaction failed ({ex.Message}), continuing with existing history.[/]");
+            var debugPath = DebugLog.Save(
+                "history-compaction",
+                ex,
+                $"model={config.Model}; {reason}; chunks={chunks.Count}");
+            AnsiConsole.MarkupLine($"[yellow]Compaction failed ({AgentErrorFormatter.ToUserMessage(ex).EscapeMarkup()}), continuing with existing history.[/]");
+            AnsiConsole.MarkupLine($"[dim]Log file: {debugPath.EscapeMarkup()}[/]");
             return false;
         }
     }

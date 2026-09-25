@@ -34,6 +34,7 @@ internal class AgentClient
     private readonly bool _isOModel;
     private readonly float? _temperature;
     private readonly int? _maxTokens;
+    private bool _compactionRequiresReasoning;
 
     public ModelRequestSnapshot? LastRequestSnapshot { get; private set; }
 
@@ -181,7 +182,7 @@ internal class AgentClient
             cancellationToken);
 
     /// <summary>
-    /// Complete a compaction summary with a bounded output and reasoning disabled.
+    /// Complete a compaction summary with bounded output and minimal reasoning.
     /// Compaction can require many sequential requests, so inheriting the normal
     /// model's thinking mode and provider-default output budget makes it needlessly
     /// slow, especially for local models.
@@ -198,16 +199,46 @@ internal class AgentClient
         var effectiveMaxOutputTokens = _maxTokens is > 0
             ? Math.Min(_maxTokens.Value, maxOutputTokens)
             : maxOutputTokens;
-        var (response, _) = await CompleteAsyncCore(
-            prompt,
-            systemPrompt,
-            options =>
-            {
-                options.MaxOutputTokenCount = effectiveMaxOutputTokens;
-                options.ReasoningEffortLevel = OpenAI.Chat.ChatReasoningEffortLevel.None;
-            },
-            cancellationToken);
-        return response;
+        async Task<string> CompleteSummaryAsync()
+        {
+            var (response, _) = await CompleteAsyncCore(
+                prompt,
+                systemPrompt,
+                options =>
+                {
+                    options.MaxOutputTokenCount = effectiveMaxOutputTokens;
+                    options.ReasoningEffortLevel = _compactionRequiresReasoning
+                        ? OpenAI.Chat.ChatReasoningEffortLevel.Low
+                        : OpenAI.Chat.ChatReasoningEffortLevel.None;
+                },
+                cancellationToken);
+            return response;
+        }
+
+        try
+        {
+            return await CompleteSummaryAsync();
+        }
+        catch (ClientResultException ex) when (
+            !cancellationToken.IsCancellationRequested &&
+            !_compactionRequiresReasoning &&
+            ex.Status == 400 &&
+            RequiresReasoning(ex))
+        {
+            // Some models (including stealth models) cannot disable reasoning.
+            // Remember the rejection so subsequent chunks do not repeat it.
+            _compactionRequiresReasoning = true;
+            AnsiConsole.MarkupLine("[dim]This model requires reasoning; retrying compaction with low reasoning effort.[/]");
+            return await CompleteSummaryAsync();
+        }
+    }
+
+    private static bool RequiresReasoning(ClientResultException ex)
+    {
+        var detail = ex.Message + "\n" + ChatResponseParsing.TryReadRawResponse(ex);
+        return detail.Contains("reasoning", StringComparison.OrdinalIgnoreCase) &&
+            (detail.Contains("mandatory", StringComparison.OrdinalIgnoreCase) ||
+             detail.Contains("cannot be disabled", StringComparison.OrdinalIgnoreCase));
     }
 
     private async Task<(string Response, string Reasoning)> CompleteAsyncCore(

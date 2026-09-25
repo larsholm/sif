@@ -83,6 +83,54 @@ public sealed class AgentClientIntegrationTests
     }
 
     [Fact]
+    public async Task CompleteCompactionAsyncRetriesMandatoryReasoningAndRemembersForNextChunk()
+    {
+        await using var server = new ChatCompletionStub();
+        server.Enqueue(400, """{"error":{"message":"Reasoning is mandatory for this endpoint and cannot be disabled.","code":400}}""");
+        server.Enqueue(ChatResponse("""{"role":"assistant","content":"first summary"}"""));
+        server.Enqueue(ChatResponse("""{"role":"assistant","content":"second summary"}"""));
+        var client = new AgentClient(TestConfig(server.BaseUrl, "stealth/space-bunny-alpha"));
+
+        Assert.Equal("first summary", await WithTimeout(client.CompleteCompactionAsync("chunk one", "compact it", 1024)));
+        Assert.Equal("second summary", await WithTimeout(client.CompleteCompactionAsync("chunk two", "compact it", 1024)));
+
+        Assert.Equal(["none", "low", "low"], server.Requests.Select(request =>
+            request.Json.RootElement.GetProperty("reasoning_effort").GetString()));
+        Assert.All(server.Requests, request => Assert.Equal(1024,
+            request.Json.RootElement.GetProperty("max_completion_tokens").GetInt32()));
+        Assert.Equal(server.Requests[0].Json.RootElement.GetProperty("messages").GetRawText(),
+            server.Requests[1].Json.RootElement.GetProperty("messages").GetRawText());
+    }
+
+    [Fact]
+    public async Task CompleteCompactionAsyncDoesNotRetryUnrelatedBadRequests()
+    {
+        await using var server = new ChatCompletionStub();
+        server.Enqueue(400, """{"error":{"message":"Input exceeds the context window","code":400}}""");
+        var client = new AgentClient(TestConfig(server.BaseUrl, "stealth/space-bunny-alpha"));
+
+        await Assert.ThrowsAsync<System.ClientModel.ClientResultException>(() =>
+            WithTimeout(client.CompleteCompactionAsync("chunk", "compact it", 1024)));
+
+        Assert.Single(server.Requests);
+    }
+
+    [Fact]
+    public async Task CompleteCompactionAsyncStopsIfMandatoryReasoningRetryFails()
+    {
+        await using var server = new ChatCompletionStub();
+        const string error = """{"error":{"message":"Reasoning is mandatory for this endpoint and cannot be disabled.","code":400}}""";
+        server.Enqueue(400, error);
+        server.Enqueue(400, error);
+        var client = new AgentClient(TestConfig(server.BaseUrl, "stealth/space-bunny-alpha"));
+
+        await Assert.ThrowsAsync<System.ClientModel.ClientResultException>(() =>
+            WithTimeout(client.CompleteCompactionAsync("chunk", "compact it", 1024)));
+
+        Assert.Equal(2, server.Requests.Count);
+    }
+
+    [Fact]
     public async Task CompleteCompactionAsyncHonorsSmallerConfiguredOutputLimit()
     {
         await using var server = new ChatCompletionStub();
