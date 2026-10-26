@@ -226,13 +226,14 @@ internal class AgentApp
         var goal = RestoreGoalForResume(conversation);
         var goalEvaluator = new GoalEvaluator(config);
         var modelReadiness = new ModelReadinessService(config);
-        Task<bool> CompactHistoryIfNeeded(CancellationToken cancellationToken) =>
+        Task<bool> CompactHistoryIfNeeded(bool force, CancellationToken cancellationToken) =>
             HistoryCompactor.MaybeCompactAsync(
                 history,
                 client,
                 config,
                 HasContextTool(tools),
-                cancellationToken);
+                cancellationToken,
+                force);
         if (goal?.IsActive == true)
             AnsiConsole.MarkupLine($"[dim]Restored active goal: {goal.Condition.EscapeMarkup()}[/]\n");
 
@@ -484,7 +485,7 @@ internal class AgentApp
             }
             catch (Exception ex)
             {
-                var debugPath = DebugLog.Save("chat-loop", ex, "during conversation");
+                var debugPath = DebugLog.Save("chat-loop", ex, DescribeContextState(config, client, history));
                 AnsiConsole.MarkupLine($"[red]Error:[/] {AgentErrorFormatter.ToUserMessage(ex).EscapeMarkup()}");
                 AnsiConsole.MarkupLine($"[dim]Debug saved to {debugPath.EscapeMarkup()}[/]\n");
                 // Keep the original task and any completed tool results. Transient
@@ -1683,6 +1684,24 @@ internal class AgentApp
         if (VscodeContext.IsRunningInVscodeTerminal())
             header += "[dim], vscode[/]";
         return header;
+    }
+
+    /// <summary>
+    /// Describe the model endpoint and context sizing for debug log entries, so
+    /// context-window failures can be diagnosed without reconstructing the session.
+    /// </summary>
+    internal static string DescribeContextState(AgentConfig config, AgentClient client, IReadOnlyList<ChatMessage> history)
+    {
+        static string Format(int? value) => value?.ToString("N0") ?? "unknown";
+
+        var historyChars = history.Sum(m => m.Content.Length);
+        var thresholdSource = config.CompactionThresholdConfigured ? "configured" : "auto";
+        var charsPerToken = client.ObservedCharactersPerToken?.ToString("0.00") ?? "unknown";
+        return $"during conversation; profile={config.CurrentProfile ?? "none"}; model={config.Model}; base_url={config.BaseUrl}; " +
+               $"detected_context={Format(config.DetectedContextLength)}; learned_context={Format(client.LearnedContextLength)}; " +
+               $"compaction_threshold={config.CompactionThreshold:N0} ({thresholdSource}); " +
+               $"history={history.Count:N0} messages, {historyChars:N0} chars, ~{client.EstimateHistoryTokens(history):N0} estimated tokens; " +
+               $"last_prompt_tokens={Format(client.LastPromptTokens)}; observed_chars_per_token={charsPerToken}";
     }
 
     /// <summary>

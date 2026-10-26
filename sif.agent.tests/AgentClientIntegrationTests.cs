@@ -383,7 +383,7 @@ public sealed class AgentClientIntegrationTests
 
         await WithTimeout(client.ChatAsync(
             history,
-            maybeCompact: _ =>
+            maybeCompact: (_, _) =>
             {
                 compactionCalls++;
                 history.Clear();
@@ -430,7 +430,7 @@ public sealed class AgentClientIntegrationTests
 
         var (response, _) = await WithTimeout(client.ChatWithToolsAsync(
             history,
-            maybeCompact: _ =>
+            maybeCompact: (_, _) =>
             {
                 compactionCalls++;
                 if (compactionCalls == 1)
@@ -450,6 +450,114 @@ public sealed class AgentClientIntegrationTests
         Assert.Contains("compacted after tool execution", secondRequestText, StringComparison.Ordinal);
         Assert.Contains("tool result retained across compaction", secondRequestText, StringComparison.Ordinal);
         Assert.DoesNotContain("original task", secondRequestText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ChatWithToolsCompactsAndRetriesWhenContextWindowIsFull()
+    {
+        await using var server = new ChatCompletionStub();
+        server.Enqueue(ChatResponse(
+            """{"role":"assistant","content":"partial"}""",
+            finishReason: "length",
+            promptTokens: 32000,
+            completionTokens: 768));
+        server.Enqueue(ChatResponse("""{"role":"assistant","content":"done"}"""));
+
+        var client = new AgentClient(TestConfig(server.BaseUrl, ConfiguredDefaultModel()));
+        var history = new List<ChatMessage> { new("user", "original task") };
+        var compactionForces = new List<bool>();
+
+        var (response, _) = await WithTimeout(client.ChatWithToolsAsync(
+            history,
+            maybeCompact: (force, _) =>
+            {
+                compactionForces.Add(force);
+                if (!force)
+                    return Task.FromResult(false);
+
+                history.Clear();
+                history.Add(new ChatMessage("system", "compacted after overflow"));
+                history.Add(new ChatMessage("user", "original task"));
+                return Task.FromResult(true);
+            }));
+
+        Assert.Equal("done", response);
+        Assert.Equal([false, true, false], compactionForces);
+        Assert.Equal(32768, client.LearnedContextLength);
+        Assert.Equal(2, server.Requests.Count);
+        Assert.Contains("compacted after overflow", server.Requests[1].Json.RootElement.GetRawText(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ChatWithToolsDoesNotTreatOutputLimitAsContextOverflow()
+    {
+        await using var server = new ChatCompletionStub();
+        server.Enqueue(ChatResponse(
+            """{"role":"assistant","content":"partial"}""",
+            finishReason: "length",
+            promptTokens: 4382,
+            completionTokens: 8192));
+
+        var client = new AgentClient(TestConfig(server.BaseUrl, ConfiguredDefaultModel()));
+        var history = new List<ChatMessage> { new("user", "write a long answer") };
+        var forcedCompactions = 0;
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => WithTimeout(client.ChatWithToolsAsync(
+                history,
+                maybeCompact: (force, _) =>
+                {
+                    if (force)
+                        forcedCompactions++;
+                    return Task.FromResult(false);
+                })));
+
+        Assert.Contains("finish_reason=length", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(0, forcedCompactions);
+        Assert.Null(client.LearnedContextLength);
+        Assert.Single(server.Requests);
+    }
+
+    [Fact]
+    public async Task ChatWithToolsDoesNotRetryOverflowWhenCompactionIsNotPossible()
+    {
+        await using var server = new ChatCompletionStub();
+        server.Enqueue(ChatResponse(
+            """{"role":"assistant","content":"partial"}""",
+            finishReason: "length",
+            promptTokens: 262055,
+            completionTokens: 89));
+
+        var client = new AgentClient(TestConfig(server.BaseUrl, ConfiguredDefaultModel()));
+        var history = new List<ChatMessage> { new("user", "Did you finish?") };
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => WithTimeout(client.ChatWithToolsAsync(
+                history,
+                maybeCompact: (_, _) => Task.FromResult(false))));
+
+        Assert.Contains("finish_reason=length", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(262144, client.LearnedContextLength);
+        Assert.Single(server.Requests);
+    }
+
+    [Fact]
+    public async Task ReportedPromptUsageCalibratesTokenEstimates()
+    {
+        await using var server = new ChatCompletionStub();
+        server.Enqueue(ChatResponse("""{"role":"assistant","content":"done"}""", promptTokens: 4000));
+
+        var client = new AgentClient(TestConfig(server.BaseUrl, ConfiguredDefaultModel()));
+        var history = new List<ChatMessage> { new("user", new string('x', 9976)) };
+        Assert.Equal(2494, client.EstimateHistoryTokens(history));
+
+        await WithTimeout(client.ChatAsync(history));
+
+        // 9,976 content characters + 24 framing characters over 4,000 reported tokens.
+        Assert.Equal(2.5, client.ObservedCharactersPerToken);
+        Assert.Equal(4000, client.LastPromptTokens);
+        Assert.Equal(3991, client.EstimateHistoryTokens(history));
+        Assert.Equal(4000, client.EstimateRequestBudget(history, 160000).EstimatedInputTokens);
     }
 
     [Fact]
@@ -990,7 +1098,11 @@ public sealed class AgentClientIntegrationTests
         return await task;
     }
 
-    private static string ChatResponse(string messageJson, string finishReason = "stop")
+    private static string ChatResponse(
+        string messageJson,
+        string finishReason = "stop",
+        int promptTokens = 123,
+        int completionTokens = 123)
     {
         return $$"""
             {
@@ -1006,9 +1118,9 @@ public sealed class AgentClientIntegrationTests
                 }
               ],
               "usage": {
-                "prompt_tokens": 123,
-                "completion_tokens": 123,
-                "total_tokens": 246
+                "prompt_tokens": {{promptTokens}},
+                "completion_tokens": {{completionTokens}},
+                "total_tokens": {{promptTokens + completionTokens}}
               }
             }
             """;

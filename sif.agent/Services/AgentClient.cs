@@ -10,13 +10,21 @@ using sif.agent.Services;
 namespace sif.agent;
 
 /// <summary>
+/// Compacts the conversation history before the next request when needed.
+/// <paramref name="force"/> compacts regardless of thresholds, e.g. after the
+/// provider reported a full context window. Returns true if history was replaced.
+/// </summary>
+internal delegate Task<bool> HistoryCompaction(bool force, CancellationToken cancellationToken);
+
+/// <summary>
 /// Client wrapping the OpenAI SDK for chat completions.
 /// Supports lazy tool calling for native tools and MCP tools.
 /// </summary>
 internal class AgentClient
 {
     private const int MaxTransientModelRetries = 2;
-    private const int ConservativeCharactersPerToken = 3;
+    private const double ConservativeCharactersPerToken = 3;
+    private const double HistoricalCharactersPerToken = 4;
     private const int DefaultOutputReservePercent = 15;
     private const int MinimumOutputReserveTokens = 4096;
     private const int MaximumOutputReserveTokens = 32768;
@@ -34,9 +42,30 @@ internal class AgentClient
     private readonly bool _isOModel;
     private readonly float? _temperature;
     private readonly int? _maxTokens;
+    // Read at use time: the detected context length is refreshed after the
+    // client is created (startup probe, profile switch).
+    private readonly AgentConfig _config;
     private bool _compactionRequiresReasoning;
 
     public ModelRequestSnapshot? LastRequestSnapshot { get; private set; }
+
+    /// <summary>
+    /// Prompt tokens the provider reported for the most recent request.
+    /// </summary>
+    public int? LastPromptTokens { get; private set; }
+
+    /// <summary>
+    /// Characters per token measured from the provider's reported prompt usage.
+    /// Null until a response with usage has been received.
+    /// </summary>
+    public double? ObservedCharactersPerToken { get; private set; }
+
+    /// <summary>
+    /// Context window learned from a request that exhausted it. Takes precedence
+    /// over the advertised context length, which can describe the model file
+    /// rather than the loaded instance.
+    /// </summary>
+    public int? LearnedContextLength { get; private set; }
 
     public void ClearLastRequestSnapshot() => LastRequestSnapshot = null;
 
@@ -73,6 +102,7 @@ internal class AgentClient
         _mcpService = mcpService;
         _temperature = config.Temperature;
         _maxTokens = config.MaxTokens;
+        _config = config;
 
         if (enabledTools?.Length > 0)
         {
@@ -105,9 +135,21 @@ internal class AgentClient
     }
 
     /// <summary>
+    /// Estimate the history size in tokens for comparison with the compaction
+    /// threshold. Uses the ratio measured from provider usage once available;
+    /// before the first response, keeps the historical chars/4 estimate.
+    /// </summary>
+    internal int EstimateHistoryTokens(IReadOnlyList<ChatMessage> history)
+    {
+        var chars = history.Sum(m => m.Content.Length);
+        return (int)Math.Ceiling(chars / (ObservedCharactersPerToken ?? HistoricalCharactersPerToken));
+    }
+
+    /// <summary>
     /// Estimate the complete request budget, including tool schemas. Character
     /// counting cannot replace the model tokenizer, so use a deliberately more
-    /// conservative ratio than the UI's historical chars/4 display estimate.
+    /// conservative ratio than the UI's historical chars/4 display estimate,
+    /// and the measured ratio when the provider's usage shows it is denser.
     /// </summary>
     internal ModelRequestBudget EstimateRequestBudget(
         IReadOnlyList<ChatMessage> history,
@@ -131,12 +173,12 @@ internal class AgentClient
             messages,
             tools);
 
-        // Account for role markers and chat-template framing that are not present
-        // in message content or JSON schemas themselves.
-        var framingCharacters = (messages.Length * 24) + (tools.Length * 48);
-        var inputCharacters = snapshot.ApproximateInputCharacters + framingCharacters;
-        var inputTokens = (inputCharacters + ConservativeCharactersPerToken - 1) /
-                          ConservativeCharactersPerToken;
+        var inputCharacters = EstimateInputCharacters(snapshot);
+        var charactersPerToken = Math.Min(
+            ConservativeCharactersPerToken,
+            ObservedCharactersPerToken ?? ConservativeCharactersPerToken);
+        var inputTokens = (int)Math.Ceiling(inputCharacters / charactersPerToken);
+        contextLength = LearnedContextLength ?? contextLength;
 
         var outputReserve = 0;
         if (_maxTokens is > 0)
@@ -152,6 +194,55 @@ internal class AgentClient
         }
 
         return new ModelRequestBudget(inputCharacters, inputTokens, outputReserve, contextLength);
+    }
+
+    private static int EstimateInputCharacters(ModelRequestSnapshot snapshot)
+    {
+        // Account for role markers and chat-template framing that are not present
+        // in message content or JSON schemas themselves.
+        var framingCharacters = (snapshot.Messages.Count * 24) + (snapshot.Tools.Count * 48);
+        return snapshot.ApproximateInputCharacters + framingCharacters;
+    }
+
+    /// <summary>
+    /// Calibrate token estimates against the prompt size the provider reported
+    /// for the last captured request. Code and escaped JSON often tokenize at
+    /// well under 3 characters per token, so a fixed ratio lets the real prompt
+    /// overrun the context window before compaction triggers.
+    /// </summary>
+    private void RecordPromptUsage(int promptTokens)
+    {
+        if (promptTokens <= 0 || LastRequestSnapshot is null)
+            return;
+
+        LastPromptTokens = promptTokens;
+        var charactersPerToken = (double)EstimateInputCharacters(LastRequestSnapshot) / promptTokens;
+        // Ignore implausible ratios from providers that report usage inaccurately.
+        if (charactersPerToken is >= 1 and <= 8)
+            ObservedCharactersPerToken = charactersPerToken;
+    }
+
+    /// <summary>
+    /// finish_reason=length means either the output limit or the context window
+    /// was reached. Treat it as a full context window when the total reaches the
+    /// known window, or when the output is too short to be a plausible output
+    /// limit. Remembers the window size so later budgets use it.
+    /// </summary>
+    private bool TryRecordContextOverflow(int outputTokens, int totalTokens)
+    {
+        if (totalTokens <= 0)
+            return false;
+        if (_maxTokens is > 0 && outputTokens >= _maxTokens.Value)
+            return false;
+
+        var knownContextLength = LearnedContextLength ?? _config.DetectedContextLength;
+        var reachedKnownContext = knownContextLength is > 0 &&
+                                  totalTokens >= (long)knownContextLength.Value * 99 / 100;
+        if (!reachedKnownContext && outputTokens >= MinimumOutputReserveTokens)
+            return false;
+
+        LearnedContextLength = Math.Min(totalTokens, knownContextLength ?? int.MaxValue);
+        return true;
     }
 
     /// <summary>
@@ -280,7 +371,7 @@ internal class AgentClient
         Func<IReadOnlyList<string>>? takeSteeringComments = null,
         Action? onHistoryChanged = null,
         bool streaming = false,
-        Func<CancellationToken, Task<bool>>? maybeCompact = null)
+        HistoryCompaction? maybeCompact = null)
     {
         var messages = history.Select(m => ToRequestMessage(m)).ToList();
         var requestMessages = history.Select(ToRequestSnapshotMessage).ToList();
@@ -293,13 +384,14 @@ internal class AgentClient
         var turnSw = System.Diagnostics.Stopwatch.StartNew();
         var malformedToolCallRetries = 0;
         var emptyResponseRetries = 0;
+        var contextOverflowRetries = 0;
 
         while (true)
             {
                 // A tool result can make the next request much larger than the
                 // first request in this turn. Compact at every request boundary,
                 // then rebuild the provider messages from the compacted history.
-                if (maybeCompact is not null && await maybeCompact(cancellationToken))
+                if (maybeCompact is not null && await maybeCompact(false, cancellationToken))
                 {
                     messages = history.Select(ToRequestMessage).ToList();
                     requestMessages = history.Select(ToRequestSnapshotMessage).ToList();
@@ -340,6 +432,8 @@ internal class AgentClient
 
                 var inputAndOutputTokens = streamedResult?.TotalTokenCount ?? result!.Value.Usage?.TotalTokenCount ?? 0;
                 var generatedTokens = streamedResult?.OutputTokenCount ?? result!.Value.Usage?.OutputTokenCount ?? 0;
+                var promptTokens = streamedResult?.InputTokenCount ?? result!.Value.Usage?.InputTokenCount ?? 0;
+                RecordPromptUsage(promptTokens > 0 ? promptTokens : inputAndOutputTokens - generatedTokens);
                 totalTokens += inputAndOutputTokens;
                 totalOutputTokens += generatedTokens;
 
@@ -367,6 +461,22 @@ internal class AgentClient
 
                 if (string.Equals(finishReason, "length", StringComparison.OrdinalIgnoreCase))
                 {
+                    // Retrying the same request would overflow again, so only retry
+                    // once the history has actually been compacted.
+                    if (contextOverflowRetries == 0 &&
+                        maybeCompact is not null &&
+                        TryRecordContextOverflow(generatedTokens, inputAndOutputTokens))
+                    {
+                        contextOverflowRetries++;
+                        AnsiConsole.MarkupLine($"\n[yellow]The context window is full ({inputAndOutputTokens:N0} tokens); compacting history and retrying.[/]");
+                        if (await maybeCompact(true, cancellationToken))
+                        {
+                            messages = history.Select(ToRequestMessage).ToList();
+                            requestMessages = history.Select(ToRequestSnapshotMessage).ToList();
+                            continue;
+                        }
+                    }
+
                     throw new InvalidOperationException(BuildLengthLimitMessage(generatedTokens, inputAndOutputTokens));
                 }
 
@@ -557,10 +667,10 @@ internal class AgentClient
     public async Task<(string Response, string Reasoning)> ChatAsync(
         List<ChatMessage> history,
         CancellationToken cancellationToken = default,
-        Func<CancellationToken, Task<bool>>? maybeCompact = null)
+        HistoryCompaction? maybeCompact = null)
     {
         if (maybeCompact is not null)
-            _ = await maybeCompact(cancellationToken);
+            _ = await maybeCompact(false, cancellationToken);
 
         var messages = history.Select(m => ToRequestMessage(m)).ToList();
         var opts = new OpenAI.Chat.ChatCompletionOptions();
@@ -571,6 +681,7 @@ internal class AgentClient
         if (!ChatResponseParsing.HasChoices(result))
             throw new InvalidOperationException("The model server returned an empty response (no choices).");
 
+        RecordPromptUsage(result.Value.Usage?.InputTokenCount ?? 0);
         string reasoningText = ChatResponseParsing.ExtractReasoningFromRawResponse(result);
         var contentText = ExtractText(result.Value.Content);
         var finishReason = ChatResponseParsing.ExtractFinishReason(result);
@@ -636,6 +747,7 @@ internal class AgentClient
                 var taggedContent = new ThinkingTagStreamParser();
                 var toolCalls = new Dictionary<int, StreamingToolCallBuilder>();
                 var totalTokens = 0;
+                var inputTokens = 0;
                 var outputTokens = 0;
                 var finishReason = "";
                 var showedReasoning = false;
@@ -703,6 +815,7 @@ internal class AgentClient
                     if (update.Usage is { } usage)
                     {
                         totalTokens = usage.TotalTokenCount;
+                        inputTokens = usage.InputTokenCount;
                         outputTokens = usage.OutputTokenCount;
                     }
                 }
@@ -731,6 +844,7 @@ internal class AgentClient
                     completedToolCalls,
                     orderedToolCalls.Select(pair => pair.Value.Announced).ToArray(),
                     totalTokens,
+                    inputTokens,
                     outputTokens,
                     finishReason);
             }
@@ -757,10 +871,10 @@ internal class AgentClient
     public async Task<(string Response, int TokenCount)> ChatStreamingAsync(
         List<ChatMessage> history,
         CancellationToken cancellationToken = default,
-        Func<CancellationToken, Task<bool>>? maybeCompact = null)
+        HistoryCompaction? maybeCompact = null)
     {
         if (maybeCompact is not null)
-            _ = await maybeCompact(cancellationToken);
+            _ = await maybeCompact(false, cancellationToken);
 
         var messages = history.Select(m => ToRequestMessage(m)).ToList();
         var opts = new OpenAI.Chat.ChatCompletionOptions();
@@ -839,6 +953,7 @@ internal class AgentClient
             {
                 totalTokens = usage.TotalTokenCount;
                 outputTokens = usage.OutputTokenCount;
+                RecordPromptUsage(usage.InputTokenCount);
             }
 
             var updateFinishReason = ChatResponseParsing.ExtractFinishReasonDelta(update);
@@ -1113,6 +1228,7 @@ internal class AgentClient
         IReadOnlyList<OpenAI.Chat.ChatToolCall> ToolCalls,
         IReadOnlyList<bool> ToolCallAnnouncements,
         int TotalTokenCount,
+        int InputTokenCount,
         int OutputTokenCount,
         string FinishReason);
 
