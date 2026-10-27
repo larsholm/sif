@@ -317,6 +317,13 @@ internal class AgentApp
                     conversation.Save(history);
                     AnsiConsole.MarkupLine("[dim]System prompt updated.[/]\n");
                 }
+                else if (trimmed == "/compact")
+                {
+                    if (!HasContextTool(tools))
+                        AnsiConsole.MarkupLine("[yellow]Compaction stores summaries in the context store; enable the context tool to use it.[/]\n");
+                    else if (await HistoryCompactor.CompactNowAsync(history, client, config))
+                        conversation.Save(history);
+                }
                 else if (trimmed == "/context" || trimmed.StartsWith("/context "))
                 {
                     ContextCommandHandler.Handle(trimmed, history, client, ShowChatHelp);
@@ -1199,6 +1206,7 @@ internal class AgentApp
         table.AddRow("[bold]/model[/]", "Select a saved profile or provider model");
         table.AddRow("[bold]/model list[/]", "List model profiles and show current one");
         table.AddRow("[bold]/model <name>[/]", "Switch to a model profile (clears conversation)");
+        table.AddRow("[bold]/compact[/]", "Summarize older conversation history now, even below the compaction threshold");
         table.AddRow("[bold]/context[/]", "Show the last model request and persisted-state summary");
         table.AddRow("[bold]/context full[/]", "Show the complete last model request, including tool schemas");
         table.AddRow("[bold]/context history[/]", "Show persisted conversation history");
@@ -2690,6 +2698,7 @@ internal class AgentApp
     [
         ("/help", "Show available commands", false),
         ("/clear", "Clear conversation history and the active goal; keep the system prompt", false),
+        ("/compact", "Summarize older conversation history now", false),
         ("/context", "Show the last model request and persisted-state summary", true),
         ("/goal", "Set, inspect, or clear a session goal", true),
         ("/model", "Select a saved profile or provider model, or switch by name", true),

@@ -32,6 +32,10 @@ internal class AgentClient
         "The previous completion was rejected because the tool call was malformed. Retry once. " +
         "If you need a tool, call the provided function directly with a valid JSON object for arguments. " +
         "Do not emit XML, <tool_call>, <function>, or <parameter> tags.";
+    private const string CompactionContinueInstruction =
+        "The conversation history was compacted while you were working on the current task. " +
+        "The task is not finished: continue from the most recent tool results above without repeating completed steps. " +
+        "Do not restart the task or stop to summarize progress.";
     private readonly OpenAI.Chat.ChatClient _chatClient;
     private readonly HashSet<string> _availableLocalTools = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _activeLocalTools = new(StringComparer.OrdinalIgnoreCase);
@@ -146,6 +150,14 @@ internal class AgentClient
     }
 
     /// <summary>
+    /// Conservative characters-per-token ratio for request budgeting: the
+    /// measured ratio when the provider's usage shows it is denser than 3.
+    /// </summary>
+    internal double RequestCharactersPerToken => Math.Min(
+        ConservativeCharactersPerToken,
+        ObservedCharactersPerToken ?? ConservativeCharactersPerToken);
+
+    /// <summary>
     /// Estimate the complete request budget, including tool schemas. Character
     /// counting cannot replace the model tokenizer, so use a deliberately more
     /// conservative ratio than the UI's historical chars/4 display estimate,
@@ -174,10 +186,7 @@ internal class AgentClient
             tools);
 
         var inputCharacters = EstimateInputCharacters(snapshot);
-        var charactersPerToken = Math.Min(
-            ConservativeCharactersPerToken,
-            ObservedCharactersPerToken ?? ConservativeCharactersPerToken);
-        var inputTokens = (int)Math.Ceiling(inputCharacters / charactersPerToken);
+        var inputTokens = (int)Math.Ceiling(inputCharacters / RequestCharactersPerToken);
         contextLength = LearnedContextLength ?? contextLength;
 
         var outputReserve = 0;
@@ -386,16 +395,29 @@ internal class AgentClient
         var emptyResponseRetries = 0;
         var contextOverflowRetries = 0;
 
+        void RebuildRequestFromCompactedHistory()
+        {
+            messages = history.Select(ToRequestMessage).ToList();
+            requestMessages = history.Select(ToRequestSnapshotMessage).ToList();
+
+            // History persists this turn's tool calls as assistant text, so a
+            // request rebuilt mid-task ends on an assistant message. Models then
+            // tend to treat the task as done, and some servers reject a trailing
+            // assistant message as an unsupported prefill.
+            if (history.LastOrDefault(m => m.Role != "system") is { Role: not "user" })
+            {
+                messages.Add(OpenAI.Chat.ChatMessage.CreateUserMessage(CompactionContinueInstruction));
+                requestMessages.Add(new ModelRequestMessage("user", CompactionContinueInstruction));
+            }
+        }
+
         while (true)
             {
                 // A tool result can make the next request much larger than the
                 // first request in this turn. Compact at every request boundary,
                 // then rebuild the provider messages from the compacted history.
                 if (maybeCompact is not null && await maybeCompact(false, cancellationToken))
-                {
-                    messages = history.Select(ToRequestMessage).ToList();
-                    requestMessages = history.Select(ToRequestSnapshotMessage).ToList();
-                }
+                    RebuildRequestFromCompactedHistory();
 
                 AnsiConsole.Write(new Markup("[dim]Thinking...[/]"));
                 var opts = new OpenAI.Chat.ChatCompletionOptions();
@@ -471,14 +493,17 @@ internal class AgentClient
                         AnsiConsole.MarkupLine($"\n[yellow]The context window is full ({inputAndOutputTokens:N0} tokens); compacting history and retrying.[/]");
                         if (await maybeCompact(true, cancellationToken))
                         {
-                            messages = history.Select(ToRequestMessage).ToList();
-                            requestMessages = history.Select(ToRequestSnapshotMessage).ToList();
+                            RebuildRequestFromCompactedHistory();
                             continue;
                         }
                     }
 
                     throw new InvalidOperationException(BuildLengthLimitMessage(generatedTokens, inputAndOutputTokens));
                 }
+
+                // Only back-to-back overflows abort the turn. Once a compacted
+                // request completes, a later overflow in a long turn may compact again.
+                contextOverflowRetries = 0;
 
                 // Fall back to extracting thinking tags from content if no separate reasoning field
                 if (string.IsNullOrEmpty(reasoningText))

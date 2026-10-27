@@ -450,6 +450,11 @@ public sealed class AgentClientIntegrationTests
         Assert.Contains("compacted after tool execution", secondRequestText, StringComparison.Ordinal);
         Assert.Contains("tool result retained across compaction", secondRequestText, StringComparison.Ordinal);
         Assert.DoesNotContain("original task", secondRequestText, StringComparison.Ordinal);
+
+        var lastMessage = server.Requests[1].Json.RootElement.GetProperty("messages").EnumerateArray().Last();
+        Assert.Equal("user", lastMessage.GetProperty("role").GetString());
+        Assert.Contains("The task is not finished", MessageText(lastMessage), StringComparison.Ordinal);
+        Assert.DoesNotContain(history, message => message.Content.Contains("The task is not finished", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -486,6 +491,171 @@ public sealed class AgentClientIntegrationTests
         Assert.Equal(32768, client.LearnedContextLength);
         Assert.Equal(2, server.Requests.Count);
         Assert.Contains("compacted after overflow", server.Requests[1].Json.RootElement.GetRawText(), StringComparison.Ordinal);
+        var lastMessage = server.Requests[1].Json.RootElement.GetProperty("messages").EnumerateArray().Last();
+        Assert.Equal("original task", MessageText(lastMessage));
+    }
+
+    [Fact]
+    public async Task CompactNowFoldsPreviousSummaryAndStoresExcessOfOversizedRecentMessage()
+    {
+        var previousContextSession = ContextStore.GetSessionId();
+        ContextStore.UseSession("sif-tests-" + Guid.NewGuid().ToString("N")[..12]);
+        try
+        {
+            await using var server = new ChatCompletionStub();
+            server.Enqueue(ChatResponse("""{"role":"assistant","content":"new summary"}"""));
+
+            var config = TestConfig(server.BaseUrl, ConfiguredDefaultModel());
+            config.DetectedContextLength = 32768;
+            var client = new AgentClient(config);
+            var largeToolResult = "Tool call from prior turn: read\nResult:\n" + new string('x', 200000);
+            var history = new List<ChatMessage>
+            {
+                new("system", "base prompt\n\n--- Compacted conversation context ---\nold summary"),
+                new("user", "old task"),
+                new("assistant", "old answer"),
+                new("user", "current task"),
+                new("assistant", largeToolResult)
+            };
+
+            Assert.True(await WithTimeout(HistoryCompactor.CompactNowAsync(history, client, config)));
+
+            var summaryRequestText = server.Requests.Single().Json.RootElement.GetRawText();
+            Assert.Contains("old summary", summaryRequestText, StringComparison.Ordinal);
+            Assert.Contains("old task", summaryRequestText, StringComparison.Ordinal);
+            Assert.DoesNotContain("current task", summaryRequestText, StringComparison.Ordinal);
+
+            Assert.Equal(["system", "user", "assistant"], history.Select(message => message.Role));
+            Assert.StartsWith("base prompt", history[0].Content, StringComparison.Ordinal);
+            Assert.Contains("new summary", history[0].Content, StringComparison.Ordinal);
+            Assert.DoesNotContain("old summary", history[0].Content, StringComparison.Ordinal);
+            Assert.Equal("current task", history[1].Content);
+
+            var shrunk = history[2].Content;
+            Assert.StartsWith("Tool call from prior turn: read", shrunk, StringComparison.Ordinal);
+            Assert.True(shrunk.Length < 30000, $"Retained message has {shrunk.Length:N0} chars.");
+            var storedId = Regex.Match(shrunk, @"stored as (ctx_[0-9a-f]+)").Groups[1].Value;
+            var stored = Assert.Single(ContextStore.ListEntries(), entry => entry.Id == storedId);
+            Assert.Equal(largeToolResult.Length, stored.Length);
+        }
+        finally
+        {
+            ContextStore.CleanupCurrentSession();
+            ContextStore.UseSession(previousContextSession);
+        }
+    }
+
+    [Fact]
+    public async Task CompactNowReportsNothingToCompactForShortHistory()
+    {
+        await using var server = new ChatCompletionStub();
+        var config = TestConfig(server.BaseUrl, ConfiguredDefaultModel());
+        var client = new AgentClient(config);
+        var history = new List<ChatMessage>
+        {
+            new("system", "base prompt"),
+            new("user", "hello"),
+            new("assistant", "hi")
+        };
+
+        Assert.False(await WithTimeout(HistoryCompactor.CompactNowAsync(history, client, config)));
+        Assert.Empty(server.Requests);
+        Assert.Equal(3, history.Count);
+    }
+
+    [Fact]
+    public async Task ChatWithToolsCompactsAgainWhenContextFillsLaterInTheTurn()
+    {
+        var dir = CreateTempDirectory();
+        var file = Path.Combine(dir, "note.txt");
+        await File.WriteAllTextAsync(file, "tool result between overflows");
+
+        await using var server = new ChatCompletionStub();
+        server.Enqueue(ChatResponse(
+            """{"role":"assistant","content":"partial"}""",
+            finishReason: "length",
+            promptTokens: 32000,
+            completionTokens: 768));
+        server.Enqueue(ChatResponse("""
+            {
+              "role": "assistant",
+              "content": null,
+              "tool_calls": [
+                {
+                  "id": "call_read_between_overflows",
+                  "type": "function",
+                  "function": {
+                    "name": "read",
+                    "arguments": "__ARGS__"
+                  }
+                }
+              ]
+            }
+            """.Replace("__ARGS__", JsonEncodedText.Encode($$"""{"path":"{{file}}"}""").ToString()), finishReason: "tool_calls"));
+        server.Enqueue(ChatResponse(
+            """{"role":"assistant","content":"partial"}""",
+            finishReason: "length",
+            promptTokens: 32000,
+            completionTokens: 768));
+        server.Enqueue(ChatResponse("""{"role":"assistant","content":"done"}"""));
+
+        var client = new AgentClient(TestConfig(server.BaseUrl, ConfiguredDefaultModel()), ["read"]);
+        var history = new List<ChatMessage> { new("user", "original task") };
+        var forcedCompactions = 0;
+
+        var (response, _) = await WithTimeout(client.ChatWithToolsAsync(
+            history,
+            maybeCompact: (force, _) =>
+            {
+                if (!force)
+                    return Task.FromResult(false);
+
+                forcedCompactions++;
+                var retained = history.Where(message => message.Role != "system").ToList();
+                history.Clear();
+                history.Add(new ChatMessage("system", $"compacted after overflow {forcedCompactions}"));
+                history.AddRange(retained);
+                return Task.FromResult(true);
+            }));
+
+        Assert.Equal("done", response);
+        Assert.Equal(2, forcedCompactions);
+        Assert.Equal(4, server.Requests.Count);
+        Assert.Contains("compacted after overflow 2", server.Requests[3].Json.RootElement.GetRawText(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ChatWithToolsStopsWhenContextOverflowsRightAfterCompaction()
+    {
+        await using var server = new ChatCompletionStub();
+        server.Enqueue(ChatResponse(
+            """{"role":"assistant","content":"partial"}""",
+            finishReason: "length",
+            promptTokens: 32000,
+            completionTokens: 768));
+        server.Enqueue(ChatResponse(
+            """{"role":"assistant","content":"partial"}""",
+            finishReason: "length",
+            promptTokens: 32000,
+            completionTokens: 768));
+
+        var client = new AgentClient(TestConfig(server.BaseUrl, ConfiguredDefaultModel()));
+        var history = new List<ChatMessage> { new("user", "original task") };
+        var forcedCompactions = 0;
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => WithTimeout(client.ChatWithToolsAsync(
+                history,
+                maybeCompact: (force, _) =>
+                {
+                    if (force)
+                        forcedCompactions++;
+                    return Task.FromResult(force);
+                })));
+
+        Assert.Contains("finish_reason=length", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(1, forcedCompactions);
+        Assert.Equal(2, server.Requests.Count);
     }
 
     [Fact]
