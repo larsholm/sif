@@ -1325,6 +1325,7 @@ internal class AgentApp
         table.AddRow("Column", VscodeContext.GetDisplayValue(VscodeContext.Column));
         table.AddRow("Selection", string.IsNullOrEmpty(VscodeContext.SelectedText) ? "[dim]not provided[/]" : $"{VscodeContext.SelectedText.Length:N0} chars");
         table.AddRow("Context file", VscodeContext.GetDisplayValue(Environment.GetEnvironmentVariable("SIF_VSCODE_CONTEXT_FILE")));
+        table.AddRow("Debug console", VscodeContext.GetDisplayValue(VscodeContext.DebugConsoleFile));
         AnsiConsole.Write(table);
         AnsiConsole.MarkupLine("[dim]Editor context is read from SIF_VSCODE_CONTEXT_FILE or SIF_VSCODE_FILE, SIF_VSCODE_LINE, SIF_VSCODE_COLUMN, SIF_VSCODE_SELECTED_TEXT, and SIF_VSCODE_SELECTED_TEXT_B64.[/]\n");
     }

@@ -18,6 +18,7 @@ internal static class VscodeContext
     public static string? SelectedText => ReadSnapshot().SelectedText
         ?? DecodeText(GetFirstEnv("SIF_VSCODE_SELECTED_TEXT_B64"), isBase64: true)
         ?? DecodeText(GetFirstEnv("SIF_VSCODE_SELECTED_TEXT", "VSCODE_SELECTED_TEXT"), isBase64: false);
+    public static string? DebugConsoleFile => ReadSnapshot().DebugConsoleFile;
 
     public static bool IsRunningInVscodeTerminal()
     {
@@ -59,11 +60,13 @@ internal static class VscodeContext
             ?? DecodeText(GetFirstEnv("SIF_VSCODE_SELECTED_TEXT_B64"), isBase64: true)
             ?? DecodeText(GetFirstEnv("SIF_VSCODE_SELECTED_TEXT", "VSCODE_SELECTED_TEXT"), isBase64: false);
         var currentLine = TryReadLine(file, line);
+        var debugConsole = DescribeDebugConsole(snapshot.DebugConsoleFile);
 
         if (string.IsNullOrWhiteSpace(file) &&
             string.IsNullOrWhiteSpace(line) &&
             string.IsNullOrWhiteSpace(column) &&
-            string.IsNullOrWhiteSpace(selectedText))
+            string.IsNullOrWhiteSpace(selectedText) &&
+            debugConsole is null)
             return null;
 
         var sb = new StringBuilder();
@@ -79,6 +82,8 @@ internal static class VscodeContext
             sb.AppendLine("Selected text:");
             sb.AppendLine(TrimText(selectedText, MaxInlineTextChars));
         }
+        if (debugConsole is not null)
+            sb.AppendLine(debugConsole);
         sb.AppendLine("</editor_context>");
 
         var roslynContext = RoslynTools.BuildAmbientContext(file, line);
@@ -89,6 +94,29 @@ internal static class VscodeContext
         }
 
         return sb.ToString().TrimEnd();
+    }
+
+    // The extension mirrors VS Code debug console output (from the latest debug
+    // run) into this file. Only point the model at it once something was captured;
+    // the timestamp makes the block change, and so get re-sent, when new output lands.
+    private static string? DescribeDebugConsole(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        try
+        {
+            var info = new FileInfo(path);
+            if (!info.Exists || info.Length == 0)
+                return null;
+
+            return $"Debug console output: {path} ({info.Length:N0} bytes, last written {info.LastWriteTime:yyyy-MM-dd HH:mm:ss}). " +
+                   "This mirrors the VS Code debug console for the latest debug run; read it with 'read' or tail it with 'bash'.";
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static string? TryReadLine(string? file, string? line)
@@ -141,7 +169,8 @@ internal static class VscodeContext
                 NormalizePath(GetJsonString(root, "file")),
                 GetJsonString(root, "line"),
                 GetJsonString(root, "column"),
-                GetJsonString(root, "selectedText"));
+                GetJsonString(root, "selectedText"),
+                NormalizePath(GetJsonString(root, "debugConsoleFile")));
         }
         catch
         {
@@ -238,8 +267,8 @@ internal static class VscodeContext
         return value[..maxChars] + $"\n...[truncated {value.Length - maxChars:N0} chars]";
     }
 
-    private sealed record EditorSnapshot(string? FilePath, string? Line, string? Column, string? SelectedText)
+    private sealed record EditorSnapshot(string? FilePath, string? Line, string? Column, string? SelectedText, string? DebugConsoleFile)
     {
-        public static EditorSnapshot Empty { get; } = new(null, null, null, null);
+        public static EditorSnapshot Empty { get; } = new(null, null, null, null, null);
     }
 }

@@ -6,6 +6,9 @@ let terminal;
 let terminalStarted = false;
 let statusItem;
 let lastEditorPayload;
+let debugConsoleFile;
+
+const MAX_DEBUG_CONSOLE_BYTES = 1024 * 1024;
 
 function activate(context) {
   // Use workspace-scoped storage so each window gets its own context file;
@@ -15,8 +18,12 @@ function activate(context) {
     ? 'editor-context.json'
     : `editor-context-${vscode.env.sessionId}.json`;
   const contextFile = path.join(storageDir, fileName);
+  debugConsoleFile = path.join(storageDir, context.storageUri
+    ? 'debug-console.log'
+    : `debug-console-${vscode.env.sessionId}.log`);
   fs.mkdirSync(storageDir, { recursive: true });
   context.environmentVariableCollection.replace('SIF_VSCODE_CONTEXT_FILE', contextFile);
+  registerDebugConsoleCapture(context);
 
   const update = () => writeEditorContext(contextFile);
   context.subscriptions.push(
@@ -82,7 +89,8 @@ async function writeEditorContext(contextFile) {
     file: null,
     line: null,
     column: null,
-    selectedText: null
+    selectedText: null,
+    debugConsoleFile
   };
 
   if (editor) {
@@ -103,6 +111,109 @@ async function writeEditorContext(contextFile) {
   }
 
   await fs.promises.writeFile(contextFile, JSON.stringify(payload, null, 2), 'utf8');
+}
+
+// Mirrors debug console output into a file sif can read. Output reaches the
+// debug console as DAP 'output' events, so a tracker on every debug type sees
+// the same text the user sees.
+function registerDebugConsoleCapture(context) {
+  let pending = [];
+  let flushTimer;
+  let activeTopLevelSessions = 0;
+
+  const flush = () => {
+    clearTimeout(flushTimer);
+    flushTimer = undefined;
+    if (pending.length === 0) {
+      return;
+    }
+
+    const chunk = pending.join('');
+    pending = [];
+    try {
+      fs.appendFileSync(debugConsoleFile, chunk, 'utf8');
+      const size = fs.statSync(debugConsoleFile).size;
+      if (size > MAX_DEBUG_CONSOLE_BYTES) {
+        const content = fs.readFileSync(debugConsoleFile, 'utf8');
+        fs.writeFileSync(debugConsoleFile, '...[earlier output truncated]\n' + content.slice(-MAX_DEBUG_CONSOLE_BYTES / 2), 'utf8');
+      }
+    } catch {
+      // Capture is best effort; never disturb the debug session.
+    }
+  };
+
+  const append = text => {
+    pending.push(text);
+    if (!flushTimer) {
+      flushTimer = setTimeout(flush, 250);
+    }
+  };
+
+  const describeException = async (session, threadId) => {
+    try {
+      const info = await session.customRequest('exceptionInfo', { threadId });
+      const lines = [`--- stopped on exception: ${info.exceptionId ?? ''} ${info.description ?? ''}`.trimEnd() + ' ---'];
+      if (info.details?.message) {
+        lines.push(info.details.message);
+      }
+      if (info.details?.stackTrace) {
+        lines.push(info.details.stackTrace);
+      }
+      append(lines.join('\n') + '\n');
+    } catch {
+      append('--- stopped on exception (no exception details from debug adapter) ---\n');
+    }
+  };
+
+  context.subscriptions.push(
+    vscode.debug.registerDebugAdapterTrackerFactory('*', {
+      createDebugAdapterTracker(session) {
+        const isTopLevel = !session.parentSession;
+        return {
+          onWillStartSession() {
+            // A fresh run starts a fresh log, unless another run (e.g. a
+            // compound launch) is still writing to it.
+            if (isTopLevel && activeTopLevelSessions++ === 0) {
+              pending = [];
+              try {
+                fs.writeFileSync(debugConsoleFile, '', 'utf8');
+              } catch {
+              }
+            }
+            append(`--- debug session started: ${session.name} (${session.type}) at ${new Date().toISOString()} ---\n`);
+          },
+          onDidSendMessage(message) {
+            if (message.type !== 'event') {
+              return;
+            }
+
+            if (message.event === 'output') {
+              const category = message.body?.category ?? 'console';
+              const output = message.body?.output;
+              if (category !== 'telemetry' && output) {
+                append(output);
+              }
+            } else if (message.event === 'stopped' && message.body?.reason === 'exception') {
+              describeException(session, message.body.threadId);
+            } else if (message.event === 'exited') {
+              append(`--- program exited with code ${message.body?.exitCode ?? 'unknown'} ---\n`);
+            }
+          },
+          onError(error) {
+            append(`--- debug adapter error: ${error?.message ?? error} ---\n`);
+          },
+          onWillStopSession() {
+            append(`--- debug session ended: ${session.name} at ${new Date().toISOString()} ---\n`);
+            if (isTopLevel) {
+              activeTopLevelSessions = Math.max(0, activeTopLevelSessions - 1);
+            }
+            flush();
+          }
+        };
+      }
+    }),
+    { dispose: flush }
+  );
 }
 
 function trim(value, maxChars) {

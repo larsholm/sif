@@ -113,7 +113,7 @@ Available tools:
 
 | Tool | Description |
 |------|-------------|
-| `bash` | Execute allowed shell commands. Uses Bash on Unix-like systems and PowerShell on Windows. Includes macOS commands such as `uname`, `sw_vers`, and `system_profiler`; unknown commands ask for approval |
+| `bash` | Execute allowed shell commands. Uses Bash on Unix-like systems and PowerShell on Windows. Every command in a line is checked, including those after `&&`, `|` and `;`, inside `$(...)`, and wrapped by `xargs`, `env`, `timeout`, `find -exec` or `sh -c`. Unknown commands ask for approval (once, for the session, or always); `sudo` and destructive patterns such as `rm -rf ~`, `git push --force` or `git reset --hard` always ask, one call at a time |
 | `read` | Read file contents |
 | `edit` | Edit files by replacing exact text |
 | `write` | Create or overwrite files |

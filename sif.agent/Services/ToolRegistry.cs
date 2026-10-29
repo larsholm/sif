@@ -232,10 +232,9 @@ internal static class ToolRegistry
             return "Error: timeout must be at most 600 seconds (10 minutes).";
         var timeout = TimeSpan.FromSeconds(timeoutSeconds);
 
-        var firstWord = ShellCommandPolicy.GetFirstCommandWord(command);
-        var allowed = ShellCommandPolicy.GetAllowedShellCommands();
-        if (!ShellCommandPolicy.IsShellCommandAllowed(firstWord, allowed) && !ShellCommandPolicy.PromptToAllowShellCommand(firstWord, command))
-            return $"Error: Command '{firstWord}' not allowed.";
+        var assessment = ShellCommandPolicy.Assess(command);
+        if (assessment.RequiresApproval && !ShellCommandPolicy.PromptForApproval(assessment, command))
+            return $"Error: Command not allowed. {assessment.Describe()}";
 
         try
         {

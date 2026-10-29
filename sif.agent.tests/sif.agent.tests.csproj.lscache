@@ -72,12 +72,14 @@ GoalEvaluatorTests.cs
 HistoryCompactorTests.cs
 HostCapabilitiesTests.cs
 ModelCatalogTests.cs
+ShellCommandPolicyTests.cs
 SteeringCommentTests.cs
 StreamingLoopDetectorTests.cs
 TerminalInputClassifierTests.cs
 TerminalInputLayoutTests.cs
 ThinkingTagStreamParserTests.cs
 ToolRegistryArgumentTests.cs
+VscodeContextTests.cs
 
 [frameworkPacks]
 Microsoft.NETCore.App.Ref

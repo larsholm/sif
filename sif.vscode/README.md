@@ -10,6 +10,8 @@ This extension starts `sif` in a VS Code integrated terminal and keeps the activ
 
 The extension writes a small JSON file containing the active file, cursor line, cursor column, and current selection. The `sif: Start Chat With Editor Context` terminal is launched with `SIF_VSCODE_CONTEXT_FILE` pointing at that file, and regular integrated terminals opened after the extension activates receive the same environment variable.
 
+The extension also mirrors the debug console into `debug-console.log` next to the context file. It captures program output, the exit code, and exception details when the debugger stops on an exception, for every debug type. The log is cleared when a new debug run starts and is capped at 1 MB. Once it has content, `sif` includes its path in the editor context so the model can read it.
+
 When focus moves from the editor to the terminal, the extension preserves the last editor snapshot instead of clearing it, so `sif` can still read the selection while you type in chat.
 
 ## Settings

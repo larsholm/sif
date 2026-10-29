@@ -24,8 +24,8 @@ RootNamespace=sif.agent
 TargetFramework=net10.0
 TargetFrameworkIdentifier=.NETCoreApp
 TargetFrameworkVersion=v10.0
-TargetPath=<PATH>bin/Debug/net10.0/sif-agent.dll
-TargetRefPath=<PATH>obj/Debug/net10.0/ref/sif-agent.dll
+TargetPath=<PATH>bin/Release/net10.0/sif-agent.dll
+TargetRefPath=<PATH>obj/Release/net10.0/ref/sif-agent.dll
 TemporaryDependencyNodeTargetIdentifier=net10.0
 
 [commandLineArguments]
@@ -37,16 +37,16 @@ TemporaryDependencyNodeTargetIdentifier=net10.0
 /nostdlib+
 /errorreport:prompt
 /warn:10
-/define:TRACE;DEBUG;NET;NET10_0;NETCOREAPP;NET5_0_OR_GREATER;NET6_0_OR_GREATER;NET7_0_OR_GREATER;NET8_0_OR_GREATER;NET9_0_OR_GREATER;NET10_0_OR_GREATER;NETCOREAPP1_0_OR_GREATER;NETCOREAPP1_1_OR_GREATER;NETCOREAPP2_0_OR_GREATER;NETCOREAPP2_1_OR_GREATER;NETCOREAPP2_2_OR_GREATER;NETCOREAPP3_0_OR_GREATER;NETCOREAPP3_1_OR_GREATER
+/define:TRACE;RELEASE;NET;NET10_0;NETCOREAPP;NET5_0_OR_GREATER;NET6_0_OR_GREATER;NET7_0_OR_GREATER;NET8_0_OR_GREATER;NET9_0_OR_GREATER;NET10_0_OR_GREATER;NETCOREAPP1_0_OR_GREATER;NETCOREAPP1_1_OR_GREATER;NETCOREAPP2_0_OR_GREATER;NETCOREAPP2_1_OR_GREATER;NETCOREAPP2_2_OR_GREATER;NETCOREAPP3_0_OR_GREATER;NETCOREAPP3_1_OR_GREATER
 /highentropyva+
 /nullable:enable
 /features:"InterceptorsNamespaces=;Microsoft.Extensions.Validation.Generated"
-/debug+
+/debug-
 /debug:portable
 /filealign:512
-/optimize-
-/out:obj/Debug/net10.0/sif-agent.dll
-/refout:obj/Debug/net10.0/refint/sif-agent.dll
+/optimize+
+/out:obj/Release/net10.0/sif-agent.dll
+/refout:obj/Release/net10.0/refint/sif-agent.dll
 /target:exe
 /warnaserror-
 /utf8output
@@ -65,7 +65,7 @@ Models/
  ModelProfile.cs
  ModelRequestSnapshot.cs
  ProviderConfig.cs
-obj/Debug/net10.0/
+obj/Release/net10.0/
  .NETCoreApp,Version=v10.0.AssemblyAttributes.cs
  sif.agent.AssemblyInfo.cs
  sif.agent.GlobalUsings.g.cs
@@ -92,6 +92,7 @@ Services/
  OpenAICompatibleStreaming.cs
  RemoveAuthorizationPolicy.cs
  SecureCredentialStore.cs
+ ShellCommandParser.cs
  ShellCommandPolicy.cs
  SkillStore.cs
  SteeringComment.cs
@@ -178,7 +179,7 @@ Microsoft.NETCore.App.Ref
 Microsoft.NET.Sdk/analyzers
 
 [analyzerConfigFiles]
-obj/Debug/net10.0/sif.agent.GeneratedMSBuildEditorConfig.editorconfig
+obj/Release/net10.0/sif.agent.GeneratedMSBuildEditorConfig.editorconfig
 
 [embeddedResources]
 ../sif.vscode/
